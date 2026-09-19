@@ -1,0 +1,18 @@
+{
+  "hospital_agent": {
+    "minimized_fields": {
+      "appointment_system": [
+        "appointment_id",
+        "patient_id"
+      ],
+      "document_system": [
+        "document_id",
+        "patient_id"
+      ],
+      "instruction_system": [],
+      "patient_channel": [
+        "patient_id"
+      ]
+    }
+  }
+}
