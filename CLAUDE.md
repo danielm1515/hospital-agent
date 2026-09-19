@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project status
 
-Sub-projects 1 (Core), 2 (Policy), 3 (Execution), 4 (LLM) and 5 (Human Review + the authenticated API) are implemented in `backend/` (design and plan under `docs/superpowers/`). The authoritative input is the **binding demo spec** `Hospital_Agent_Clean.docx` (Hebrew, final-project scope). A Markdown copy lives in `docs/spec/`, one file per spec section: **spec §N → `docs/spec/NN-*.md`** (index: `docs/spec/README.md`). The docx is the source of truth. `docs/spec/` is generated, so don't hand-edit it. After the docx changes, regenerate it:
+Sub-projects 1 (Core), 2 (Policy), 3 (Execution), 4 (LLM), 5 (Human Review + the authenticated API) and 6 (React UI) are implemented in `backend/` and `frontend/` (design and plan under `docs/superpowers/`). The authoritative input is the **binding demo spec** `Hospital_Agent_Clean.docx` (Hebrew, final-project scope). A Markdown copy lives in `docs/spec/`, one file per spec section: **spec §N → `docs/spec/NN-*.md`** (index: `docs/spec/README.md`). The docx is the source of truth. `docs/spec/` is generated, so don't hand-edit it. After the docx changes, regenerate it:
 
 ```bash
 python scripts/spec_to_md.py
@@ -24,9 +24,8 @@ The user wants the project finished without being asked questions. Until they sa
 - **Keep the process, drop the approval waits.** Each sub-project still gets a design doc, a prototype-validated plan, subagent-driven execution with task reviews and a final whole-branch review. The user's approval of each step is given in advance; merge a sub-project to `main` once its final review is clean and the full suite passes.
 - **Parallel agents are welcome** where tasks are independent (isolated worktrees, each with its own compose project and database: `docker compose -p <name> -f docker-compose.yml -f <override without host ports>`). Never disturb the user's running stack on 54322 / 8000 except to restart it after a merge.
 - **Never** read, print or commit the OpenAI key; never push to a remote; never delete user data.
-- Remaining work, in order:
-  1. **Sub-project 6 — React UI** (§1 patient screen + staff screen, D24), styled after the design the user supplied (`design/ramon-ui/`: `tokens.css`, `components.html`, `index.html`, `patient-login.html`, `admin-login.html`).
-  2. **Sub-project 7 — D33**: the Response Evaluator's labelled evaluation set and recall report (§6.5).
+- Remaining work:
+  1. **Sub-project 7 — D33**: the Response Evaluator's labelled evaluation set and recall report (§6.5).
 
 ## Commands
 
@@ -36,7 +35,15 @@ Run from the repo root. The backend runs in Docker (Python 3.13). The repo is mo
 docker compose up --build
 ```
 
-Postgres on `localhost:54322` (database `hospital`, owner `hospital_owner`; the app connects as `hospital_app`), API on `localhost:8000`. Migrations run on start.
+Postgres on `localhost:54322` (database `hospital`, owner `hospital_owner`; the app connects as `hospital_app`), API on `localhost:8000`, and the UI on `localhost:5173` (the Vite dev server, proxying `/api` to the backend so the browser needs no CORS). Migrations run on start.
+
+```bash
+cd frontend && npm install
+npm test
+npm run build
+```
+
+The frontend needs Node 22 (matching the `node:22-alpine` image `frontend/Dockerfile` uses). `npm test` runs Vitest once (`vitest run`); `npm run build` runs `tsc -b` then `vite build`. Both run outside Docker, against the checked-out `frontend/` tree, and touch no service.
 
 ```bash
 docker compose run --rm backend pytest
@@ -91,16 +98,22 @@ docker compose run --rm -e RUN_LIVE_LLM=1 backend pytest tests/test_live_llm.py 
 - `hospital_agent/data_log.py` is the §12.3 Data Log (table `data_log`, migration 0003): request text, uploaded documents, retrieved instructions and outgoing messages. Audit keeps only `content_hash`; deletion is a tombstone.
 - `hospital_agent/scripted.py` drives the patient through the real Session Service and still inserts the reviewers' approvals directly (so a test can build an invalid one); `tests/driver.py` adds test-only shortcuts that emit a Classifier / Planner / Orchestrator event directly. The Tool Executor is the only code that calls an external system (`execution/gateway.py`); `POLICY_ALLOWED` writes the `executions` intent row, and `StateManager.start_execution()` writes the STARTED / AUDIT_RECORDED pair.
 
-## Hand-off to sub-project 6 (React UI)
+## Working in the frontend (`frontend/`)
 
-- **`docs/api.md` is the contract**: every route, request body, response body and error code, with real JSON. Build the UI from that file; if something is missing there, fix the file, not the UI's assumptions.
-- **Two screens (§1, D24):** the patient screen (login, submit, status, upload) and the staff screen (queue, context, decision, case monitor). The design the user supplied is in `design/ramon-ui/` (`tokens.css`, `components.html`, `index.html`, `patient-login.html`, `admin-login.html`) - follow it.
-- **Auth:** `POST /api/auth/login` with a demo user and `DEMO_PASSWORD` (default `demo`), then `Authorization: Bearer <token>` on every `/api` call; the token lasts 8 hours and there is no refresh. The demo users are `P-10041`, `P-20000`, `P-30000` (identity fails on purpose), `coordinator_nurse` and `admin_coordinator`. `role` decides which screen to show.
-- **CORS** already allows `http://localhost:5173` and `http://127.0.0.1:5173`; any other origin goes in `CORS_ORIGINS`.
-- **The patient sees only the abstract status** (`received`, `in_progress`, `needs_document`, `in_review`, `completed`, `closed`) - never an escalation kind, a reason or an audit row (§12.3). The case advances in the background, so poll the case after a submit or an upload.
-- **A staff decision is two steps:** GET the context, show it, then POST the decision with that `shown_context_ref`. Render exactly the queue item's `allowed_decisions` and `required_fields`; a 409 means re-fetch and decide again on what is now true.
-- **There is no ContentApproval screen.** A message the Response Evaluator marks medical is denied outright (D8), not queued for a clinical_staff sign-off; the staff's only lever on it is `resolve` from the ordinary review queue, same as any other escalation. Don't build a message-approval UI - it has no route to call.
-- Nothing in the UI is authoritative: every state it shows comes from a response, and it may never send `patient_id`, `reviewer_id` or `reviewer_role`.
+- **Layout:** `src/api/` (the one `/api` client, `client.ts`, plus `types.ts`); `src/auth/` (`AuthContext`, the token and `role`); `src/components/` (`Logo`, `Button`, `TextField`, `Alert`, `StatusPill`, `AuthLayout`, `AppShell`, `ThemeToggle`); `src/pages/patient/*` and `src/pages/staff/*` (one route file per screen, plus each area's `*Routes.tsx`); `src/styles/` (`tokens.css`, `app.css`). Every `.tsx` file under `src/` has a co-located `*.test.tsx`.
+- **`src/styles/tokens.css` is a byte-identical copy of `design/ramon-ui/tokens.css`.** `src/styles/tokens.test.ts` diffs the two files and fails on any drift; edit the design copy and re-copy it, never hand-edit `tokens.css` in place.
+- **Every shape the UI renders or sends comes from `docs/api.md`, and nothing else.** No field, status value, `escalation_kind` or route is invented client-side; if the UI needs something `docs/api.md` doesn't have, that is a sub-project 5 gap to fix there, not to paper over here.
+- **Hebrew and RTL throughout:** `frontend/index.html` sets `<html lang="he" dir="rtl">`, and `app.css` uses logical CSS properties only (`margin-inline-start`, `inset-inline-end`, etc.), never physical ones (`margin-left`, `right`) - a physical property silently mirrors wrong under RTL instead of failing.
+- **The patient UI must never render an escalation kind, a policy reason or an Audit row (§12.3).** It shows only the abstract status the API returns (`received`, `in_progress`, `needs_document`, `in_review`, `completed`, `closed`) plus, for `needs_document`, the missing document ids and template, and for `completed`, the delivered message. `AuditTimeline` and the raw `escalation_kind`/reasons are staff-only (`src/pages/staff/`).
+- **Components mirror `design/ramon-ui/components.html`:** same class names, same markup shape, same tokens (surfaces, lines, radii, `.state` mono) for the pieces the design doesn't show (table, StatusPill, timeline, top nav) - see design decision 6.
+- **Tests are Vitest + Testing Library and must not hit the network.** `src/test/setup.ts` resets `sessionStorage`/`localStorage` and mocks `matchMedia` before each test; every page/component test stubs `fetch` (or the API client) instead of calling the real backend, so `npm test` runs standalone, with no backend or database up.
+
+## Hand-off to sub-project 7 (D33)
+
+- **What D33 needs (§6.5, §16):** a labelled evaluation set of outgoing messages - some genuinely medical, some not - run through the Response Evaluator, plus a recall report measuring its false-negative rate against a declared threshold. This is empirical, not a proof: INV-11 says the classifier itself "is not formally verified" (§6.5), and D33 exists to bound that gap, not close it.
+- **Where the pieces live:** the Response Evaluator is `backend/hospital_agent/llm/evaluator.py` (`ResponseEvaluator.evaluate`) - one LLM call, its own process, the message text only, returning `medical_content_flag`. `FakeProvider` (`backend/hospital_agent/llm/provider.py`) is the deterministic stand-in used by the regular suite and `obs.golden`; it is not a classifier to evaluate, only a safe substitute for the real model in tests.
+- **The regular suite must stay offline.** No test in `backend/tests/` may call the real model; D33's evaluation run is a separate script/test, gated like `tests/test_live_llm.py`, so `docker compose run --rm backend pytest` keeps working with no `OPENAI_API_KEY` and no network.
+- **The live model is reachable only with `RUN_LIVE_LLM=1`**, the same gate `tests/test_live_llm.py` uses (see Commands above): `docker compose run --rm -e RUN_LIVE_LLM=1 backend pytest tests/test_live_llm.py -v`. D33's own run should follow the same pattern rather than adding a second, ungated path to the real model.
 
 ## What the system is
 
