@@ -8,6 +8,13 @@ apply() runs one transaction per event:
 A blocked event writes one Blocked audit row and changes nothing else. A stale
 state_version rolls the whole transaction back and the event is re-processed
 against the fresh row, at most MAX_REPROCESS times (design §12.2), then fails closed.
+
+For the Tool Executor (Execution design §3) it also:
+  - writes the executions 'intent' row with POLICY_ALLOWED (Effect.RECORD_EXECUTION_INTENT);
+  - start_execution(): re-verifies the decision, increments attempt_count and writes the
+    TOOL_EXECUTION_STARTED / AUDIT_RECORDED pair, in one transaction;
+  - apply(..., execution_outcome=...): records a call's outcome row in the same
+    transaction as the event that follows it.
 """
 from __future__ import annotations
 
@@ -20,8 +27,9 @@ from typing import Any, Protocol
 from sqlalchemy.engine import Connection, Engine
 
 from . import repository
-from .case import CaseRecord, new_case
+from .case import MAX_ATTEMPTS, CaseRecord, ExecutionRecord, new_case
 from .escalation import EscalationCoordinator
+from .execution.verify import verify_start
 from .fsm import Effect, Resolution, apply_effects, resolve
 from .guards import GuardContext, GuardPorts
 from .naming import (
@@ -63,6 +71,32 @@ class ReprocessLimitExceeded(RuntimeError):
 
 class _StaleVersion(Exception):
     pass
+
+
+class ExecutionStateError(RuntimeError):
+    """An execution outcome for a row that is not running - a replayed or duplicate finish."""
+
+
+# §12.2: the audit record_type of each outcome (Execution design decision 4).
+OUTCOME_RECORD_TYPES = {"succeeded": "ExecutionSucceeded", "failed": "ExecutionFailed", "unknown": "ExecutionUnknown"}
+OUTCOME_VALUES = {"succeeded": "success", "failed": "failed", "unknown": "unknown"}
+
+
+@dataclass(frozen=True)
+class ExecutionOutcome:
+    """The result of one external call, recorded with the event that follows it."""
+
+    execution_id: str
+    status: str  # succeeded | failed | unknown
+    reason: str | None = None
+
+
+@dataclass(frozen=True)
+class StartResult:
+    started: bool
+    reason: str | None = None  # executor_reverification_failed | attempts_exhausted | temporal_violation:<rule>
+    temporal_violation: str | None = None
+    execution: ExecutionRecord | None = None
 
 
 POLICY_EVIDENCE_KEYS = frozenset({"ContentApprovalValid", "medical_content_flag"})
@@ -127,15 +161,21 @@ class StateManager:
         event: Event | str,
         payload: Mapping[str, Any] | None = None,
         source: Component = Component.EXTERNAL,
+        *,
+        execution_outcome: ExecutionOutcome | None = None,
     ) -> TransitionResult:
-        """Apply one event. case_id is None only for REQUEST_SUBMITTED."""
+        """Apply one event. case_id is None only for REQUEST_SUBMITTED.
+
+        execution_outcome: the call this event reports on; its outcome row is written in
+        the same transaction, whether the event commits or is blocked.
+        """
         event = canonical_event(event)
         if event in NON_TRANSITION_EVENTS:
             raise NonTransitionEvent(f"{event} is recorded by the Tool Executor, not applied as a transition")
         payload = dict(payload or {})
         for _ in range(MAX_REPROCESS + 1):
             try:
-                result = self._apply_once(case_id, event, payload, source)
+                result = self._apply_once(case_id, event, payload, source, execution_outcome)
             except _StaleVersion:
                 continue
             if result.temporal_violation and result.case_id and event is not Event.HUMAN_REVIEW_REQUIRED:
@@ -168,7 +208,14 @@ class StateManager:
 
     # --- one attempt, one transaction ------------------------------------------------
 
-    def _apply_once(self, case_id: str | None, event: Event, payload: dict[str, Any], source: Component) -> TransitionResult:
+    def _apply_once(
+        self,
+        case_id: str | None,
+        event: Event,
+        payload: dict[str, Any],
+        source: Component,
+        outcome: ExecutionOutcome | None = None,
+    ) -> TransitionResult:
         now = self.clock()
         with self.engine.begin() as conn:
             case = None
@@ -181,6 +228,9 @@ class StateManager:
             owner = EVENT_OWNER.get(event)
             if owner is not None and source is not owner:
                 return self._block(conn, case, event, "system_owned_event", now, payload=payload)
+            if outcome is not None:
+                # Before the guards run: DeliveryConfirmed reads the finished execution row.
+                self._record_outcome(conn, case, event, outcome, now)
 
             ctx = GuardContext(
                 case=case,
@@ -217,6 +267,8 @@ class StateManager:
             elif repository.update_case(conn, after, expected_version=case.state_version) == 0:
                 raise _StaleVersion(case.case_id)
             audit_id = repository.insert_audit(conn, candidate)
+            if Effect.RECORD_EXECUTION_INTENT in row.effects:
+                repository.insert_execution(conn, self._execution_intent(after, payload))
             if Effect.CONSUME_APPROVAL in row.effects:
                 if repository.consume_approval(conn, ctx.approval.approval_id, now) == 0:
                     raise _StaleVersion(case.case_id)
@@ -227,6 +279,125 @@ class StateManager:
                 if repository.consume_approval(conn, override_id, now) == 0:
                     raise _StaleVersion(case.case_id)
             return TransitionResult(after.case_id, True, state, row.target, audit_id=audit_id)
+
+    # --- the Tool Executor's writes (Execution design §3) --------------------------------
+
+    def start_execution(self, case_id: str, execution_id: str) -> StartResult:
+        """Everything that must be true, and recorded, before an external call - one transaction.
+
+        Re-verifies the decision against the executions 'intent' row (ExecutorReverified),
+        checks AttemptsAvailable on the count BEFORE the increment, increments attempt_count,
+        consumes a ContentApproval for medical output, and writes the TOOL_EXECUTION_STARTED /
+        AUDIT_RECORDED pair - both checked by the Temporal Monitor before the commit.
+        """
+        for _ in range(MAX_REPROCESS + 1):
+            try:
+                return self._start_once(case_id, execution_id)
+            except _StaleVersion:
+                continue
+        raise ReprocessLimitExceeded(f"start of {execution_id} on {case_id}: state_version kept changing")
+
+    def _start_once(self, case_id: str, execution_id: str) -> StartResult:
+        now = self.clock()
+        with self.engine.begin() as conn:
+            case = repository.load_case(conn, case_id)
+            if case is None:
+                raise CaseNotFound(case_id)
+            execution = repository.load_execution(conn, execution_id)
+            approval = (repository.load_approval(conn, execution.approval_id)
+                        if execution is not None and execution.approval_id else None)
+            started_payload = {"execution_id": execution_id}
+
+            reason = verify_start(case, execution, approval, now)
+            if reason is None and case.attempt_count >= MAX_ATTEMPTS:
+                reason = "attempts_exhausted"
+            if reason is not None:
+                if execution is not None:
+                    repository.set_execution_status(conn, execution_id, ("intent",), "failed", now)
+                self._block(conn, case, Event.TOOL_EXECUTION_STARTED, reason, now, payload=started_payload)
+                return StartResult(False, reason, execution=execution)
+
+            after = replace(case, attempt_count=case.attempt_count + 1,
+                            state_version=case.state_version + 1, updated_at=now)
+            evidence = {"InPlan": True, "IdentityVerified": True, "PatientContextPresent": True,
+                        "AttemptsAvailable": True, "medical_content_flag": execution.medical_content_flag}
+            if execution.medical_content_flag:
+                evidence["ContentApprovalValid"] = True
+            common = dict(case_id=case.case_id, patient_id=case.patient_id, record_type="ExecutionStarted",
+                          state_before=case.state.value, state_after=case.state.value,
+                          rule_version=self.rule_version, recorded_at=now, action=execution.action,
+                          execution_id=execution_id, attempt_number=after.attempt_count,
+                          retry_cycle=after.retry_cycle, content_hash=execution.content_hash,
+                          approval_id=execution.approval_id)
+            started = AuditEntry(event=Event.TOOL_EXECUTION_STARTED.value, guards=evidence, **common)
+            recorded = AuditEntry(event=Event.AUDIT_RECORDED.value, **common)
+
+            trace = repository.load_trace(conn, case_id)
+            violation = self.monitor.check(trace, started) or self.monitor.check([*trace, started], recorded)
+            if violation:
+                repository.set_execution_status(conn, execution_id, ("intent",), "failed", now)
+                reason = f"temporal_violation:{violation}"
+                self._block(conn, case, Event.TOOL_EXECUTION_STARTED, reason, now, payload=started_payload)
+                return StartResult(False, reason, temporal_violation=violation, execution=execution)
+
+            if repository.update_case(conn, after, expected_version=case.state_version) == 0:
+                raise _StaleVersion(case_id)
+            if repository.set_execution_status(conn, execution_id, ("intent",), "started", now) == 0:
+                raise _StaleVersion(case_id)
+            if execution.medical_content_flag and repository.consume_approval(conn, execution.approval_id, now) == 0:
+                raise _StaleVersion(case_id)
+            repository.insert_audit(conn, started)
+            repository.insert_audit(conn, recorded)
+            return StartResult(True, execution=execution)
+
+    def _record_outcome(self, conn: Connection, case: CaseRecord, event: Event,
+                        outcome: ExecutionOutcome, now: datetime) -> None:
+        """Finish the executions row and write its outcome audit row (§12.2)."""
+        execution = repository.load_execution(conn, outcome.execution_id)
+        if execution is None or execution.case_id != case.case_id:
+            raise ExecutionStateError(f"no execution {outcome.execution_id} on {case.case_id}")
+        if repository.set_execution_status(conn, outcome.execution_id, ("started",), outcome.status, now) == 0:
+            raise ExecutionStateError(f"execution {outcome.execution_id} is not running")
+        repository.insert_audit(conn, AuditEntry(
+            case_id=case.case_id,
+            patient_id=case.patient_id,
+            record_type=OUTCOME_RECORD_TYPES[outcome.status],
+            event=event.value,
+            state_before=case.state.value,
+            state_after=case.state.value,
+            rule_version=self.rule_version,
+            recorded_at=now,
+            action=execution.action,
+            execution_id=execution.execution_id,
+            policy_reasons=[outcome.reason] if outcome.reason else [],
+            attempt_number=execution.attempt_number,
+            retry_cycle=execution.retry_cycle,
+            outcome=OUTCOME_VALUES[outcome.status],
+            content_hash=execution.content_hash,
+        ))
+
+    @staticmethod
+    def _execution_intent(after: CaseRecord, payload: Mapping[str, Any]) -> ExecutionRecord:
+        """The outbox row POLICY_ALLOWED writes: the decision and what it is bound to (§3.1)."""
+        attempt_number = after.attempt_count + 1
+        evidence = payload.get("evidence") or {}
+        return ExecutionRecord(
+            execution_id=payload["execution_id"],
+            case_id=after.case_id,
+            patient_id=after.patient_id,
+            action=after.current_action.value,
+            step=after.current_step,
+            retry_cycle=after.retry_cycle,
+            attempt_number=attempt_number,
+            idempotency_key=f"{after.case_id}:{after.current_step}:{after.retry_cycle}:{attempt_number}",
+            status="intent",
+            decision_token=payload["decision_token"],
+            state_version=after.state_version,
+            plan_hash=after.plan_hash,
+            approval_id=payload.get("content_approval_id"),
+            content_hash=payload.get("content_hash"),
+            medical_content_flag=evidence.get("medical_content_flag") is True,
+        )
 
     def _block(
         self,

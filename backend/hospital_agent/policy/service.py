@@ -85,6 +85,11 @@ class PolicyDecision:
     content_approval_valid: bool = False
     medical_content_flag: bool = False
     policy_review_override_id: str | None = None
+    # What the decision was computed on - the Tool Executor re-verifies it (Execution design §3.1).
+    decided_state_version: int | None = None
+    plan_hash: str | None = None
+    current_step: int | None = None
+    content_approval_id: str | None = None  # set only when the ContentApproval was valid
 
 
 def _utcnow() -> datetime:
@@ -237,6 +242,10 @@ class PolicyService:
             content_approval_valid=approval_ok,
             medical_content_flag=bool(message and message.medical_content_flag),
             policy_review_override_id=None if override is None else override.approval_id,
+            decided_state_version=case.state_version,
+            plan_hash=case.plan_hash,
+            current_step=case.current_step,
+            content_approval_id=request.approval_id if approval_ok else None,
         )
 
     def apply(self, state_manager: StateManager, case_id: str, request: PolicyRequest) -> TransitionResult:
@@ -252,6 +261,9 @@ def decision_event(decision: PolicyDecision) -> tuple[Event, dict[str, Any]]:
         "policy_reasons": list(decision.reasons),
         "decision_token": decision.decision_token,
         "execution_id": decision.execution_id,
+        "decided_state_version": decision.decided_state_version,
+        "plan_hash": decision.plan_hash,
+        "current_step": decision.current_step,
         "evidence": {
             "ContentApprovalValid": decision.content_approval_valid,
             "medical_content_flag": decision.medical_content_flag,
@@ -261,4 +273,6 @@ def decision_event(decision: PolicyDecision) -> tuple[Event, dict[str, Any]]:
         payload["content_hash"] = decision.content_hash
     if decision.policy_review_override_id is not None:
         payload["policy_review_override_id"] = decision.policy_review_override_id
+    if decision.content_approval_id is not None:
+        payload["content_approval_id"] = decision.content_approval_id
     return DECISION_EVENT[decision.result], payload

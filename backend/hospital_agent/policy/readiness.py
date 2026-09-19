@@ -60,10 +60,15 @@ class ReadinessCheck:
     def __init__(self, state_manager: StateManager, *, z3=ask_patient_is_safe) -> None:
         self.state_manager, self.z3 = state_manager, z3
 
-    def run(self, case_id: str, hours_until: object) -> TransitionResult:
+    def run(self, case_id: str) -> TransitionResult:
+        """hours_until is derived from the appointment time CheckAppointment stored (Execution
+        design §5) - never taken from a caller. No stored appointment -> invalid_deadline."""
         sm = self.state_manager
-        if sm.load(case_id).readiness_complete:
+        case = sm.load(case_id)
+        if case.readiness_complete:
             return sm.apply(case_id, Event.READINESS_PASSED, {}, Component.READINESS_CHECK)
+        hours_until = (None if case.appointment_at is None
+                       else (case.appointment_at - sm.clock()).total_seconds() / 3600)
         verdict = self.z3(hours_until)
         if verdict.safe:
             payload = {"z3_result": verdict.result, "patient_deadline": sm.clock() + PATIENT_UPLOAD_WINDOW}

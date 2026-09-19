@@ -15,7 +15,6 @@ from sqlalchemy.engine import Engine
 
 from hospital_agent.state_manager import StateManager
 from hospital_agent.wiring import build_state_manager
-from tests.fakes import fake_ports
 
 BACKEND_DIR = Path(__file__).resolve().parents[1]
 
@@ -57,5 +56,5 @@ def app_engine(migrated: None, owner_engine: Engine) -> Engine:
 
 @pytest.fixture
 def sm(app_engine: Engine) -> StateManager:
-    """The production State Manager (real Temporal Monitor); only ExecutorReverified is faked."""
-    return build_state_manager(app_engine, fake_ports())
+    """The production State Manager: real Temporal Monitor and real ExecutorReverified."""
+    return build_state_manager(app_engine)

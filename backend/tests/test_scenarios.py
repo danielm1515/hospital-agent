@@ -7,6 +7,8 @@ The Core has no Tool Executor yet, so TOOL_EXECUTION_STARTED / AUDIT_RECORDED ro
 are filtered out of the golden trace; the audit row totals (35, 4, 54) are checked
 in sub-project 3. Every other (state after, event) pair must match exactly.
 """
+from datetime import UTC, datetime, timedelta
+
 from hospital_agent.naming import NON_TRANSITION_EVENTS, Event, State
 from tests.driver import Driver
 from tests.spec_tables import golden_traces
@@ -25,15 +27,15 @@ def test_scenario_1_normal_flow(sm, app_engine):
     d = Driver(sm, app_engine)
     d.to_classified()
     d.plan()
-    d.retrieve_step()                                   # CheckAppointment
+    d.retrieve_step(appointment_at=datetime.now(UTC) + timedelta(hours=96))  # CheckAppointment
     d.advance()
     d.retrieve_step(required_documents=["referral", "blood_test"], held_documents=["referral"])
     d.advance()
     d.retrieve_step()                                   # LoadInstructions -> AssessingReadiness
-    d.assess(96)                                        # blood_test missing, Z3 unsat: safe to ask
+    d.assess()                                          # blood_test missing, Z3 unsat: safe to ask
     d.upload("blood_test")
     d.classify()                                        # re-classified, readiness in progress
-    d.assess(96)                                        # everything held -> READINESS_PASSED
+    d.assess()                                          # everything held -> READINESS_PASSED
     d.plan_delivery()
     d.propose()
     d.allow()
@@ -58,34 +60,32 @@ def test_scenario_2_medical_escalation(sm, app_engine):
 
 
 def test_scenario_3_technical_failure(sm, app_engine):
-    """F5: nothing in the Core increments attempt_count (TOOL_EXECUTION_STARTED is refused
-
-    by design, Refinement 3), so AttemptsAvailable always holds here and this scenario's
-    retries drive RETRY_EXHAUSTED directly rather than exercising the attempt budget; the
-    State Manager entry point that writes ExecutionStarted/AUDIT_RECORDED and increments
-    attempt_count in one transaction arrives in sub-project 3.
-    """
+    """Each attempt is started through the State Manager, which counts it (attempt_count)
+    and writes the ExecutionStarted pair; the Tool Executor that also makes the call and
+    records its outcome replaces this in obs.golden."""
     d = Driver(sm, app_engine)
     d.to_classified()
     d.plan()
-    d.retrieve_step()                                   # CheckAppointment
+    d.retrieve_step(appointment_at=datetime.now(UTC) + timedelta(hours=96))  # CheckAppointment
     d.advance()
     for _ in range(2):                                  # attempts 1 and 2 time out
         d.propose()
         d.allow()
+        d.sm.start_execution(d.case_id, d.last_execution_id)
         d.transient_failure()
     d.propose()
     d.allow()
+    d.sm.start_execution(d.case_id, d.last_execution_id)
     d.retry_exhausted()                                 # attempt 3 -> a human decides
     d.human(Event.HUMAN_APPROVED, d.approval("approve"))
     assert (d.case.retry_cycle, d.case.attempt_count) == (1, 0)
     d.retrieve_step(required_documents=["referral", "blood_test"], held_documents=["referral"])
     d.advance()
     d.retrieve_step()
-    d.assess(96)
+    d.assess()
     d.upload("blood_test")
     d.classify()
-    d.assess(96)
+    d.assess()
     d.plan_delivery()
     d.propose()
     d.allow()

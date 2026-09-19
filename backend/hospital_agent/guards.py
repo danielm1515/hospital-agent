@@ -329,10 +329,15 @@ def valid_tool_result(ctx: GuardContext) -> str | None:
     """F3(c): required_documents / held_documents, when present, must be lists of non-empty strings.
 
     Otherwise a string payload silently becomes a list of characters in apply_effects().
+    appointment_at (Execution design §5), when present, must be a timezone-aware datetime.
     """
     payload = ctx.payload
     for key in ("required_documents", "held_documents"):
         if key in payload and not _valid_string_list(payload[key]):
+            return "invalid_tool_result"
+    if "appointment_at" in payload:
+        at = payload["appointment_at"]
+        if not (isinstance(at, datetime) and at.tzinfo is not None):
             return "invalid_tool_result"
     return None
 

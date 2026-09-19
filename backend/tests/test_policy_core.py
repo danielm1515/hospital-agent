@@ -15,12 +15,15 @@ from hospital_agent.naming import Component, EscalationKind, Event, State
 from hospital_agent.state_manager import RULE_VERSION, ReprocessLimitExceeded
 from hospital_agent.wiring import build_state_manager, policy_version
 from tests.driver import Driver
-from tests.fakes import fake_ports
 
 
 def decision(sm, d: Driver, event: Event, **payload):
-    base = {"action": d.case.current_action.value, "policy_result": "Allow", "policy_reasons": [],
-            "execution_id": "EXEC-1"}
+    """A decision as the Policy Service emits it, bound to the case as it is now (ExecutorReverified)."""
+    case = d.case
+    base = {"action": case.current_action.value, "policy_result": "Allow", "policy_reasons": [],
+            "execution_id": f"EXEC-{case.state_version}", "decision_token": "tok",
+            "decided_state_version": case.state_version, "plan_hash": case.plan_hash,
+            "current_step": case.current_step}
     return sm.apply(d.case_id, event, {**base, **payload}, Component.POLICY_SERVICE)
 
 
@@ -32,7 +35,7 @@ def test_readiness_complete_property():
 
 
 def test_audit_rows_carry_the_policy_version(app_engine):
-    d = Driver(build_state_manager(app_engine, fake_ports()), app_engine)
+    d = Driver(build_state_manager(app_engine), app_engine)
     d.submit()
     assert len(policy_version()) == 12
     assert d.trace()[0].rule_version == f"{RULE_VERSION}+policy-{policy_version()}"

@@ -1,7 +1,8 @@
-"""How application code builds a State Manager: always with the real Temporal Monitor.
+"""How application code builds a State Manager: always with the real Temporal Monitor and
+the real ExecutorReverified (Execution design §3.1).
 
-There is no other production path - a State Manager without the monitor (or with a
-permissive fake) exists only in tests. rule_version records the transition table's
+There is no other production path - a State Manager with a permissive monitor or port
+exists only in tests. rule_version records the transition table's
 version plus a hash of the policy files in force (§12.2).
 """
 from __future__ import annotations
@@ -12,6 +13,7 @@ from pathlib import Path
 
 from sqlalchemy.engine import Engine
 
+from .execution.verify import verify_decision
 from .guards import GuardPorts
 from .policy.temporal import TemporalMonitor
 from .state_manager import RULE_VERSION, StateManager
@@ -28,5 +30,7 @@ def policy_version() -> str:
     return digest.hexdigest()[:12]
 
 
-def build_state_manager(engine: Engine, ports: GuardPorts) -> StateManager:
-    return StateManager(engine, TemporalMonitor(), ports, rule_version=f"{RULE_VERSION}+policy-{policy_version()}")
+def build_state_manager(engine: Engine) -> StateManager:
+    """The real Temporal Monitor and the real ExecutorReverified - there is no other port left."""
+    return StateManager(engine, TemporalMonitor(), GuardPorts(executor_reverified=verify_decision),
+                        rule_version=f"{RULE_VERSION}+policy-{policy_version()}")

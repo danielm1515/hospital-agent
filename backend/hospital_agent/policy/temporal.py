@@ -4,7 +4,8 @@ It implements the Core's TraceMonitor port: check(trace, candidate) runs before 
 commit (§7) and returns the id of a rule the candidate would newly violate, or None.
 
 Trace (§6.1, Policy design decision 1): the case's audit rows in order, without
-Blocked rows - a blocked event is not a transition. Each row is read as
+Blocked rows (a blocked event is not a transition) and without the execution outcome
+rows (Execution design decision 4). Each row is read as
 (state_after, event, guards, execution_id, content_hash).
 
 Operators (§6.1): Y = previous row (false on the first row), O = now or earlier,
@@ -19,7 +20,9 @@ from dataclasses import dataclass
 
 from ..repository import AuditEntry
 
-EXCLUDED_RECORD_TYPES = frozenset({"Blocked"})
+# Policy design decision 1 + Execution design decision 4: a blocked event and a call's
+# outcome record are not transitions of the trace.
+EXCLUDED_RECORD_TYPES = frozenset({"Blocked", "ExecutionSucceeded", "ExecutionFailed", "ExecutionUnknown"})
 TERMINAL = frozenset({"Completed", "Failed"})
 
 Rows = Sequence[AuditEntry]
@@ -28,7 +31,7 @@ Rows = Sequence[AuditEntry]
 @dataclass(frozen=True)
 class Violation:
     rule: str
-    index: int  # position in the Blocked-free trace
+    index: int  # position in the trace (excluded rows removed)
 
 
 # --- atomic propositions (§6.1 table) ------------------------------------------------

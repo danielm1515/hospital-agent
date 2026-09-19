@@ -48,6 +48,7 @@ class Driver:
         self.sm, self.engine, self.patient_id = sm, engine, patient_id
         self.case_id: str | None = None
         self.policy = PolicyService(engine)
+        self.last_execution_id: str | None = None
 
     # --- reading ---------------------------------------------------------------------
 
@@ -125,7 +126,9 @@ class Driver:
 
     def allow(self, **overrides) -> TransitionResult:
         """The real Policy Service decides the current step (Allow for a well-formed request)."""
-        return self.policy.apply(self.sm, self.case_id, self.request(**overrides))
+        request = self.request(**overrides)
+        self.last_execution_id = request.execution_id
+        return self.policy.apply(self.sm, self.case_id, request)
 
     def retrieved(self, **result) -> TransitionResult:
         return self._emit(Event.DATA_RETRIEVED, result, Component.TOOL_EXECUTOR)
@@ -163,9 +166,9 @@ class Driver:
     def readiness_passed(self) -> TransitionResult:
         return self._emit(Event.READINESS_PASSED, {}, Component.READINESS_CHECK)
 
-    def assess(self, hours_until: object = 96) -> TransitionResult:
+    def assess(self) -> TransitionResult:
         """The real Readiness Check with Z3 (spec §9.1)."""
-        return ReadinessCheck(self.sm).run(self.case_id, hours_until)
+        return ReadinessCheck(self.sm).run(self.case_id)
 
     # --- human reviewers -----------------------------------------------------------------
 
@@ -208,10 +211,10 @@ class Driver:
         self.allow()
         self.retrieved(**result)
 
-    def to_assessing_readiness(self, required: list[str], held: list[str]) -> None:
+    def to_assessing_readiness(self, required: list[str], held: list[str], hours_until: float = 96) -> None:
         self.to_classified()
         self.plan()
-        self.retrieve_step()
+        self.retrieve_step(appointment_at=datetime.now(UTC) + timedelta(hours=hours_until))
         self.advance()
         self.retrieve_step(required_documents=required, held_documents=held)
         self.advance()

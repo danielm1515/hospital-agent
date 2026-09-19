@@ -32,6 +32,7 @@ class Effect(StrEnum):
     APPROVED_PATIENT_DEADLINE = "ApprovedPatientDeadline"
     CLEAR_ESCALATION = "ClearEscalation"
     CONSUME_APPROVAL = "ConsumeApproval"
+    RECORD_EXECUTION_INTENT = "RecordExecutionIntent"  # Execution design §3.1 - written by the State Manager
 
 
 @dataclass(frozen=True)
@@ -99,9 +100,11 @@ TRANSITIONS: tuple[Transition, ...] = (
     Transition(S.PLANNING, E.STEP_ADVANCED, S.PLANNING, "PlanIntact, CanAdvance", ("PlanIntact", "CanAdvance"),
                effects=(Effect.ADVANCE_STEP,)),
     Transition(S.PLANNING, E.POLICY_ALLOWED, S.RETRIEVING_DATA,
-               "ExecutorReverified, proposed_action ∈ retrieval_actions", ("ExecutorReverified", "retrieval_action")),
+               "ExecutorReverified, proposed_action ∈ retrieval_actions", ("ExecutorReverified", "retrieval_action"),
+               effects=(Effect.RECORD_EXECUTION_INTENT,)),
     Transition(S.PLANNING, E.POLICY_ALLOWED, S.DELIVERING,
-               "ExecutorReverified, proposed_action = SendStatusUpdate", ("ExecutorReverified", "delivery_action")),
+               "ExecutorReverified, proposed_action = SendStatusUpdate", ("ExecutorReverified", "delivery_action"),
+               effects=(Effect.RECORD_EXECUTION_INTENT,)),
     Transition(S.PLANNING, E.POLICY_DENIED, S.AWAITING_HUMAN_REVIEW,
                "escalation_kind = PolicyDenied, escalated_from_state = Planning",
                escalation=_fixed(K.POLICY_DENIED, S.PLANNING)),
@@ -264,6 +267,8 @@ def apply_effects(case: CaseRecord, row: Transition, ctx: GuardContext) -> CaseR
             case Effect.ADVANCE_STEP:
                 changes.update(current_step=case.current_step + 1, retry_cycle=0, attempt_count=0)
             case Effect.RECORD_RETRIEVAL:
+                if "appointment_at" in p:
+                    changes["appointment_at"] = p["appointment_at"]
                 if "required_documents" in p:
                     changes["required_documents"] = list(p["required_documents"])
                 if "held_documents" in p:
@@ -280,6 +285,6 @@ def apply_effects(case: CaseRecord, row: Transition, ctx: GuardContext) -> CaseR
                 changes["patient_deadline"] = ctx.approval.patient_deadline
             case Effect.CLEAR_ESCALATION:
                 changes.update(escalation_kind=None, escalated_from_state=None)
-            case Effect.CONSUME_APPROVAL:
-                pass  # written to approvals by the State Manager, in the same transaction
+            case Effect.CONSUME_APPROVAL | Effect.RECORD_EXECUTION_INTENT:
+                pass  # written by the State Manager (approvals / executions), in the same transaction
     return replace(case, **changes)

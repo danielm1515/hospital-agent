@@ -25,7 +25,7 @@ def at_step(d: Driver, step: int) -> None:
         d.advance()
     if step == 4:
         d.retrieve_step()                 # LoadInstructions -> AssessingReadiness
-        d.assess(96)                      # everything held -> Ready
+        d.assess()                        # everything held -> Ready
         d.plan_delivery()
     d.propose()
     assert (d.state, d.case.current_step) == (State.PLANNING, step)
@@ -73,14 +73,14 @@ def test_d5_missing_document_with_96_hours_asks_the_patient(sm, app_engine):
     d = Driver(sm, app_engine)
     d.to_assessing_readiness(required=["referral", "blood_test"], held=["referral"])
     before = datetime.now(UTC)
-    assert d.assess(96).state_after is State.AWAITING_PATIENT_INPUT
+    assert d.assess().state_after is State.AWAITING_PATIENT_INPUT
     assert timedelta(hours=23) < d.case.patient_deadline - before < timedelta(hours=25)
 
 
 def test_d6_missing_document_with_20_hours_goes_to_a_human(sm, app_engine):
     d = Driver(sm, app_engine)
-    d.to_assessing_readiness(required=["referral", "blood_test"], held=["referral"])
-    assert d.assess(20).state_after is State.AWAITING_HUMAN_REVIEW
+    d.to_assessing_readiness(required=["referral", "blood_test"], held=["referral"], hours_until=20)
+    assert d.assess().state_after is State.AWAITING_HUMAN_REVIEW
     assert d.case.escalation_kind is EscalationKind.Z3_COUNTEREXAMPLE
     audited = reasons(d)
     assert audited[0] == "z3:sat" and audited[1].startswith("z3_detail:") and "upload_h" in audited[1]
