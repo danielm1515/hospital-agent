@@ -146,6 +146,22 @@ def insert_approval(conn: Connection, approval: ApprovalRecord) -> None:
     conn.execute(insert(approvals).values(**asdict(approval)))
 
 
+def confirm_version(conn: Connection, case_id: str, expected_version: int) -> int:
+    """A no-op conditional UPDATE that also locks the row (F4): 0 means the case moved on.
+
+    Used before writing a Blocked row for an existing case, so a verdict based on a
+    stale in-memory snapshot is not committed to audit_log. Deliberately an UPDATE, not
+    SELECT ... FOR UPDATE, so it cannot deadlock against a concurrent transaction doing
+    the same (see the D15 barrier test).
+    """
+    result = conn.execute(
+        update(cases)
+        .where(cases.c.case_id == case_id, cases.c.state_version == expected_version)
+        .values(state_version=cases.c.state_version)
+    )
+    return result.rowcount
+
+
 def approval_used(conn: Connection, approval_id: str) -> bool:
     """True if approval_id already appears on a committed Transition audit row (F1: replay guard)."""
     row = conn.execute(

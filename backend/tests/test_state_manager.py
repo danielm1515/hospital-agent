@@ -1,4 +1,6 @@
 """State Manager: one transaction per event, Blocked rows, fail-closed behaviour (design §7)."""
+from dataclasses import replace
+
 import pytest
 from sqlalchemy import create_engine
 
@@ -194,6 +196,34 @@ def test_missing_information_without_a_deadline_is_blocked(sm, app_engine):
     result = sm.apply(d.case_id, Event.MISSING_INFORMATION_DETECTED, {"z3_result": "unsat"}, Component.READINESS_CHECK)
     assert (result.committed, result.reason, result.state_after) == (False, "patient_deadline_missing", State.ASSESSING_READINESS)
     assert d.case.patient_deadline is None
+
+
+def test_a_stale_blocked_verdict_is_reprocessed_against_the_fresh_state(sm, app_engine, monkeypatch):
+    """F4: a Blocked verdict must not be committed from a stale in-memory snapshot.
+
+    Only the success path checked state_version before this fix; _block() wrote a
+    Blocked row from whatever case it was handed, even if the row had moved on.
+    """
+    d = Driver(sm, app_engine)
+    d.to_classified()
+    fresh = d.case
+    assert fresh.state is State.CLASSIFIED
+    stale = replace(fresh, state=State.CLASSIFYING, state_version=fresh.state_version - 1)
+
+    real_load_case = repository.load_case
+    calls = {"n": 0}
+
+    def load_case_stale_once(conn, case_id):
+        calls["n"] += 1
+        return stale if calls["n"] == 1 else real_load_case(conn, case_id)
+
+    monkeypatch.setattr(repository, "load_case", load_case_stale_once)
+    result = d.plan()
+    monkeypatch.undo()
+
+    assert calls["n"] == 2  # the stale attempt, then one reprocess against the fresh row
+    assert result.committed and result.state_after is State.PLANNING
+    assert not any(entry.record_type == "Blocked" for entry in d.trace())
 
 
 def test_state_survives_a_restart(sm, app_engine):

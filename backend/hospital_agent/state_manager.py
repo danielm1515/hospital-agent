@@ -120,12 +120,17 @@ class StateManager:
         raise ReprocessLimitExceeded(f"{event} on {case_id}: state_version kept changing")
 
     def record_blocked(self, case_id: str, event: Event, reason: str) -> TransitionResult:
-        """Write a Blocked audit row without attempting a transition."""
+        """Write a Blocked audit row without attempting a transition.
+
+        Used by the Escalation Coordinator for an invalid signal, whose verdict does not
+        depend on State: it loads `case` itself, in this same transaction, so there is no
+        earlier possibly-stale read to reconcile - check_version is skipped (F4).
+        """
         with self.engine.begin() as conn:
             case = repository.load_case(conn, case_id)
             if case is None:
                 raise CaseNotFound(case_id)
-            return self._block(conn, case, event, reason, self.clock())
+            return self._block(conn, case, event, reason, self.clock(), check_version=False)
 
     def load(self, case_id: str) -> CaseRecord:
         with self.engine.connect() as conn:
@@ -190,9 +195,22 @@ class StateManager:
                     raise _StaleVersion(case.case_id)
             return TransitionResult(after.case_id, True, state, row.target, audit_id=audit_id)
 
-    def _block(self, conn: Connection, case: CaseRecord | None, event: Event, reason: str, now: datetime) -> TransitionResult:
+    def _block(
+        self,
+        conn: Connection,
+        case: CaseRecord | None,
+        event: Event,
+        reason: str,
+        now: datetime,
+        *,
+        check_version: bool = True,
+    ) -> TransitionResult:
         if case is None:  # a rejected REQUEST_SUBMITTED: there is no case row to attach an audit row to
             return TransitionResult(None, False, None, None, reason=reason)
+        if check_version and repository.confirm_version(conn, case.case_id, case.state_version) == 0:
+            # F4: the row moved on since `case` was read - reprocess against the fresh State
+            # instead of writing a Blocked verdict that may no longer be correct.
+            raise _StaleVersion(case.case_id)
         entry = AuditEntry(
             case_id=case.case_id,
             patient_id=case.patient_id,
