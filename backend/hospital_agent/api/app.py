@@ -1,7 +1,9 @@
 """FastAPI app. In the Core it only reads: /health and the Case Monitor endpoints (design §9).
 
 Every request reads the cases/audit_log rows from Postgres - there is no in-memory
-State, so the answers are the same before and after a restart.
+State, so the answers are the same before and after a restart. When the app owns its
+engine (a real server, not a test), startup first recovers interrupted executions and
+then starts the SLA Worker (Execution design §5).
 """
 from __future__ import annotations
 
@@ -16,7 +18,9 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from .. import repository
 from ..db import make_engine
+from ..execution.background import sla_interval_seconds, start_background
 from ..naming import State
+from ..wiring import build_state_manager
 from .schemas import AuditRecord, CaseDetail, CaseSummary
 
 
@@ -29,8 +33,10 @@ def create_app(engine: Engine | None = None) -> FastAPI:
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         owned = engine is None
         app.state.engine = make_engine() if owned else engine
+        stop_sla = start_background(build_state_manager(app.state.engine), sla_interval_seconds()) if owned else None
         yield
         if owned:
+            stop_sla.set()
             app.state.engine.dispose()
 
     app = FastAPI(title="Hospital Patient Agent", lifespan=lifespan)
