@@ -65,14 +65,19 @@ class _StaleVersion(Exception):
     pass
 
 
+POLICY_EVIDENCE_KEYS = frozenset({"ContentApprovalValid", "medical_content_flag"})
+
+
 def _policy_evidence(event: Event, payload: Mapping[str, Any]) -> dict[str, bool]:
     """Evidence the Policy Service attaches to its decision row (§6.1: HumanAuthorized is the
     ContentApprovalValid evidence kept on the POLICY_ALLOWED row). Only Policy decisions may
-    carry it - the owner check has already proven they come from the Policy Service."""
+    carry it - the owner check has already proven they come from the Policy Service. M1: only
+    these two named keys are accepted (an unknown key, however boolean, is dropped) - the
+    caller must never be able to forge or override an unrelated guard's result."""
     if event not in POLICY_DECISION_EVENTS:
         return {}
     evidence = payload.get("evidence") or {}
-    return {str(k): v for k, v in evidence.items() if isinstance(v, bool)}
+    return {str(k): v for k, v in evidence.items() if k in POLICY_EVIDENCE_KEYS and isinstance(v, bool)}
 
 
 @dataclass(frozen=True)
@@ -282,7 +287,8 @@ class StateManager:
             state_after=after.state.value,
             rule_version=self.rule_version,
             recorded_at=now,
-            guards={**resolution.guard_results, **_policy_evidence(event, payload)},
+            # M1: real guard results win on a name clash - evidence can only add, never override.
+            guards={**_policy_evidence(event, payload), **resolution.guard_results},
             action=action,
             execution_id=payload.get("execution_id"),
             policy_result=payload.get("policy_result"),

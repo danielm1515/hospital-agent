@@ -50,6 +50,20 @@ def test_policy_decision_rows_keep_the_evidence(sm, app_engine):
                           "ContentApprovalValid": True, "medical_content_flag": False}
 
 
+def test_m1_evidence_cannot_forge_or_override_a_real_guard_result(sm, app_engine):
+    """M1: evidence may only ever add ContentApprovalValid/medical_content_flag - an unknown key
+    is dropped, and a name clash with a real guard result is decided by the real result."""
+    d = Driver(sm, app_engine)
+    d.to_classified()
+    d.plan()
+    d.propose()
+    decision(sm, d, Event.POLICY_ALLOWED, evidence={"ExecutorReverified": False, "SomeOtherFlag": True,
+                                                    "ContentApprovalValid": True, "medical_content_flag": False})
+    row = d.trace()[-1]
+    assert row.guards == {"ExecutorReverified": True, "retrieval_action": True,
+                          "ContentApprovalValid": True, "medical_content_flag": False}
+
+
 def test_evidence_on_other_events_is_ignored(sm, app_engine):
     """Only the Policy Service may attach evidence - an external event cannot forge HumanAuthorized."""
     d = Driver(sm, app_engine)
