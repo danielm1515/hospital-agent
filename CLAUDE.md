@@ -71,9 +71,9 @@ A hospital patient-service agent that handles *operational* requests (appointmen
 After a restart, an execution with no outcome escalates as `ExecutionUnknown` and is **never replayed automatically**.
 
 **Policy Service = five engines (§7–§11).**
-- **OPA 1.9.0 / Rego v1** (`package hospital_agent.policy`). Precedence is Deny > RequireHumanReview > Allow > default Deny. The bundle data is `data.hospital_agent.minimized_fields` and `data.hospital_agent.approved_instruction_sources`.
-- **Prolog (SWI-Prolog 9.2.9).** Handles role and action authorization and gives `explain/4` reasons. Dynamic facts are cleared and reloaded for each request, in isolation.
-- **Datalog** (a subset run in SWI-Prolog with tabling). Models sensitive-field flows. `build_minimized.py` exports `flows.dl` to `minimized_fields.json`, which goes into the OPA bundle.
+- **OPA 1.9.0 / Rego v1** (`package hospital_agent.policy`). Precedence is Deny > RequireHumanReview > Allow > default Deny. The bundle data is `data.hospital_agent.minimized_fields` and `data.hospital_agent.approved_instruction_sources`. Implementation: a real Rego file, evaluated by the `opa` 1.9.0 binary installed in the backend container, plus a Python reference evaluator kept in agreement with it by a test.
+- **Prolog.** Handles role and action authorization and gives `explain/4` reasons. Dynamic facts are cleared and reloaded for each request, in isolation. Implementation: a Python engine, inside the backend service, that parses and runs the spec's `.pl` files as written (the pattern continues from the earlier course project `AI_Hospital`). The spec's reference engine is SWI-Prolog 9.2.9 - `docs/spec/10-prolog.md`'s queries are reproduced as tests to compare results, but SWI-Prolog is not installed or invoked.
+- **Datalog** (a subset with tabling). Models sensitive-field flows. `build_minimized.py` exports `flows.dl` to `minimized_fields.json`, which goes into the OPA bundle. Implementation: the same Python engine as Prolog, running the spec's `.dl` files as written; the spec's reference engine is likewise SWI-Prolog 9.2.9.
 - **Z3 4.15.4 (Python).**
   - §9.1: a readiness SLA check. **Only `unsat` means safe** to ask the patient for a document. `sat`, `unknown`, timeout, an exception or invalid input all escalate (`Z3Counterexample`). A failed audit write blocks commit.
   - §9.2: cross-layer consistency proofs (7 properties, 9 UNSAT queries).
@@ -151,10 +151,9 @@ The declared event-name exceptions are `HUMAN_RESOLVED_CASE` and `TOOL_TRANSIENT
 - **Frontend:** React, with the patient screen and the staff screen described in §1.
 - **Database:** PostgreSQL, using the four-table model in §18.2.
 - **LLM:** OpenAI GPT-5.6 Luna for now. The user expects this may change, so keep the provider behind the Model Selector (§1). Record the model and prompt versions in `rule_version`.
-- **Policy engines:** OPA and SWI-Prolog run **inside the backend service**. There is no OPA server and no sidecar. Z3 runs through its Python bindings.
+- **Policy engines:** OPA (the `opa` 1.9.0 binary, plus a Python reference evaluator) and the Python Prolog/Datalog engines run **inside the backend service**. There is no OPA server and no sidecar, and SWI-Prolog is not installed - it is only the spec's reference engine, used to derive the expected results the tests compare against. Z3 is `z3-solver==4.15.4`, through its Python bindings.
 - **Backend layout:** a **single FastAPI app** with one module per spec component (§1). The components are internal boundaries, not separate services.
 
 ## Still open (confirm with the user)
 
 - The exact model ID string for the OpenAI API.
-- How OPA runs in-process from Python. OPA is written in Go, so the choices are a Wasm-compiled policy or calling the `opa` binary. With Wasm, check that the builtins the policy uses (`time.*`, `crypto.sha256`, `json.marshal`) are supported.
