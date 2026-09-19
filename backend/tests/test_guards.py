@@ -142,6 +142,50 @@ def test_document_valid_trusts_the_document_only_from_the_session_service():
     assert holds("DocumentValid", ctx(case, payload={"document": doc}, source=Component.SESSION_SERVICE))
 
 
+def test_document_valid_accepts_an_aware_iso_string_expiry():
+    case = planned(state=State.AWAITING_PATIENT_INPUT)
+    doc = {
+        "document_id": "blood_test", "format": "pdf", "patient_id": "P-1",
+        "expires_at": (NOW + timedelta(days=1)).isoformat(),
+    }
+    assert holds("DocumentValid", ctx(case, payload={"document": doc}, source=Component.SESSION_SERVICE))
+
+
+@pytest.mark.parametrize(
+    "bad_expiry",
+    ["not-a-real-date", (NOW + timedelta(days=1)).replace(tzinfo=None), 12345],
+)
+def test_document_valid_rejects_unparsable_or_naive_expiry_without_raising(bad_expiry):
+    """F3(a): a malformed expires_at fails the guard - it must never raise TypeError."""
+    case = planned(state=State.AWAITING_PATIENT_INPUT)
+    doc = {"document_id": "blood_test", "format": "pdf", "patient_id": "P-1", "expires_at": bad_expiry}
+    assert not holds("DocumentValid", ctx(case, payload={"document": doc}, source=Component.SESSION_SERVICE))
+
+
+def test_valid_classification_rejects_an_unknown_safety_level():
+    """F3(b): an unrecognised safety_level is malformed input (§14 invalid_safety_level)."""
+    assert GUARDS["valid_classification"](ctx(payload={"safety_level": "LowRisk"})) is None
+    assert GUARDS["valid_classification"](ctx(payload={"safety_level": "SuperRisk"})) == "invalid_safety_level"
+    assert GUARDS["valid_classification"](ctx(payload={})) == "invalid_safety_level"
+
+
+def test_valid_tool_result_requires_lists_of_non_empty_strings():
+    """F3(c): a malformed tool result must not become a list of characters."""
+    assert GUARDS["valid_tool_result"](ctx(payload={})) is None
+    assert GUARDS["valid_tool_result"](ctx(payload={"required_documents": ["referral"], "held_documents": []})) is None
+    assert GUARDS["valid_tool_result"](ctx(payload={"required_documents": "referral"})) == "invalid_tool_result"
+    assert GUARDS["valid_tool_result"](ctx(payload={"held_documents": ["referral", ""]})) == "invalid_tool_result"
+
+
+def test_deadline_registered_requires_a_future_aware_datetime():
+    """F3(d): MISSING_INFORMATION_DETECTED must carry a deadline PatientSlaExpired can later check."""
+    assert GUARDS["deadline_registered"](ctx(payload={"patient_deadline": NOW + timedelta(hours=1)})) is None
+    assert GUARDS["deadline_registered"](ctx(payload={"patient_deadline": NOW - timedelta(hours=1)})) == "patient_deadline_missing"
+    assert GUARDS["deadline_registered"](ctx(payload={})) == "patient_deadline_missing"
+    naive = (NOW + timedelta(hours=1)).replace(tzinfo=None)
+    assert GUARDS["deadline_registered"](ctx(payload={"patient_deadline": naive})) == "patient_deadline_missing"
+
+
 def test_ask_patient_safe_only_on_unsat():
     assert holds("AskPatientSafe", ctx(payload={"z3_result": "unsat"}))
     for result in ("sat", "unknown", None):

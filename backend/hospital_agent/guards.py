@@ -22,7 +22,7 @@ from datetime import datetime
 from typing import Any
 
 from .case import MAX_ATTEMPTS, ApprovalRecord, CaseRecord, ExecutionRecord, compute_plan_hash
-from .naming import AUTOMATIC_ACTIONS, RETRIEVAL_ACTIONS, Action, Component, EscalationKind, Event, State
+from .naming import AUTOMATIC_ACTIONS, RETRIEVAL_ACTIONS, Action, Component, EscalationKind, Event, SafetyLevel, State
 
 GUARD_FAILED = "guard_failed"
 INVALID_ESCALATION_REASON = "invalid_escalation_reason"
@@ -195,17 +195,33 @@ def delivery_step_pending(ctx: GuardContext) -> str | None:
     )
 
 
+def _not_expired(expires_at: object, now: datetime) -> bool:
+    """F3(a): expires_at is an aware datetime, an ISO-8601 string with a timezone, or absent.
+
+    Anything unparsable or naive fails the guard - it never raises.
+    """
+    if expires_at is None:
+        return True
+    if isinstance(expires_at, str):
+        try:
+            expires_at = datetime.fromisoformat(expires_at)
+        except ValueError:
+            return False
+    if not isinstance(expires_at, datetime) or expires_at.tzinfo is None:
+        return False
+    return expires_at > now
+
+
 def document_valid(ctx: GuardContext) -> str | None:
     case, document = ctx.case, ctx.payload.get("document")
     if case is None or not isinstance(document, Mapping):
         return GUARD_FAILED
-    expires_at = document.get("expires_at")
     return _check(
         ctx.source is Component.SESSION_SERVICE
         and _nonempty(document.get("document_id"))
         and document.get("format") in SUPPORTED_DOCUMENT_FORMATS
         and document.get("patient_id") == case.patient_id
-        and (expires_at is None or expires_at > ctx.now)
+        and _not_expired(document.get("expires_at"), ctx.now)
     )
 
 
@@ -299,6 +315,44 @@ def closure_reason(ctx: GuardContext) -> str | None:
     return _check(ctx.approval is not None and _nonempty(ctx.approval.reason))
 
 
+def valid_classification(ctx: GuardContext) -> str | None:
+    """F3(b): payload["safety_level"] must be one of the four SafetyLevel values (§14 invalid_safety_level).
+
+    An unrecognised value is malformed input, not a missing rule - it must never reach
+    apply_effects(), which would otherwise raise constructing SafetyLevel(...).
+    """
+    level = ctx.payload.get("safety_level")
+    valid = isinstance(level, SafetyLevel) or (isinstance(level, str) and level in {s.value for s in SafetyLevel})
+    return None if valid else "invalid_safety_level"
+
+
+def _valid_string_list(value: object) -> bool:
+    return isinstance(value, list) and all(isinstance(item, str) and item.strip() != "" for item in value)
+
+
+def valid_tool_result(ctx: GuardContext) -> str | None:
+    """F3(c): required_documents / held_documents, when present, must be lists of non-empty strings.
+
+    Otherwise a string payload silently becomes a list of characters in apply_effects().
+    """
+    payload = ctx.payload
+    for key in ("required_documents", "held_documents"):
+        if key in payload and not _valid_string_list(payload[key]):
+            return "invalid_tool_result"
+    return None
+
+
+def deadline_registered(ctx: GuardContext) -> str | None:
+    """F3(d): MISSING_INFORMATION_DETECTED must carry a future, timezone-aware patient_deadline.
+
+    Otherwise the case would commit to AwaitingPatientInput with a NULL deadline, and
+    PatientSlaExpired could never fire.
+    """
+    deadline = ctx.payload.get("patient_deadline")
+    valid = isinstance(deadline, datetime) and deadline.tzinfo is not None and deadline > ctx.now
+    return None if valid else "patient_deadline_missing"
+
+
 # PascalCase keys are §3.1 guard names (tests/test_guards.py checks them against the
 # spec); snake_case keys are the prose conditions above.
 GUARDS: dict[str, Guard] = {
@@ -326,4 +380,7 @@ GUARDS: dict[str, Guard] = {
     "retrieval_action": retrieval_action,
     "delivery_action": delivery_action,
     "closure_reason": closure_reason,
+    "valid_classification": valid_classification,
+    "valid_tool_result": valid_tool_result,
+    "deadline_registered": deadline_registered,
 }

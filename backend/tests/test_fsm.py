@@ -68,12 +68,15 @@ def test_no_row_means_guard_failed():
 
 
 def test_negated_guard_picks_between_rows():
+    classified_payload = {"safety_level": "MediumRisk"}
     classifying = replace(new_case("CASE-1", "P-1", NOW), state=State.CLASSIFYING)
-    assert resolve(State.CLASSIFYING, Event.INTENT_CLASSIFIED, ctx(classifying, Event.INTENT_CLASSIFIED)).transition.target is State.CLASSIFIED
+    assert resolve(
+        State.CLASSIFYING, Event.INTENT_CLASSIFIED, ctx(classifying, Event.INTENT_CLASSIFIED, classified_payload)
+    ).transition.target is State.CLASSIFIED
     in_progress = replace(classifying, plan_hash=compute_plan_hash(PLAN), ordered_steps=PLAN, required_documents=["x"])
-    res = resolve(State.CLASSIFYING, Event.INTENT_CLASSIFIED, ctx(in_progress, Event.INTENT_CLASSIFIED))
+    res = resolve(State.CLASSIFYING, Event.INTENT_CLASSIFIED, ctx(in_progress, Event.INTENT_CLASSIFIED, classified_payload))
     assert res.transition.target is State.ASSESSING_READINESS
-    assert res.guard_results == {"ReadinessInProgress": True}
+    assert res.guard_results == {"valid_classification": True, "ReadinessInProgress": True}
 
 
 def test_specific_reason_wins_over_guard_failed():

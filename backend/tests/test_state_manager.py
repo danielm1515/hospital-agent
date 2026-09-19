@@ -148,6 +148,54 @@ def test_document_uploaded_from_external_is_not_trusted(sm, app_engine):
     assert d.case.held_documents == ["referral"]
 
 
+def test_document_with_unparsable_expiry_is_rejected_not_crashed(sm, app_engine):
+    """F3(a): document_valid must never raise on a malformed expires_at (§14 fail closed)."""
+    d = Driver(sm, app_engine)
+    d.to_assessing_readiness(required=["referral", "blood_test"], held=["referral"])
+    d.missing_information(z3_result="unsat")
+    assert d.state is State.AWAITING_PATIENT_INPUT
+
+    result = d.upload("blood_test", expires_at="not-a-real-date")
+    assert result.committed and result.state_after is State.AWAITING_PATIENT_INPUT
+    assert d.case.held_documents == ["referral"]
+
+
+def test_unknown_safety_level_is_blocked_not_crashed(sm, app_engine):
+    """F3(b): apply_effects() would otherwise raise constructing SafetyLevel(...)."""
+    d = Driver(sm, app_engine)
+    d.submit()
+    d.validate()
+    result = sm.apply(
+        d.case_id, Event.INTENT_CLASSIFIED, {"intent": "AppointmentPreparation", "safety_level": "SuperRisk"},
+        Component.CLASSIFIER_SERVICE,
+    )
+    assert (result.committed, result.reason, result.state_after) == (False, "invalid_safety_level", State.CLASSIFYING)
+    assert d.case.intent is None
+
+
+def test_string_tool_result_is_blocked_not_stored_as_a_char_list(sm, app_engine):
+    """F3(c): a string required_documents/held_documents must not become a list of characters."""
+    d = Driver(sm, app_engine)
+    d.to_classified()
+    d.plan()
+    d.propose()
+    d.allow()
+    assert d.state is State.RETRIEVING_DATA
+
+    result = sm.apply(d.case_id, Event.DATA_RETRIEVED, {"required_documents": "referral"}, Component.TOOL_EXECUTOR)
+    assert (result.committed, result.reason, result.state_after) == (False, "invalid_tool_result", State.RETRIEVING_DATA)
+    assert d.case.required_documents is None
+
+
+def test_missing_information_without_a_deadline_is_blocked(sm, app_engine):
+    """F3(d): without a registered deadline, PatientSlaExpired could never fire."""
+    d = Driver(sm, app_engine)
+    d.to_assessing_readiness(required=["referral", "blood_test"], held=["referral"])
+    result = sm.apply(d.case_id, Event.MISSING_INFORMATION_DETECTED, {"z3_result": "unsat"}, Component.READINESS_CHECK)
+    assert (result.committed, result.reason, result.state_after) == (False, "patient_deadline_missing", State.ASSESSING_READINESS)
+    assert d.case.patient_deadline is None
+
+
 def test_state_survives_a_restart(sm, app_engine):
     """Design §3: the cases row is the only State. A new process continues from it."""
     d = Driver(sm, app_engine)
