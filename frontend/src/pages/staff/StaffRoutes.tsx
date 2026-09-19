@@ -1,10 +1,10 @@
 import { Navigate, Route, Routes } from 'react-router-dom'
 import { AppShell } from '../../components/AppShell'
+import { CaseMonitor } from './CaseMonitor'
+import { ReviewCase } from './ReviewCase'
+import { ReviewQueue } from './ReviewQueue'
 
-/**
- * The staff area's routes. Placeholder screens; plan Task 3 replaces them with
- * ReviewQueue, ReviewCase and CaseMonitor.
- */
+/** The staff area (design §5): the review queue, one case in review, and the Case Monitor. */
 export function StaffRoutes() {
   return (
     <AppShell
@@ -14,20 +14,11 @@ export function StaffRoutes() {
       ]}
     >
       <Routes>
-        <Route index element={<StaffPlaceholder title="תור הסלמות" />} />
-        <Route path="cases/:caseId" element={<StaffPlaceholder title="פנייה בתור" />} />
-        <Route path="monitor" element={<StaffPlaceholder title="כל הפניות" />} />
+        <Route index element={<ReviewQueue />} />
+        <Route path="cases/:caseId" element={<ReviewCase />} />
+        <Route path="monitor" element={<CaseMonitor />} />
         <Route path="*" element={<Navigate to="/staff" replace />} />
       </Routes>
     </AppShell>
-  )
-}
-
-function StaffPlaceholder({ title }: { title: string }) {
-  return (
-    <section className="card">
-      <h1 className="page-h">{title}</h1>
-      <p className="lede">המסך ייבנה בשלב הבא של הפיתוח.</p>
-    </section>
   )
 }

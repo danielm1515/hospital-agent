@@ -124,6 +124,12 @@ export interface CaseSummary {
   updated_at: IsoDateTime
 }
 
+/** One step of the plan, as `ordered_steps` carries it (`docs/api.md` §5). */
+export interface PlanStep {
+  step: number
+  action: string
+}
+
 /** `GET /api/staff/cases/{case_id}`. */
 export interface CaseDetail extends CaseSummary {
   patient_id: string
@@ -132,7 +138,7 @@ export interface CaseDetail extends CaseSummary {
   safety_level: SafetyLevel | null
   identity_verified: boolean
   plan_hash: string | null
-  ordered_steps: Array<Record<string, unknown>> | null
+  ordered_steps: PlanStep[] | null
   current_step: number | null
   retry_cycle: number
   attempt_count: number
@@ -151,7 +157,8 @@ export interface AuditRecord {
   state_before: string | null
   state_after: string | null
   action: string | null
-  guards: Record<string, boolean>
+  /** Guard results and the evidence recorded with them (booleans, ids, hashes). */
+  guards: Record<string, unknown>
   policy_result: string | null
   policy_reasons: string[]
   execution_id: string | null

@@ -1,0 +1,235 @@
+import { render, screen, waitFor, within } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
+import { MemoryRouter, Route, Routes } from 'react-router-dom'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+import * as api from '../../api/client'
+import type { ReviewContext, ReviewItem } from '../../api/types'
+import { ReviewCase } from './ReviewCase'
+
+vi.mock('../../api/client', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../api/client')>()),
+  getContext: vi.fn(),
+  listReviews: vi.fn(),
+  decide: vi.fn(),
+  tombstone: vi.fn(),
+}))
+
+const CASE_ID = 'CASE-6FFF40DFB8DA'
+
+const MEDICAL_ITEM: ReviewItem = {
+  case_id: CASE_ID,
+  patient_id: 'P-10041',
+  escalation_kind: 'MedicalQuestion',
+  escalated_from_state: 'Classifying',
+  reasons: ['medical_answer_attempt'],
+  allowed_decisions: ['resolve', 'reject'],
+  required_fields: [],
+  updated_at: '2026-09-19T22:12:39.693277Z',
+}
+
+const Z3_ITEM: ReviewItem = {
+  ...MEDICAL_ITEM,
+  escalation_kind: 'Z3Counterexample',
+  escalated_from_state: 'AssessingReadiness',
+  reasons: ['hours_until:20'],
+  allowed_decisions: ['approve', 'resolve', 'reject'],
+  required_fields: ['patient_deadline'],
+}
+
+const IDENTITY_ITEM: ReviewItem = {
+  ...MEDICAL_ITEM,
+  escalation_kind: 'PatientVerificationFailed',
+  escalated_from_state: 'Received',
+  reasons: [],
+  allowed_decisions: ['approve', 'resolve', 'reject'],
+  required_fields: ['verified_identity_ref'],
+}
+
+function context(overrides: Partial<ReviewContext> = {}): ReviewContext {
+  return {
+    case_id: CASE_ID,
+    patient_id: 'P-10041',
+    state: 'AwaitingHumanReview',
+    escalation_kind: 'MedicalQuestion',
+    escalated_from_state: 'Classifying',
+    reasons: ['medical_answer_attempt'],
+    data: [
+      {
+        entry_id: 'DATA-0080b88ca384',
+        kind: 'request_text',
+        content: 'האם להפסיק את מדלל הדם?',
+        content_hash: '39d813fac47b85aba91577cb8ff34c584f018d92cf083d724a3a6c366a193bf3',
+        created_at: '2026-09-19T22:12:39.681696Z',
+      },
+    ],
+    trace: [
+      {
+        audit_id: 36,
+        record_type: 'Transition',
+        event: 'REQUEST_SUBMITTED',
+        state_before: null,
+        state_after: 'Received',
+        action: null,
+        policy_result: null,
+        policy_reasons: [],
+        recorded_at: '2026-09-19T22:12:39.678380Z',
+      },
+    ],
+    shown_context_ref: 'ctx-ba3e0652b0ea',
+    ...overrides,
+  }
+}
+
+function renderCase() {
+  return render(
+    <MemoryRouter initialEntries={[`/staff/cases/${CASE_ID}`]}>
+      <Routes>
+        <Route path="/staff" element={<h1>תור הסלמות</h1>} />
+        <Route path="/staff/cases/:caseId" element={<ReviewCase />} />
+      </Routes>
+    </MemoryRouter>,
+  )
+}
+
+beforeEach(() => {
+  vi.mocked(api.getContext).mockResolvedValue(context())
+  vi.mocked(api.listReviews).mockResolvedValue([MEDICAL_ITEM])
+  vi.mocked(api.decide).mockResolvedValue({ case_id: CASE_ID, state: 'Completed' })
+  vi.mocked(api.tombstone).mockResolvedValue(undefined)
+})
+
+describe('ReviewCase', () => {
+  it('shows the Data Log content and the audit trace as returned', async () => {
+    renderCase()
+
+    expect(await screen.findByText('האם להפסיק את מדלל הדם?')).toBeInTheDocument()
+    expect(screen.getByText('הפנייה')).toBeInTheDocument()
+    expect(screen.getByText('REQUEST_SUBMITTED')).toBeInTheDocument()
+    expect(screen.getByText('Received')).toBeInTheDocument()
+    expect(screen.getByText('medical_answer_attempt')).toBeInTheDocument()
+  })
+
+  it('renders buttons only for allowed_decisions', async () => {
+    renderCase()
+
+    expect(await screen.findByRole('button', { name: 'סגירת הפנייה' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'דחייה' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'אישור והמשך' })).not.toBeInTheDocument()
+  })
+
+  it('renders the required field of a Z3Counterexample approval', async () => {
+    vi.mocked(api.listReviews).mockResolvedValue([Z3_ITEM])
+    renderCase()
+
+    expect(await screen.findByRole('button', { name: 'אישור והמשך' })).toBeInTheDocument()
+    expect(screen.getByLabelText('מועד יעד חדש למטופל')).toBeInTheDocument()
+    expect(screen.queryByLabelText('אסמכתת זיהוי')).not.toBeInTheDocument()
+  })
+
+  it('sends the decision with the reason and the shown context ref', async () => {
+    renderCase()
+
+    await userEvent.type(await screen.findByLabelText('סיבת ההכרעה'), 'הופנתה למרפאה.')
+    await userEvent.click(screen.getByRole('button', { name: 'סגירת הפנייה' }))
+
+    expect(api.decide).toHaveBeenCalledWith(CASE_ID, {
+      decision: 'resolve',
+      reason: 'הופנתה למרפאה.',
+      shown_context_ref: 'ctx-ba3e0652b0ea',
+    })
+    expect(await screen.findByRole('heading', { name: 'תור הסלמות' })).toBeInTheDocument()
+  })
+
+  it('sends verified_identity_ref with an approval that requires it', async () => {
+    vi.mocked(api.listReviews).mockResolvedValue([IDENTITY_ITEM])
+    vi.mocked(api.decide).mockResolvedValue({ case_id: CASE_ID, state: 'Classifying' })
+    renderCase()
+
+    await userEvent.type(await screen.findByLabelText('סיבת ההכרעה'), 'זוהתה בדלפק.')
+    await userEvent.type(screen.getByLabelText('אסמכתת זיהוי'), 'ID-DESK-17')
+    await userEvent.click(screen.getByRole('button', { name: 'אישור והמשך' }))
+
+    expect(api.decide).toHaveBeenCalledWith(CASE_ID, {
+      decision: 'approve',
+      reason: 'זוהתה בדלפק.',
+      shown_context_ref: 'ctx-ba3e0652b0ea',
+      verified_identity_ref: 'ID-DESK-17',
+    })
+  })
+
+  it('refuses to send without a reason', async () => {
+    renderCase()
+
+    await userEvent.click(await screen.findByRole('button', { name: 'דחייה' }))
+
+    expect(api.decide).not.toHaveBeenCalled()
+    expect(screen.getByText('נדרשת סיבה להכרעה.')).toBeInTheDocument()
+  })
+
+  it('offers to refresh the context after 409 context_changed', async () => {
+    vi.mocked(api.decide).mockRejectedValue(new api.ApiError(409, 'context_changed'))
+    renderCase()
+
+    await userEvent.type(await screen.findByLabelText('סיבת ההכרעה'), 'סגירה.')
+    await userEvent.click(screen.getByRole('button', { name: 'סגירת הפנייה' }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('ההקשר השתנה')
+    expect(api.getContext).toHaveBeenCalledTimes(1)
+
+    await userEvent.click(screen.getByRole('button', { name: 'רענון הקשר' }))
+
+    expect(api.getContext).toHaveBeenCalledTimes(2)
+  })
+
+  it('shows the detail of any other 409', async () => {
+    vi.mocked(api.decide).mockRejectedValue(new api.ApiError(409, 'not_in_review'))
+    renderCase()
+
+    await userEvent.type(await screen.findByLabelText('סיבת ההכרעה'), 'סגירה.')
+    await userEvent.click(screen.getByRole('button', { name: 'סגירת הפנייה' }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('not_in_review')
+    expect(screen.queryByRole('button', { name: 'רענון הקשר' })).not.toBeInTheDocument()
+  })
+
+  it('asks for confirmation before it tombstones a Data Log entry', async () => {
+    renderCase()
+
+    await userEvent.click(await screen.findByRole('button', { name: 'מחיקה לפי בקשת מטופל' }))
+    expect(api.tombstone).not.toHaveBeenCalled()
+
+    const dialog = screen.getByRole('dialog')
+    await userEvent.click(within(dialog).getByRole('button', { name: 'מחיקה' }))
+
+    expect(api.tombstone).toHaveBeenCalledWith(CASE_ID, 'DATA-0080b88ca384')
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+  })
+
+  it('reloads the context after a tombstone, for a fresh shown_context_ref', async () => {
+    renderCase()
+
+    await userEvent.click(await screen.findByRole('button', { name: 'מחיקה לפי בקשת מטופל' }))
+    await userEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'מחיקה' }))
+
+    expect(api.getContext).toHaveBeenCalledTimes(2)
+  })
+
+  it('cancels the deletion without calling the API', async () => {
+    renderCase()
+
+    await userEvent.click(await screen.findByRole('button', { name: 'מחיקה לפי בקשת מטופל' }))
+    await userEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'ביטול' }))
+
+    expect(api.tombstone).not.toHaveBeenCalled()
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  })
+
+  it('says so when the case is not waiting for a decision', async () => {
+    vi.mocked(api.listReviews).mockResolvedValue([])
+    vi.mocked(api.getContext).mockResolvedValue(context({ state: 'Completed', escalation_kind: null, reasons: [] }))
+    renderCase()
+
+    expect(await screen.findByText('הפנייה אינה ממתינה להכרעה')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'סגירת הפנייה' })).not.toBeInTheDocument()
+  })
+})
