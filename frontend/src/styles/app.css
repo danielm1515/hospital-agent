@@ -1408,7 +1408,6 @@ img {
 .control .select {
   appearance: none;
   cursor: pointer;
-}
   color: var(--ink-500);
   background: var(--surface-100);
   white-space: nowrap;
@@ -1513,11 +1512,14 @@ img {
 }
 
 .plan-steps li {
+  display: inline-flex;
+  align-items: baseline;
   background: var(--surface-000);
   border: 1px solid var(--line-200);
   border-radius: var(--radius-sm);
   padding-block: 2px;
   padding-inline: var(--space-2);
+  gap: var(--space-2);
   color: var(--ink-700);
 }
 
@@ -1630,7 +1632,7 @@ img {
 
 /* ---- Audit timeline ----------------------------------------------------- */
 
-.timeline {
+.audit-timeline {
   margin: 0;
   padding: 0;
   list-style: none;
@@ -1641,14 +1643,14 @@ img {
   padding-inline-start: var(--space-4);
 }
 
-.tl-item {
+.audit-timeline-item {
   position: relative;
   display: flex;
   flex-direction: column;
   gap: 2px;
 }
 
-.tl-item::before {
+.audit-timeline-item::before {
   content: '';
   position: absolute;
   inset-inline-start: calc(-1 * var(--space-4) - 5px);
@@ -1659,7 +1661,7 @@ img {
   background: var(--brand-500);
 }
 
-.tl-head {
+.audit-timeline-head {
   display: flex;
   flex-wrap: wrap;
   align-items: baseline;
@@ -1667,7 +1669,7 @@ img {
   gap: var(--space-2);
 }
 
-.tl-kind {
+.audit-timeline-kind {
   font-size: 11px;
   line-height: 16px;
   font-weight: 600;
@@ -1675,29 +1677,29 @@ img {
   color: var(--ink-500);
 }
 
-.tl-kind.kind-Blocked,
-.tl-kind.kind-ExecutionFailed,
-.tl-kind.kind-ExecutionUnknown {
+.audit-timeline-kind.kind-Blocked,
+.audit-timeline-kind.kind-ExecutionFailed,
+.audit-timeline-kind.kind-ExecutionUnknown {
   color: var(--danger-500);
 }
 
-.tl-kind.kind-ExecutionSucceeded {
+.audit-timeline-kind.kind-ExecutionSucceeded {
   color: var(--success-500);
 }
 
-.tl-time {
+.audit-timeline-time {
   font-size: 12px;
   line-height: 18px;
   color: var(--ink-500);
   white-space: nowrap;
 }
 
-.tl-event {
+.audit-timeline-event {
   margin: 0;
   color: var(--ink-900);
 }
 
-.tl-states {
+.audit-timeline-states {
   margin: 0;
   display: flex;
   align-items: center;
@@ -1705,11 +1707,11 @@ img {
   color: var(--ink-500);
 }
 
-.tl-arrow {
+.audit-timeline-arrow {
   color: var(--ink-500);
 }
 
-.tl-meta {
+.audit-timeline-meta {
   margin: 0;
   font-size: 12px;
   line-height: 18px;
@@ -1741,12 +1743,6 @@ img {
 .dialog-actions {
   display: flex;
   flex-wrap: wrap;
-  gap: var(--space-2);
-}
-
-.plan-steps li {
-  display: inline-flex;
-  align-items: baseline;
   gap: var(--space-2);
 }
 
