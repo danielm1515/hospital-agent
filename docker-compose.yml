@@ -30,6 +30,9 @@ services:
       # LLM design §3: from .env (git-ignored). Without a key the Agent Orchestrator does not start.
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OPENAI_MODEL: ${OPENAI_MODEL:-gpt-5.6-luna}
+      # §18.3 demo IdP: both have a development default, so the demo runs without them.
+      AUTH_SECRET: ${AUTH_SECRET:-}
+      DEMO_PASSWORD: ${DEMO_PASSWORD:-demo}
     ports:
       - "127.0.0.1:8000:8000"
     volumes:
@@ -37,6 +40,19 @@ services:
     depends_on:
       db:
         condition: service_healthy
+
+  frontend:
+    build: ./frontend
+    environment:
+      # Vite proxies /api to the backend, so the browser needs no CORS (UI design §2).
+      VITE_API_PROXY_TARGET: http://backend:8000
+      VITE_USE_POLLING: "true"
+    ports:
+      - "127.0.0.1:5173:5173"
+    volumes:
+      - ./frontend/src:/app/src
+    depends_on:
+      - backend
 
 volumes:
   pgdata:

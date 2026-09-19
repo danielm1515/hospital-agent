@@ -1,0 +1,85 @@
+import { useCallback, useEffect, useState } from 'react'
+import { Link, useNavigate } from 'react-router-dom'
+import * as api from '../../api/client'
+import type { PatientView } from '../../api/types'
+import { Alert } from '../../components/Alert'
+import { Button } from '../../components/Button'
+import { StatusPill } from '../../components/StatusPill'
+import { NEW_REQUEST, requestPath } from './paths'
+import { errorMessage, formatDateTime, isMoving, truncate, usePolling } from './helpers'
+
+/**
+ * "הפניות שלי" (design §4): one card per request - the shortened text, a
+ * StatusPill and the date - and a button for a new one. While any case is still
+ * moving the list refreshes every 3 s, because the agent advances it in the
+ * background (`docs/api.md` §4).
+ */
+export function MyRequests() {
+  const navigate = useNavigate()
+  const [requests, setRequests] = useState<PatientView[] | null>(null)
+  const [error, setError] = useState<string | null>(null)
+
+  const load = useCallback(async () => {
+    try {
+      const list = await api.listRequests()
+      setRequests(list)
+      setError(null)
+    } catch (caught) {
+      setError(errorMessage(caught))
+    }
+  }, [])
+
+  useEffect(() => {
+    void load()
+  }, [load])
+
+  usePolling(
+    (requests ?? []).some((request) => isMoving(request.status)),
+    () => void load(),
+  )
+
+  return (
+    <section className="card">
+      <div className="page-head">
+        <h1 className="page-h">הפניות שלי</h1>
+        <Button variant="primary" onClick={() => navigate(NEW_REQUEST)}>
+          פנייה חדשה
+        </Button>
+      </div>
+
+      {error && (
+        <Alert variant="error" title="לא הצלחנו לטעון את הפניות">
+          {error}
+        </Alert>
+      )}
+
+      {requests === null ? (
+        !error && (
+          <p className="page-loading" role="status">
+            טוען…
+          </p>
+        )
+      ) : requests.length === 0 ? (
+        <p className="empty">עדיין אין פניות. אפשר לפתוח פנייה חדשה בכל שעה.</p>
+      ) : (
+        <ul className="req-list">
+          {requests.map((request) => (
+            <li key={request.case_id} className="req-card">
+              <Link className="req-link" to={requestPath(request.case_id)}>
+                <span className="req-text">
+                  {request.request_text ? truncate(request.request_text) : 'תוכן הפנייה נמחק מהמערכת.'}
+                </span>
+                <span className="req-meta">
+                  <StatusPill status={request.status} />
+                  <time className="req-date" dateTime={request.created_at}>
+                    {formatDateTime(request.created_at)}
+                  </time>
+                </span>
+              </Link>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  )
+}
