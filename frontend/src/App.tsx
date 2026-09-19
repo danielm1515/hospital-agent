@@ -6,11 +6,12 @@ import { PatientLogin } from './pages/patient/PatientLogin'
 import { PatientRoutes } from './pages/patient/PatientRoutes'
 import { StaffLogin } from './pages/staff/StaffLogin'
 import { StaffRoutes } from './pages/staff/StaffRoutes'
+import { PATIENT_HOME, STAFF_HOME, PATIENT_LOGIN, STAFF_LOGIN } from './routes'
 
-export const PATIENT_HOME = '/patient'
-export const STAFF_HOME = '/staff'
-export const PATIENT_LOGIN = '/login'
-export const STAFF_LOGIN = '/staff/login'
+// Re-exported so existing `from '../../App'` imports keep working; the values
+// themselves live in `./routes`, a leaf module with no imports, to avoid an
+// import cycle (App -> PatientRoutes/StaffRoutes -> ... -> paths -> App).
+export { PATIENT_HOME, STAFF_HOME, PATIENT_LOGIN, STAFF_LOGIN }
 
 type Area = 'patient' | 'staff'
 

@@ -7,7 +7,7 @@ import { Button } from '../../components/Button'
 import { TextField } from '../../components/TextField'
 import { KeyIcon, ShieldCheckIcon } from '../../components/icons'
 import { useAuth } from '../../auth/AuthContext'
-import { STAFF_HOME } from '../../App'
+import { STAFF_HOME } from '../../routes'
 
 /**
  * The staff sign-in screen, built from `design/ramon-ui/admin-login.html`: the

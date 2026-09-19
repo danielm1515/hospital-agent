@@ -6,7 +6,7 @@ import { AuthLayout } from '../../components/AuthLayout'
 import { Button } from '../../components/Button'
 import { TextField } from '../../components/TextField'
 import { useAuth } from '../../auth/AuthContext'
-import { PATIENT_HOME } from '../../App'
+import { PATIENT_HOME } from '../../routes'
 
 /**
  * The patient sign-in screen, built from `design/ramon-ui/patient-login.html`:

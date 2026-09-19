@@ -1,5 +1,5 @@
 /** The patient area's routes, in one place (wired in `PatientRoutes`). */
-import { PATIENT_HOME } from '../../App'
+import { PATIENT_HOME } from '../../routes'
 
 export const MY_REQUESTS = PATIENT_HOME
 export const NEW_REQUEST = `${PATIENT_HOME}/new`
