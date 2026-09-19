@@ -55,6 +55,13 @@ def test_scenario_2_medical_escalation(sm, app_engine):
 
 
 def test_scenario_3_technical_failure(sm, app_engine):
+    """F5: nothing in the Core increments attempt_count (TOOL_EXECUTION_STARTED is refused
+
+    by design, Refinement 3), so AttemptsAvailable always holds here and this scenario's
+    retries drive RETRY_EXHAUSTED directly rather than exercising the attempt budget; the
+    State Manager entry point that writes ExecutionStarted/AUDIT_RECORDED and increments
+    attempt_count in one transaction arrives in sub-project 3.
+    """
     d = Driver(sm, app_engine)
     d.to_classified()
     d.plan()
