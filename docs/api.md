@@ -8,9 +8,11 @@ here, and the JSON below is real output of the running system.
 - **Content type:** `application/json`, UTF-8. Text may be Hebrew.
 - **Timestamps:** ISO 8601 in UTC, e.g. `2026-09-19T22:12:47.693947Z`. The one timestamp
   the client sends (`patient_deadline`) must carry a timezone offset.
-- **Errors:** always `{"detail": "<code>"}` - a short, stable code, never a sentence and
-  never internal detail. The one exception is `422`, where FastAPI's own validation body
-  (a list under `detail`) is returned; the UI can treat any 422 as "the form is invalid".
+- **Errors:** always `{"detail": "<code>"}` - a short, stable code, never a sentence, never
+  internal detail and never the value that was sent. A body, query or path that fails
+  validation is `422 {"detail": "invalid_body"}`, with no field list and no echo of the
+  input; the UI validates the form itself (the rules below are exact) and treats a 422 as
+  "the form is invalid".
 - **Identity is never sent in a body.** `patient_id`, `reviewer_id` and `reviewer_role`
   come from the token (§18.3). Extra fields in a request body are ignored.
 - **The patient never sees** an escalation kind, a policy reason or an audit row (§12.3).
@@ -74,7 +76,8 @@ methods: `GET`, `POST`, `DELETE`, `OPTIONS`. Allowed headers: `Authorization`,
 
 Codes used everywhere: `401 not_authenticated` (no token, a malformed token, an expired or
 forged one), `403 patients_only` / `403 staff_only` (the wrong role), `404 case_not_found`
-(unknown, or not this patient's case), `422` (the body failed validation).
+(unknown, or not this patient's case), `422 invalid_body` (the body, a query parameter or a
+path parameter failed validation).
 
 ## 3. Public
 
@@ -109,7 +112,8 @@ Request:
 
 - `401 invalid_credentials` - unknown user **or** wrong password (the two are not told
   apart, so the user list cannot be probed).
-- `422` - `user_id` over 64 characters, `password` over 256, or a missing field.
+- `422 invalid_body` - `user_id` over 64 characters, `password` over 256, or a missing
+  field. The submitted password never appears in the answer.
 
 ### GET /api/auth/me
 
@@ -177,9 +181,11 @@ Request:
 case comes back `in_review` at once.
 
 - `403 patients_only` - a staff token.
-- `422` - empty, whitespace-only or over 2000 characters.
-- `409 <reason>` - the event was refused by the state machine (it does not happen for a
-  valid body; `detail` carries the machine's reason code).
+- `422 invalid_body` - empty, whitespace-only or over 2000 characters.
+- `409 request_rejected` - the state machine refused the request. It does not happen for a
+  valid body; the exact reason stays on the server (the Blocked audit row and the
+  application log), because a guard's reason code is internal (§12.3). Show a general
+  "your request could not be submitted" and let the patient try again.
 
 ### GET /api/patient/requests
 
@@ -208,7 +214,8 @@ the case was not waiting for is dropped and deleted again (D25), and the patient
 sees an unchanged view. The UI should compare `status` / `updated_at` rather than assume
 success.
 
-- `404 case_not_found`, `403 patients_only`, `422` for a bad body.
+- `404 case_not_found`, `403 patients_only`, `422 invalid_body` for a bad body (the
+  document's content never comes back in the error).
 
 ## 5. Staff routes
 
@@ -217,7 +224,7 @@ Every route needs a `clinical_staff` or `admin_staff` token; a patient token get
 
 ### GET /api/staff/cases
 
-Optional `?state=<State>`; an unknown state is `422`. `200`:
+Optional `?state=<State>`; an unknown state is `422 invalid_body`. `200`:
 
 ```json
 [
@@ -440,7 +447,7 @@ Errors - all of them leave the case exactly as it was:
 | 409 | `patient_deadline_required` | `approve` on `Z3Counterexample` / `PatientSlaExpired` without it |
 | 409 | `workflow_decision_invalid` | The state machine refused the approval record (e.g. a non-staff reviewer role) |
 | 409 | other codes | Any other guard that refused the human event; show `detail` and re-fetch the case |
-| 422 | (validation body) | A field is over its length limit, or `patient_deadline` has no timezone |
+| 422 | `invalid_body` | A field is over its length limit, or `patient_deadline` has no timezone |
 
 ### DELETE /api/staff/cases/{case_id}/data/{entry_id}
 

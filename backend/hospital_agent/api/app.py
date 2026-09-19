@@ -18,6 +18,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
@@ -87,6 +88,13 @@ def create_app(engine: Engine | None = None, orchestrator: Orchestrator | None =
         allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
         allow_headers=["Authorization", "Content-Type"],
     )
+
+    @app.exception_handler(RequestValidationError)
+    async def invalid_body(request: Request, exc: RequestValidationError) -> JSONResponse:
+        """§12.3: an error body is a code, never data. FastAPI's own validation body echoes
+        the value that failed (`input`), which would put a request text, a document or a
+        password into the response - and from there into a browser console or a log."""
+        return JSONResponse({"detail": "invalid_body"}, status_code=422)
 
     @app.get("/health")
     def health(request: Request, db: Engine = Depends(get_engine)) -> JSONResponse:

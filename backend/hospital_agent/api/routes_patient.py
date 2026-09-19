@@ -6,6 +6,8 @@ answer is always the abstract PatientCaseView: no escalation kind, no reason, no
 """
 from __future__ import annotations
 
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException
 
 from ..auth import DEMO_USERS, Principal
@@ -14,6 +16,7 @@ from .deps import get_session, require_patient
 from .schemas import DocumentUpload, NewRequest, PatientCaseView
 
 router = APIRouter(prefix="/api/patient", tags=["patient"])
+logger = logging.getLogger(__name__)
 
 
 def _identity_verified(principal: Principal) -> bool:
@@ -29,7 +32,11 @@ def submit_request(body: NewRequest, principal: Principal = Depends(require_pati
         case_id = session.submit_request(principal.patient_id, body.text,
                                          identity_verified=_identity_verified(principal))
     except EventRejected as rejected:
-        raise HTTPException(status_code=409, detail=rejected.reason) from None
+        # The patient gets one code: a guard's reason (§3.1) is internal, and §12.3 keeps it
+        # out of an answer a patient sees. The reason stays on the server - in the Blocked
+        # audit row, and here in the application log (a code and a case id, nothing more).
+        logger.info("request rejected: %s", rejected.reason)
+        raise HTTPException(status_code=409, detail="request_rejected") from None
     return PatientCaseView.model_validate(session.patient_view(case_id))
 
 

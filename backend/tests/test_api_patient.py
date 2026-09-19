@@ -135,6 +135,24 @@ def test_an_empty_or_oversized_request_is_422(client, text):
     assert submit(client, PATIENT, text).status_code == 422
 
 
+def test_a_422_body_never_echoes_what_was_sent(client):
+    """§12.3: FastAPI's default validation body carries `input` - the value that failed. A
+    password, a request text or a document would travel back in the error; ours does not."""
+    secret = "p" * 300
+    response = client.post("/api/auth/login", json={"user_id": PATIENT, "password": secret})
+    assert response.status_code == 422
+    assert response.json() == {"detail": "invalid_body"}
+    assert secret not in response.text and "input" not in response.text
+
+    document = {"document_id": "blood_test", "format": "pdf", "content": "c" * 20001}
+    case_id = submit(client, PATIENT).json()["case_id"]
+    upload = client.post(f"/api/patient/requests/{case_id}/documents", json=document,
+                         headers=auth(client, PATIENT))
+    assert upload.status_code == 422
+    assert upload.json() == {"detail": "invalid_body"}
+    assert document["content"] not in upload.text
+
+
 def test_a_request_of_the_maximum_length_is_accepted(client):
     assert submit(client, PATIENT, "x" * 2000).status_code == 201
 
@@ -167,9 +185,18 @@ def test_a_rejected_upload_still_answers_200_with_the_patient_view(client):
 
 # --- roles ------------------------------------------------------------------------------------
 
-@pytest.mark.parametrize("path", ["/api/staff/cases", "/api/staff/reviews", "/api/staff/cases/CASE-1/context"])
-def test_a_patient_is_forbidden_on_staff_routes(client, path):
-    response = client.get(path, headers=auth(client, PATIENT))
+@pytest.mark.parametrize(("method", "path", "body"), [
+    ("GET", "/api/staff/cases", None),
+    ("GET", "/api/staff/cases/CASE-1", None),
+    ("GET", "/api/staff/cases/CASE-1/audit", None),
+    ("GET", "/api/staff/reviews", None),
+    ("GET", "/api/staff/cases/CASE-1/context", None),
+    ("POST", "/api/staff/cases/CASE-1/decision",
+     {"decision": "resolve", "reason": "x", "shown_context_ref": "ctx-x"}),
+    ("DELETE", "/api/staff/cases/CASE-1/data/DATA-1", None),
+])
+def test_a_patient_is_forbidden_on_staff_routes(client, method, path, body):
+    response = client.request(method, path, json=body, headers=auth(client, PATIENT))
     assert response.status_code == 403 and response.json() == {"detail": "staff_only"}
 
 

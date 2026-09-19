@@ -3,10 +3,12 @@
 The Case Monitor routes moved behind staff auth - they are tested in tests/test_api_staff.py.
 """
 import pytest
+from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.exc import ProgrammingError
 
+from hospital_agent.api import deps
 from hospital_agent.api.app import create_app
 
 
@@ -62,10 +64,49 @@ def test_the_routes_never_carry_a_patient_id(client):
     assert not any("patient_id" in path for path in paths)
 
 
+# Every /api route except the login itself, with a body where one is needed.
+PROTECTED = [
+    ("GET", "/api/auth/me", None),
+    ("GET", "/api/patient/requests", None),
+    ("POST", "/api/patient/requests", {"text": "hello"}),
+    ("GET", "/api/patient/requests/CASE-1", None),
+    ("POST", "/api/patient/requests/CASE-1/documents",
+     {"document_id": "blood_test", "format": "pdf", "content": "x"}),
+    ("GET", "/api/staff/cases", None),
+    ("GET", "/api/staff/cases/CASE-1", None),
+    ("GET", "/api/staff/cases/CASE-1/audit", None),
+    ("GET", "/api/staff/reviews", None),
+    ("GET", "/api/staff/cases/CASE-1/context", None),
+    ("POST", "/api/staff/cases/CASE-1/decision",
+     {"decision": "resolve", "reason": "x", "shown_context_ref": "ctx-x"}),
+    ("DELETE", "/api/staff/cases/CASE-1/data/DATA-1", None),
+]
+
+
 def test_the_public_surface_is_health_and_login_only(client):
     assert client.get("/health").status_code == 200
-    for path in ("/api/patient/requests", "/api/staff/cases", "/api/staff/reviews", "/api/auth/me"):
-        assert client.get(path).status_code == 401, path
+    for method, path, body in PROTECTED:
+        response = client.request(method, path, json=body)
+        assert response.status_code == 401, (method, path)
+        assert response.json() == {"detail": "not_authenticated"}, (method, path)
+
+
+def test_every_api_route_declares_an_authentication_dependency(client):
+    """A new route cannot become public by forgetting a check: the dependency is the check,
+    and only the login is allowed to have none."""
+    authenticators = {deps.current_principal, deps.require_patient, deps.require_staff}
+    for route in client.app.routes:
+        if not isinstance(route, APIRoute) or not route.path.startswith("/api"):
+            continue
+        if route.path == "/api/auth/login":
+            continue
+        assert authenticators & set(_dependency_calls(route.dependant)), route.path
+
+
+def _dependency_calls(dependant):
+    for sub in dependant.dependencies:
+        yield sub.call
+        yield from _dependency_calls(sub)
 
 
 def test_cors_allows_the_ui_dev_server(client):
