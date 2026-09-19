@@ -1,10 +1,12 @@
 """Prolog engine and rules.pl (spec §10)."""
+import re
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
 
 from hospital_agent.naming import Action, to_prolog
-from hospital_agent.policy.prolog import RULES_FILE, Prolog, PrologSyntaxError, parse_program
+from hospital_agent.policy.prolog import RULES_FILE, Prolog, PrologSyntaxError, Struct, parse_program
 from hospital_agent.policy.service import _atom
 from tests.spec_programs import prolog_program_and_queries
 
@@ -83,6 +85,51 @@ def test_anonymous_variables_are_distinct():
 def test_syntax_error_is_reported():
     with pytest.raises(PrologSyntaxError):
         Prolog("p(a")
+
+
+# M4: engine builtins that may appear as a called goal (control constructs , \+ ! are
+# unwrapped by _called_predicates below rather than checked as calls).
+_ENGINE_BUILTINS = {
+    ("true", 0), ("fail", 0), ("=", 2), ("==", 2), ("\\==", 2),
+    ("atom", 1), ("memberchk", 2), ("assertz", 1), ("retract", 1),
+}
+_DYNAMIC_DIRECTIVE = re.compile(r":-\s*dynamic\s+(.*?)\.", re.DOTALL)
+_PREDICATE_INDICATOR = re.compile(r"([a-z][A-Za-z0-9_]*)\s*/\s*(\d+)")
+
+
+def _declared_dynamic(text: str) -> set[tuple[str, int]]:
+    """(Name, Arity) pairs from every `:- dynamic ...` directive - parse_program drops directives."""
+    declared = set()
+    for directive in _DYNAMIC_DIRECTIVE.findall(text):
+        declared |= {(name, int(arity)) for name, arity in _PREDICATE_INDICATOR.findall(directive)}
+    return declared
+
+
+def _called_predicates(goal: object) -> Iterator[tuple[str, int]]:
+    """Every (Name, Arity) called in a goal body, control constructs unwrapped rather than reported."""
+    if not isinstance(goal, Struct):
+        return
+    if goal.functor == "," and len(goal.args) == 2:
+        yield from _called_predicates(goal.args[0])
+        yield from _called_predicates(goal.args[1])
+    elif goal.functor == "\\+" and len(goal.args) == 1:
+        yield from _called_predicates(goal.args[0])
+    elif goal.functor == "!" and not goal.args:
+        pass
+    else:
+        yield (goal.functor, len(goal.args))
+
+
+def test_every_called_predicate_is_defined_or_dynamic():
+    """M4: a typo inside a negated goal (\\+ typo_of_a_real_predicate) would otherwise fail
+    open - the goal always fails, so \\+ Goal always succeeds. Guard against that by checking
+    every predicate called in rules.pl is defined, declared dynamic, or an engine builtin."""
+    text = RULES_FILE.read_text(encoding="utf-8")
+    clauses = parse_program(text)
+    defined = {(c.head.functor, len(c.head.args)) for c in clauses}
+    known = defined | _declared_dynamic(text) | _ENGINE_BUILTINS
+    called = {pred for c in clauses for pred in _called_predicates(c.body)}
+    assert called <= known, called - known
 
 
 def test_m3_an_id_with_a_backslash_and_a_quote_round_trips():
