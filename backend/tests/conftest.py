@@ -48,7 +48,7 @@ def migrated(owner_engine: Engine) -> None:
 def app_engine(migrated: None, owner_engine: Engine) -> Engine:
     """A clean database, reached as hospital_app - the role the application uses."""
     with owner_engine.begin() as conn:
-        conn.execute(text("TRUNCATE audit_log, approvals, executions, cases RESTART IDENTITY"))
+        conn.execute(text("TRUNCATE data_log, audit_log, approvals, executions, cases RESTART IDENTITY"))
     engine = create_engine(_env("TEST_DATABASE_URL"))
     yield engine
     engine.dispose()

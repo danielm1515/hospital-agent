@@ -1,4 +1,4 @@
-"""Postgres schema (spec §18.2) as SQLAlchemy Core tables, and engine creation.
+"""Postgres schema (spec §18.2, plus the §12.3 Data Log) as SQLAlchemy Core tables, and engine creation.
 
 alembic/versions/ holds the migrations that create these tables; this module
 mirrors them for queries. tests/test_schema.py fails if the two drift apart.
@@ -120,6 +120,21 @@ approvals = Table(
     Column("granted_at", DateTime(timezone=True), nullable=False),
     Column("valid_until", DateTime(timezone=True), nullable=False),
     Column("consumed_at", DateTime(timezone=True)),
+)
+
+
+# Migration 0003 (LLM design §7): the §12.3 Data Log - the case's own content, never in audit_log.
+data_log = Table(
+    "data_log",
+    metadata,
+    Column("entry_id", Text, primary_key=True),
+    Column("case_id", Text, ForeignKey("cases.case_id"), nullable=False),
+    Column("patient_id", Text, nullable=False),
+    Column("kind", Text, nullable=False),
+    Column("content", Text),
+    Column("content_hash", Text, nullable=False),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+    Column("deleted_at", DateTime(timezone=True)),
 )
 
 
