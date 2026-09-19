@@ -62,6 +62,14 @@ docker compose run --rm backend python -m hospital_agent.policy.build_minimized
 - `db.py` mirrors the Alembic migrations, and `tests/test_schema.py` fails if they drift. A schema change is a new migration, never an edit to `0001`. Every new migration must `GRANT` the new tables to `hospital_app` (§18.2) - `SELECT, INSERT, UPDATE` for an ordinary table, but `SELECT, INSERT` only for an audit-style append-only table (as `0001` does for `audit_log`), so the DB itself, not just the app, enforces that Audit can't be changed or deleted.
 - `tests/driver.py` plays the components that don't exist yet (Classifier, Planner, Policy Service, Tool Executor, reviewers). The scenario and D-tests drive cases through it.
 
+## Hand-off to sub-project 3 (Tool Executor)
+
+- The `TOOL_EXECUTION_STARTED` row must carry, in its `guards` JSON, the §6.1 evidence verified against stored State by `ExecutorReverified`: `InPlan`, `IdentityVerified`, `PatientContextPresent`, `AttemptsAvailable` (evaluated on the attempt count **before** the increment that happens in the same transaction), `medical_content_flag` and, for medical output, `ContentApprovalValid`; plus `execution_id` and `content_hash`. T1–T4, T6, T9 and T12 have so far run only on hand-built traces. T6 relies on `medical_content_flag` being present: a missing flag makes T6 pass trivially (fails open), so it is a hard requirement.
+- `TOOL_EXECUTION_STARTED` and `AUDIT_RECORDED` must be committed together, in one transaction; a committed STARTED without AUDIT_RECORDED makes T9 block every later event of the case, including the TemporalViolation escalation.
+- `decision_token` from the Policy decision is not persisted yet: write it to `executions.decision_token` with the `state_version`, `plan_hash` and step it was issued for, and have `ExecutorReverified` compare them.
+- `ReadinessCheck.run(case_id, hours_until)` takes `hours_until` from its caller: derive it from the appointment time that `CheckAppointment` retrieved and stored, never from request input.
+- A ContentApproval is consumed in the same transaction as the execution row that uses it (§12.4).
+
 ## What the system is
 
 A hospital patient-service agent that handles *operational* requests (appointment status, required documents, approved preparation instructions). It must **never give medical answers automatically**. The design principle is "the LLM proposes, deterministic layers decide". Each case is an event-driven state machine. Every step the LLM proposes must pass layered formal checks before any external call. Any unknown condition **fails closed**: the system stops and escalates to a human, never continues (§14).
