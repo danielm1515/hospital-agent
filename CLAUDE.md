@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project status
 
-Sub-projects 1–7 are built: 1 (Core), 2 (Policy), 3 (Execution), 4 (LLM), 5 (Human Review + the authenticated API) and 7 (D33: the Response Evaluator's recall measurement, `backend/eval/`) are implemented in `backend/`; 6 (React UI, `frontend/`) is complete on the separate `ui` branch and awaits merge into `main` (design and plan under `docs/superpowers/`). The authoritative input is the **binding demo spec** `Hospital_Agent_Clean.docx` (Hebrew, final-project scope). A Markdown copy lives in `docs/spec/`, one file per spec section: **spec §N → `docs/spec/NN-*.md`** (index: `docs/spec/README.md`). The docx is the source of truth. `docs/spec/` is generated, so don't hand-edit it. After the docx changes, regenerate it:
+Sub-projects 1–7 are implemented and merged into `main`: 1 (Core), 2 (Policy), 3 (Execution), 4 (LLM), 5 (Human Review + the authenticated API) and 7 (D33: the Response Evaluator's recall measurement, `backend/eval/`) in `backend/`; 6 (React UI, `frontend/`) served by the compose `frontend` service on `http://localhost:5173` (design and plan under `docs/superpowers/`). The authoritative input is the **binding demo spec** `Hospital_Agent_Clean.docx` (Hebrew, final-project scope). A Markdown copy lives in `docs/spec/`, one file per spec section: **spec §N → `docs/spec/NN-*.md`** (index: `docs/spec/README.md`). The docx is the source of truth. `docs/spec/` is generated, so don't hand-edit it. After the docx changes, regenerate it:
 
 ```bash
 python scripts/spec_to_md.py
@@ -24,8 +24,7 @@ The user wants the project finished without being asked questions. Until they sa
 - **Keep the process, drop the approval waits.** Each sub-project still gets a design doc, a prototype-validated plan, subagent-driven execution with task reviews and a final whole-branch review. The user's approval of each step is given in advance; merge a sub-project to `main` once its final review is clean and the full suite passes.
 - **Parallel agents are welcome** where tasks are independent (isolated worktrees, each with its own compose project and database: `docker compose -p <name> -f docker-compose.yml -f <override without host ports>`). Never disturb the user's running stack on 54322 / 8000 except to restart it after a merge.
 - **Never** read, print or commit the OpenAI key; never push to a remote; never delete user data.
-- Remaining work:
-  1. **Merge the `ui` branch** (sub-project 6 — React UI, §1 patient screen + staff screen, D24, styled after `design/ramon-ui/`) into `main`. Sub-project 7 (D33) is done - see *Verification targets* and *What is left*.
+- Remaining work: none within the demo's own scope (sub-projects 1-7 are all implemented and merged - see *Verification targets* and *What is left*). What is left is only what the spec itself defers: the companion document's (המסמך הנלווה) implementation conditions, not in the repo, and anything beyond the §0 demo scope, which the spec calls the vision document (אפיון מלא).
 
 ## Commands
 
@@ -102,9 +101,9 @@ docker compose run --rm -e RUN_LIVE_LLM=1 backend python -m eval.d33 --live
 
 ## What is left
 
-Sub-project 7 (D33) closes the last item this repo's design docs tracked. What remains is integration, not new design:
+Sub-project 7 (D33) closes the last item this repo's design docs tracked. Sub-projects 1-7, including the React UI, are implemented and merged into `main`; nothing here is pending integration:
 
-- **Sub-project 6 (React UI)** is complete on the separate `ui` branch (`frontend/`: patient screen, staff screen, §1, D24) and only needs merging into `main` - nothing in `backend/` changes for it to run against.
+- **Sub-project 6 (React UI)** (`frontend/`: patient screen, staff screen, §1, D24) is merged into `main` and served by the compose `frontend` service on `http://localhost:5173`.
 - **The golden traces (§15)** are produced by the running system, not hand-derived: `python -m obs.golden` prints `35`, `4`, `54` audit rows for the three §0 scenarios, matching the spec's expected counts.
 - **The demo runs end to end**, on the same code and the same model, through exactly the three scenarios of §0 (normal flow with a missing document, medical escalation, technical failure with bounded retry) - only the patient's input and the mocked external responses change between them.
 - **Anything beyond §0 is the "full characterization" (אפיון מלא) vision document** (see *Project status* above), not this demo - it is out of scope, not a gap.
