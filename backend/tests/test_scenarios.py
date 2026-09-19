@@ -1,95 +1,46 @@
-"""The three scenarios of §0, checked against the golden traces of §15.
+"""The three scenarios of §0 against the golden traces of §15 - complete, from the running system.
 
-Policy decisions (OPA + Prolog), the Readiness Check (Z3) and the Temporal Monitor
-are the real ones; tests/driver.py plays only the components not built yet.
-
-The Core has no Tool Executor yet, so TOOL_EXECUTION_STARTED / AUDIT_RECORDED rows
-are filtered out of the golden trace; the audit row totals (35, 4, 54) are checked
-in sub-project 3. Every other (state after, event) pair must match exactly.
+Everything is real except the components sub-projects 4-5 build (hospital_agent.scripted):
+State Manager, Policy Service (OPA + Prolog), Readiness Check (Z3), Temporal Monitor and
+Tool Executor with the mock external systems. Every (state after, event) line of §15 must
+match, including TOOL_EXECUTION_STARTED / AUDIT_RECORDED, and so must the audit row
+totals: one row per trace line plus one outcome row per execution.
 """
-from datetime import UTC, datetime, timedelta
+import subprocess
+import sys
 
-from hospital_agent.naming import NON_TRANSITION_EVENTS, Event, State
-from tests.driver import Driver
+import pytest
+
+from hospital_agent.naming import State
+from hospital_agent.state_manager import OUTCOME_RECORD_TYPES
+from obs.golden import render, run_scenario, trace_lines
 from tests.spec_tables import golden_traces
 
 
-def expected(scenario: int) -> list[tuple[str, str]]:
-    skip = {e.value for e in NON_TRANSITION_EVENTS}
-    return [(state, event) for state, event in golden_traces()[scenario] if event not in skip]
+@pytest.mark.parametrize("number, audit_rows", [(1, 35), (2, 4), (3, 54)])
+def test_scenario_matches_the_golden_trace(sm, app_engine, number, audit_rows):
+    run = run_scenario(number, sm, app_engine)
+    assert trace_lines(run.entries) == golden_traces()[number]
+    assert len(run.entries) == audit_rows
+    assert run.final_state is State.COMPLETED
 
 
-def transitions(d: Driver) -> list[tuple[str, str]]:
-    return [(e.state_after, e.event) for e in d.trace() if e.record_type == "Transition"]
+def test_scenario_3_makes_three_attempts_then_one_after_approval(sm, app_engine):
+    run = run_scenario(3, sm, app_engine)
+    outcomes = [row.record_type for row in run.entries if row.record_type in OUTCOME_RECORD_TYPES.values()]
+    assert outcomes == ["ExecutionSucceeded", "ExecutionFailed", "ExecutionFailed", "ExecutionFailed",
+                        "ExecutionSucceeded", "ExecutionSucceeded", "ExecutionSucceeded"]
 
 
-def test_scenario_1_normal_flow(sm, app_engine):
-    d = Driver(sm, app_engine)
-    d.to_classified()
-    d.plan()
-    d.retrieve_step(appointment_at=datetime.now(UTC) + timedelta(hours=96))  # CheckAppointment
-    d.advance()
-    d.retrieve_step(required_documents=["referral", "blood_test"], held_documents=["referral"])
-    d.advance()
-    d.retrieve_step()                                   # LoadInstructions -> AssessingReadiness
-    d.assess()                                          # blood_test missing, Z3 unsat: safe to ask
-    d.upload("blood_test")
-    d.classify()                                        # re-classified, readiness in progress
-    d.assess()                                          # everything held -> READINESS_PASSED
-    d.plan_delivery()
-    d.propose()
-    d.allow()
-    d.deliver()
-
-    assert transitions(d) == expected(1)
-    assert d.state is State.COMPLETED
-    assert [e.record_type for e in d.trace()].count("Blocked") == 0
+def test_render_uses_the_spec_15_format(sm, app_engine):
+    lines = render(run_scenario(2, sm, app_engine)).splitlines()
+    assert lines[0] == "SCENARIO 2  medical escalation"
+    assert lines[1].startswith("[Received            ] REQUEST_SUBMITTED")
+    assert lines[-1] == "final: Completed   audit rows: 4"
 
 
-def test_scenario_2_medical_escalation(sm, app_engine):
-    d = Driver(sm, app_engine)
-    d.submit()
-    d.validate()
-    d.medical_question()
-    d.human(Event.HUMAN_RESOLVED_CASE, d.approval("resolve"))
-
-    assert transitions(d) == expected(2)
-    assert d.state is State.COMPLETED
-    assert len(d.trace()) == 4  # §15: "audit rows: 4" - no tool calls in this scenario
-    assert d.case.plan_hash is None  # stopped before any plan was built
-
-
-def test_scenario_3_technical_failure(sm, app_engine):
-    """Each attempt is started through the State Manager, which counts it (attempt_count)
-    and writes the ExecutionStarted pair; the Tool Executor that also makes the call and
-    records its outcome replaces this in obs.golden."""
-    d = Driver(sm, app_engine)
-    d.to_classified()
-    d.plan()
-    d.retrieve_step(appointment_at=datetime.now(UTC) + timedelta(hours=96))  # CheckAppointment
-    d.advance()
-    for _ in range(2):                                  # attempts 1 and 2 time out
-        d.propose()
-        d.allow()
-        d.sm.start_execution(d.case_id, d.last_execution_id)
-        d.transient_failure()
-    d.propose()
-    d.allow()
-    d.sm.start_execution(d.case_id, d.last_execution_id)
-    d.retry_exhausted()                                 # attempt 3 -> a human decides
-    d.human(Event.HUMAN_APPROVED, d.approval("approve"))
-    assert (d.case.retry_cycle, d.case.attempt_count) == (1, 0)
-    d.retrieve_step(required_documents=["referral", "blood_test"], held_documents=["referral"])
-    d.advance()
-    d.retrieve_step()
-    d.assess()
-    d.upload("blood_test")
-    d.classify()
-    d.assess()
-    d.plan_delivery()
-    d.propose()
-    d.allow()
-    d.deliver()
-
-    assert transitions(d) == expected(3)
-    assert d.state is State.COMPLETED
+def test_obs_golden_command_prints_the_three_traces(migrated):
+    out = subprocess.run([sys.executable, "-m", "obs.golden"], capture_output=True, text=True, check=True).stdout
+    finals = [line for line in out.splitlines() if line.startswith("final:")]
+    assert finals == ["final: Completed   audit rows: 35", "final: Completed   audit rows: 4",
+                      "final: Completed   audit rows: 54"]
