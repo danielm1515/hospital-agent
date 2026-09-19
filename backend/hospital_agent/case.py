@@ -58,6 +58,11 @@ class CaseRecord:
         return Action(self.ordered_steps[step - 1]["action"])
 
     @property
+    def readiness_complete(self) -> bool:
+        """Every required document is held - computed from tool results, never declared (§3.1)."""
+        return self.required_documents is not None and set(self.required_documents) <= set(self.held_documents)
+
+    @property
     def current_action(self) -> Action | None:
         return self.step_action(self.current_step)
 

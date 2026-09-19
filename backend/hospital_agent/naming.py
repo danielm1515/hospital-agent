@@ -99,6 +99,13 @@ EVENT_OWNER: dict[Event, Component] = {
     Event.AUDIT_RECORDED: Component.STATE_MANAGER,
 }
 
+# The three outcomes of a Policy decision (§2.2 events 8, 9, 17).
+POLICY_DECISION_EVENTS = frozenset({
+    Event.POLICY_ALLOWED,
+    Event.POLICY_DENIED,
+    Event.POLICY_HUMAN_REVIEW_REQUIRED,
+})
+
 # §13.2: the patient's two events and the three human decisions.
 EXTERNAL_EVENTS = frozenset(set(Event) - set(EVENT_OWNER))
 

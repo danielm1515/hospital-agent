@@ -24,11 +24,21 @@ from .case import CaseRecord, new_case
 from .escalation import EscalationCoordinator
 from .fsm import Effect, Resolution, apply_effects, resolve
 from .guards import GuardContext, GuardPorts
-from .naming import EVENT_OWNER, NON_TRANSITION_EVENTS, Component, EscalationKind, Event, State, canonical_event
+from .naming import (
+    EVENT_OWNER,
+    NON_TRANSITION_EVENTS,
+    POLICY_DECISION_EVENTS,
+    Component,
+    EscalationKind,
+    Event,
+    State,
+    canonical_event,
+)
 from .repository import AuditEntry
 
 MAX_REPROCESS = 3
-# §12.2 rule_version. The Policy / LLM versions join it in later sub-projects.
+# §12.2 rule_version of the transition table. wiring.build_state_manager() appends the
+# version of the policy files (policy.rego, rules.pl, flows.dl).
 RULE_VERSION = "transitions-v1"
 
 
@@ -53,6 +63,16 @@ class ReprocessLimitExceeded(RuntimeError):
 
 class _StaleVersion(Exception):
     pass
+
+
+def _policy_evidence(event: Event, payload: Mapping[str, Any]) -> dict[str, bool]:
+    """Evidence the Policy Service attaches to its decision row (§6.1: HumanAuthorized is the
+    ContentApprovalValid evidence kept on the POLICY_ALLOWED row). Only Policy decisions may
+    carry it - the owner check has already proven they come from the Policy Service."""
+    if event not in POLICY_DECISION_EVENTS:
+        return {}
+    evidence = payload.get("evidence") or {}
+    return {str(k): v for k, v in evidence.items() if isinstance(v, bool)}
 
 
 @dataclass(frozen=True)
@@ -84,12 +104,14 @@ class StateManager:
         *,
         clock: Callable[[], datetime] = _utcnow,
         new_case_id: Callable[[], str] = _new_case_id,
+        rule_version: str = RULE_VERSION,
     ) -> None:
         self.engine = engine
         self.monitor = monitor
         self.ports = ports
         self.clock = clock
         self.new_case_id = new_case_id
+        self.rule_version = rule_version
         self.escalation = EscalationCoordinator(self)
 
     # --- public API ----------------------------------------------------------------
@@ -193,6 +215,12 @@ class StateManager:
             if Effect.CONSUME_APPROVAL in row.effects:
                 if repository.consume_approval(conn, ctx.approval.approval_id, now) == 0:
                     raise _StaleVersion(case.case_id)
+            override_id = payload.get("policy_review_override_id")
+            if event in POLICY_DECISION_EVENTS and override_id:
+                # Policy design decision 4: a PolicyReview override is consumed by the next
+                # Policy decision, whatever it is, in the same transaction.
+                if repository.consume_approval(conn, override_id, now) == 0:
+                    raise _StaleVersion(case.case_id)
             return TransitionResult(after.case_id, True, state, row.target, audit_id=audit_id)
 
     def _block(
@@ -219,7 +247,7 @@ class StateManager:
             event=event.value,
             state_before=case.state.value,
             state_after=case.state.value,
-            rule_version=RULE_VERSION,
+            rule_version=self.rule_version,
             recorded_at=now,
             policy_reasons=[reason],
             attempt_number=case.attempt_count,
@@ -232,8 +260,8 @@ class StateManager:
         audit_id = repository.insert_audit(conn, entry)
         return TransitionResult(case.case_id, False, case.state, case.state, reason=reason, audit_id=audit_id)
 
-    @staticmethod
     def _audit_entry(
+        self,
         before: CaseRecord | None,
         after: CaseRecord,
         event: Event,
@@ -252,9 +280,9 @@ class StateManager:
             event=event.value,
             state_before=before.state.value if before else None,
             state_after=after.state.value,
-            rule_version=RULE_VERSION,
+            rule_version=self.rule_version,
             recorded_at=now,
-            guards=resolution.guard_results,
+            guards={**resolution.guard_results, **_policy_evidence(event, payload)},
             action=action,
             execution_id=payload.get("execution_id"),
             policy_result=payload.get("policy_result"),

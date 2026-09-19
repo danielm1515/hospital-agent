@@ -172,6 +172,29 @@ def approval_used(conn: Connection, approval_id: str) -> bool:
     return row is not None
 
 
+def open_policy_review_override(
+    conn: Connection, case_id: str, plan_hash: str | None, current_step: int | None
+) -> ApprovalRecord | None:
+    """The newest unconsumed PolicyReview approval bound to this plan step (§3.1 PolicyReviewOverrideValid).
+
+    OPA judges its validity; this only finds the candidate the Policy Service presents.
+    """
+    row = conn.execute(
+        select(approvals)
+        .where(
+            approvals.c.case_id == case_id,
+            approvals.c.approval_type == "WorkflowDecision",
+            approvals.c.escalation_kind == "PolicyReview",
+            approvals.c.decision == "approve",
+            approvals.c.consumed_at.is_(None),
+            approvals.c.plan_hash == plan_hash,
+            approvals.c.current_step == current_step,
+        )
+        .order_by(approvals.c.granted_at.desc())
+    ).mappings().first()
+    return None if row is None else ApprovalRecord(**dict(row))
+
+
 def consume_approval(conn: Connection, approval_id: str, now: datetime) -> int:
     """Single use (§18.2): returns 0 if the approval was already consumed."""
     result = conn.execute(

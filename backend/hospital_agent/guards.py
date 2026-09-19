@@ -127,12 +127,7 @@ def is_idempotent(ctx: GuardContext) -> str | None:
 
 def readiness_complete(ctx: GuardContext) -> str | None:
     # Computed from tool results stored in State - never declared by the caller.
-    case = ctx.case
-    return _check(
-        case is not None
-        and case.required_documents is not None
-        and set(case.required_documents) <= set(case.held_documents)
-    )
+    return _check(ctx.case is not None and ctx.case.readiness_complete)
 
 
 def delivery_confirmed(ctx: GuardContext) -> str | None:
