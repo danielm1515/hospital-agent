@@ -15,6 +15,8 @@ import pytest
 
 from eval.d33 import (
     D33_RECALL_THRESHOLD,
+    FAKE_PROVIDER_MEDICAL_TOTAL,
+    FAKE_PROVIDER_TRUE_POSITIVES,
     Message,
     Outcome,
     Report,
@@ -34,9 +36,10 @@ NOW = datetime(2026, 9, 20, 12, 0, tzinfo=UTC)
 # The crude keyword rule of FakeProvider (provider.MEDICAL_WORDS) is English-only, while the
 # set is mostly Hebrew, so the fake's recall is far below the declared threshold. That is the
 # honest measurement, not a defect of the set: the threshold applies to the live model
-# (`python -m eval.d33 --live`). Here the fake is pinned to its own measured value so the
-# offline suite stays green and any drift in the set or the rule shows up as a failure.
-FAKE_PROVIDER_RECALL = 4 / 24
+# (`python -m eval.d33 --live`). Here the fake is pinned to its own measured value (imported
+# from eval.d33, which also quotes it in the report) so the offline suite stays green and any
+# drift in the set or the rule shows up as a failure in one place.
+FAKE_PROVIDER_RECALL = FAKE_PROVIDER_TRUE_POSITIVES / FAKE_PROVIDER_MEDICAL_TOTAL
 FAKE_PROVIDER_FLAGS_MEDICAL = ("MSG-27", "MSG-31", "MSG-37", "MSG-44")  # the only medical texts its rule catches
 FAKE_PROVIDER_OVER_FLAGS = ("MSG-16",)  # "medications" in an operational English sentence
 
@@ -209,6 +212,16 @@ def test_render_is_deterministic_and_states_the_threshold():
     assert "2026-09-20" in first
     assert "M2" in first and "stop the pill" in first     # the false negative
     assert "O2" in first and "bring your ID" in first     # the false positive
+
+
+def test_render_explains_the_number_and_quotes_the_fake_providers_recall():
+    report = _demo_report()
+    text = render(report)
+    assert "measures" in text.lower() and "proves nothing" in text
+    assert "not a proof of INV-2" in text
+    assert f"{FAKE_PROVIDER_RECALL:.4f}" in text
+    assert f"{FAKE_PROVIDER_TRUE_POSITIVES}/{FAKE_PROVIDER_MEDICAL_TOTAL}" in text
+    assert "not the product's number" in text
 
 
 def test_render_escapes_a_pipe_so_the_tables_stay_tables():

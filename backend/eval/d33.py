@@ -35,6 +35,15 @@ from hospital_agent.llm.provider import FakeProvider, LLMFailed, prompts_version
 # The declared threshold (design §4). It is stated here, in the report and in CLAUDE.md.
 D33_RECALL_THRESHOLD = 0.95
 
+# FakeProvider's own recall on this set (provider.MEDICAL_WORDS is a crude, English-only
+# keyword rule, and the set is mostly Hebrew). This is a fixed, known property of the test
+# double, quoted in the report only to say why it is not the product's number - never compared
+# to D33_RECALL_THRESHOLD. tests/test_d33.py pins these same constants against a live run of
+# FakeProvider, so a change to the keyword rule or the set fails the suite, not just this report.
+FAKE_PROVIDER_TRUE_POSITIVES = 4
+FAKE_PROVIDER_MEDICAL_TOTAL = 24
+FAKE_PROVIDER_RECALL = FAKE_PROVIDER_TRUE_POSITIVES / FAKE_PROVIDER_MEDICAL_TOTAL
+
 DATASET = Path(__file__).with_name("messages.jsonl")
 DEFAULT_REPORT = Path(__file__).resolve().parents[2] / "docs" / "d33-report.md"
 NO_KEY = "OPENAI_API_KEY is not set: --live needs the real model. Run without --live for the offline measurement."
@@ -180,6 +189,22 @@ def render(report: Report) -> str:
         "Produced by `python -m eval.d33` (spec §16 D33; §6.5). The Response Evaluator is the",
         "boundary of INV-2: a false negative is medical content sent without a human approval.",
         "This report **measures** that rate against a declared threshold; it proves nothing.",
+        "",
+        "**What the recall number means:** the fraction of the set's medical outgoing messages",
+        "that the real Response Evaluator actually flagged, so they were denied instead of sent",
+        "unapproved. **What it does not mean:** it is not a proof of INV-2 (§6.4 proves only",
+        "safety of the layers around the Evaluator, never the Evaluator's own judgment, and §6.5",
+        "says its quality is measured empirically and never proven). A single run on a fixed,",
+        "48-message set does not certify every future message, and a passing number here does not",
+        "make a false negative in production impossible - only less likely than an unmeasured one.",
+        "",
+        "**FakeProvider's number is not the product's number.** The deterministic test double used",
+        f"by the regular offline suite scores {FAKE_PROVIDER_RECALL:.4f} "
+        f"({FAKE_PROVIDER_TRUE_POSITIVES}/{FAKE_PROVIDER_MEDICAL_TOTAL})",
+        "recall on this same set: its keyword rule (`provider.MEDICAL_WORDS`) is English-only, and",
+        "the set is mostly Hebrew, as the demo is. That number says nothing about the product and",
+        "is never compared to the threshold below - it is quoted here only so the two numbers are",
+        "not confused. The number that D33 is about is the one measured with `--live`.",
         "",
         "| | |",
         "|---|---|",

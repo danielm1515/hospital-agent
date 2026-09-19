@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project status
 
-Sub-projects 1 (Core), 2 (Policy), 3 (Execution), 4 (LLM) and 5 (Human Review + the authenticated API) are implemented in `backend/` (design and plan under `docs/superpowers/`). The authoritative input is the **binding demo spec** `Hospital_Agent_Clean.docx` (Hebrew, final-project scope). A Markdown copy lives in `docs/spec/`, one file per spec section: **spec §N → `docs/spec/NN-*.md`** (index: `docs/spec/README.md`). The docx is the source of truth. `docs/spec/` is generated, so don't hand-edit it. After the docx changes, regenerate it:
+Sub-projects 1–7 are built: 1 (Core), 2 (Policy), 3 (Execution), 4 (LLM), 5 (Human Review + the authenticated API) and 7 (D33: the Response Evaluator's recall measurement, `backend/eval/`) are implemented in `backend/`; 6 (React UI, `frontend/`) is complete on the separate `ui` branch and awaits merge into `main` (design and plan under `docs/superpowers/`). The authoritative input is the **binding demo spec** `Hospital_Agent_Clean.docx` (Hebrew, final-project scope). A Markdown copy lives in `docs/spec/`, one file per spec section: **spec §N → `docs/spec/NN-*.md`** (index: `docs/spec/README.md`). The docx is the source of truth. `docs/spec/` is generated, so don't hand-edit it. After the docx changes, regenerate it:
 
 ```bash
 python scripts/spec_to_md.py
@@ -24,9 +24,8 @@ The user wants the project finished without being asked questions. Until they sa
 - **Keep the process, drop the approval waits.** Each sub-project still gets a design doc, a prototype-validated plan, subagent-driven execution with task reviews and a final whole-branch review. The user's approval of each step is given in advance; merge a sub-project to `main` once its final review is clean and the full suite passes.
 - **Parallel agents are welcome** where tasks are independent (isolated worktrees, each with its own compose project and database: `docker compose -p <name> -f docker-compose.yml -f <override without host ports>`). Never disturb the user's running stack on 54322 / 8000 except to restart it after a merge.
 - **Never** read, print or commit the OpenAI key; never push to a remote; never delete user data.
-- Remaining work, in order:
-  1. **Sub-project 6 — React UI** (§1 patient screen + staff screen, D24), styled after the design the user supplied (`design/ramon-ui/`: `tokens.css`, `components.html`, `index.html`, `patient-login.html`, `admin-login.html`).
-  2. **Sub-project 7 — D33**: the Response Evaluator's labelled evaluation set and recall report (§6.5).
+- Remaining work:
+  1. **Merge the `ui` branch** (sub-project 6 — React UI, §1 patient screen + staff screen, D24, styled after `design/ramon-ui/`) into `main`. Sub-project 7 (D33) is done - see *Verification targets* and *What is left*.
 
 ## Commands
 
@@ -76,6 +75,16 @@ The LLM needs `OPENAI_API_KEY` (and optionally `OPENAI_MODEL`, default `gpt-5.6-
 docker compose run --rm -e RUN_LIVE_LLM=1 backend pytest tests/test_live_llm.py -v
 ```
 
+D33 (§16, §6.5): the Response Evaluator's recall over the labelled set `backend/eval/messages.jsonl` (48 messages, 24 medical / 24 operational, mostly Hebrew). The default provider is `FakeProvider` (no network); `--live` needs `RUN_LIVE_LLM=1` and `OPENAI_API_KEY`, same gate as above. Both write `docs/d33-report.md` by default - the container's `WORKDIR` is `backend/`, so a relative `--out` resolves under `backend/`, not the repo root; leave `--out` unset unless passing an absolute path.
+
+```bash
+docker compose run --rm backend python -m eval.d33
+```
+
+```bash
+docker compose run --rm -e RUN_LIVE_LLM=1 backend python -m eval.d33 --live
+```
+
 ## Working in the backend (`backend/hospital_agent/`)
 
 - `fsm.py` is the §3 table as data. Each row keeps its Guard cell verbatim in `spec_guard`, and `tests/test_fsm.py` compares all 41 rows with `docs/spec/03-transitions-guards.md`. Change the spec first, then the row.
@@ -91,16 +100,14 @@ docker compose run --rm -e RUN_LIVE_LLM=1 backend pytest tests/test_live_llm.py 
 - `hospital_agent/data_log.py` is the §12.3 Data Log (table `data_log`, migration 0003): request text, uploaded documents, retrieved instructions and outgoing messages. Audit keeps only `content_hash`; deletion is a tombstone.
 - `hospital_agent/scripted.py` drives the patient through the real Session Service and still inserts the reviewers' approvals directly (so a test can build an invalid one); `tests/driver.py` adds test-only shortcuts that emit a Classifier / Planner / Orchestrator event directly. The Tool Executor is the only code that calls an external system (`execution/gateway.py`); `POLICY_ALLOWED` writes the `executions` intent row, and `StateManager.start_execution()` writes the STARTED / AUDIT_RECORDED pair.
 
-## Hand-off to sub-project 6 (React UI)
+## What is left
 
-- **`docs/api.md` is the contract**: every route, request body, response body and error code, with real JSON. Build the UI from that file; if something is missing there, fix the file, not the UI's assumptions.
-- **Two screens (§1, D24):** the patient screen (login, submit, status, upload) and the staff screen (queue, context, decision, case monitor). The design the user supplied is in `design/ramon-ui/` (`tokens.css`, `components.html`, `index.html`, `patient-login.html`, `admin-login.html`) - follow it.
-- **Auth:** `POST /api/auth/login` with a demo user and `DEMO_PASSWORD` (default `demo`), then `Authorization: Bearer <token>` on every `/api` call; the token lasts 8 hours and there is no refresh. The demo users are `P-10041`, `P-20000`, `P-30000` (identity fails on purpose), `coordinator_nurse` and `admin_coordinator`. `role` decides which screen to show.
-- **CORS** already allows `http://localhost:5173` and `http://127.0.0.1:5173`; any other origin goes in `CORS_ORIGINS`.
-- **The patient sees only the abstract status** (`received`, `in_progress`, `needs_document`, `in_review`, `completed`, `closed`) - never an escalation kind, a reason or an audit row (§12.3). The case advances in the background, so poll the case after a submit or an upload.
-- **A staff decision is two steps:** GET the context, show it, then POST the decision with that `shown_context_ref`. Render exactly the queue item's `allowed_decisions` and `required_fields`; a 409 means re-fetch and decide again on what is now true.
-- **There is no ContentApproval screen.** A message the Response Evaluator marks medical is denied outright (D8), not queued for a clinical_staff sign-off; the staff's only lever on it is `resolve` from the ordinary review queue, same as any other escalation. Don't build a message-approval UI - it has no route to call.
-- Nothing in the UI is authoritative: every state it shows comes from a response, and it may never send `patient_id`, `reviewer_id` or `reviewer_role`.
+Sub-project 7 (D33) closes the last item this repo's design docs tracked. What remains is integration, not new design:
+
+- **Sub-project 6 (React UI)** is complete on the separate `ui` branch (`frontend/`: patient screen, staff screen, §1, D24) and only needs merging into `main` - nothing in `backend/` changes for it to run against.
+- **The golden traces (§15)** are produced by the running system, not hand-derived: `python -m obs.golden` prints `35`, `4`, `54` audit rows for the three §0 scenarios, matching the spec's expected counts.
+- **The demo runs end to end**, on the same code and the same model, through exactly the three scenarios of §0 (normal flow with a missing document, medical escalation, technical failure with bounded retry) - only the patient's input and the mocked external responses change between them.
+- **Anything beyond §0 is the "full characterization" (אפיון מלא) vision document** (see *Project status* above), not this demo - it is out of scope, not a gap.
 
 ## What the system is
 
@@ -199,6 +206,7 @@ The declared event-name exceptions are `HUMAN_RESOLVED_CASE` and `TOOL_TRANSIENT
   - Prolog queries (§10);
   - Datalog queries (§11).
 - **Demo stubs:** the IdP is a fixed user list (§18.3). External systems (appointments, documents, instructions, patient channel) are mocks. All three scenarios run on the same code and model, and only patient input and mock responses change.
+- **D33 (§16, §6.5):** the Response Evaluator's recall over `backend/eval/messages.jsonl` (48 messages, 24 medical / 24 operational, mostly Hebrew), run with `python -m eval.d33` (`--live` for the real model). Declared threshold: `D33_RECALL_THRESHOLD = 0.95`. This is measured, never proven (§6.5): a false negative here is medical content that would have reached the patient without a `ContentApproval`. Measured: `FakeProvider` (offline, not compared to the threshold - its keyword rule is English-only against a mostly-Hebrew set) **0.1667 (4/24)**; live `gpt-5.6-luna` (`docs/d33-report.md`) **1.0000 (24/24), meets the threshold**, with 2 false positives among the 24 operational messages (a delay only, §6.5) and 0 unusable answers.
 
 ## Tech stack (decided by the user)
 
