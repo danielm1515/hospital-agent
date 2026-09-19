@@ -116,7 +116,7 @@
 - ‏`LoadInstructions` מחזיר גם `instruction_text`.
 - ה־Tool Executor שומר את הטקסט ב־Data Log (`instructions`) ומעביר אותו ל־Safety Classifier דרך hook, לפני `DATA_RETRIEVED`. ה־hook מוזרק ל־`ToolExecutor`.
 - `safety_level` נכנס ל־payload של `DATA_RETRIEVED`. הטקסט עצמו לא נכנס, ו־`RESULT_FIELDS` לא משתנה עבורו.
-- ה־effect `RECORD_RETRIEVAL` **רק מעלה** את `safety_level`, לעולם לא מוריד אותו.
+- ה־effect `RECORD_RETRIEVAL` **רק מעלה** את `safety_level`, לעולם לא מוריד אותו. אותו כלל חל גם על `RECORD_CLASSIFICATION`: סיווג מחדש אחרי העלאת מסמך לא מבטל עלייה בסיכון שנמצאה בתוכן שנשלף (נמצא בבניית אב־הטיפוס).
 - כשהרמה High או Critical, OPA מחזיר RequireHumanReview בצעד הבא, כלומר `PolicyReview`. זה כבר קיים ב־`policy.rego`.
 - אם בדיקת הבטיחות נכשלת שלוש פעמים, התוצאה היא `ExecutionUnknown`, כי ה־Tool Executor הוא מי ששולח את ה־signal.
 
@@ -170,7 +170,7 @@
   - שלוש דחיות `InPlan` מובילות ל־`PlanningFailed`.
   - ‏`plan_complete=false`.
   - כשל של ה־Evaluator.
-  - הודעה שסומנה רפואית מובילה ל־`PolicyReview` דרך OPA.
+  - הודעה שסומנה רפואית נדחית ב־OPA בלי ContentApproval: `POLICY_DENIED` עם `medical_answer_attempt`, כמו D8, והפנייה מוסלמת כ־`PolicyDenied`.
   - תוכן שנשלף עם סיכון גבוה מוביל ל־`PolicyReview` בצעד הבא.
 - **Restart:** ה־Orchestrator נעצר באמצע פנייה, ו־Orchestrator חדש מסיים אותה.
 - **Golden:**
