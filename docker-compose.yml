@@ -27,6 +27,9 @@ services:
       TEST_DATABASE_URL: postgresql+psycopg://hospital_app:${APP_DB_PASSWORD:-hospital_app_dev}@db:5432/hospital_test
       TEST_MIGRATION_DATABASE_URL: postgresql+psycopg://hospital_owner:${POSTGRES_PASSWORD:-hospital_owner_dev}@db:5432/hospital_test
       WATCHFILES_FORCE_POLLING: "true"
+      # LLM design §3: from .env (git-ignored). Without a key the Agent Orchestrator does not start.
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-5.6-luna}
     ports:
       - "127.0.0.1:8000:8000"
     volumes:

@@ -3,7 +3,8 @@ the real ExecutorReverified (Execution design §3.1).
 
 There is no other production path - a State Manager with a permissive monitor or port
 exists only in tests. rule_version records the transition table's
-version plus a hash of the policy files in force (§12.2).
+version plus a hash of the policy files in force (§12.2), and - when the server runs the
+LLM components - the model and the hash of its four prompts (§18.5).
 """
 from __future__ import annotations
 
@@ -30,7 +31,13 @@ def policy_version() -> str:
     return digest.hexdigest()[:12]
 
 
-def build_state_manager(engine: Engine) -> StateManager:
-    """The real Temporal Monitor and the real ExecutorReverified - there is no other port left."""
+def build_state_manager(engine: Engine, llm_version: str | None = None) -> StateManager:
+    """The real Temporal Monitor and the real ExecutorReverified - there is no other port left.
+
+    llm_version: model_selector.llm_version(provider) when the LLM components run.
+    """
+    rule_version = f"{RULE_VERSION}+policy-{policy_version()}"
+    if llm_version is not None:
+        rule_version = f"{rule_version}+{llm_version}"
     return StateManager(engine, TemporalMonitor(), GuardPorts(executor_reverified=verify_decision),
-                        rule_version=f"{RULE_VERSION}+policy-{policy_version()}")
+                        rule_version=rule_version)
