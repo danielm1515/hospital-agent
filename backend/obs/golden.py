@@ -1,10 +1,12 @@
 """python -m obs.golden - the §15 golden traces, produced by the running system.
 
 Spec §15: "ה־traces להלן נגזרו ידנית ... לפני הגשה יש להחליפם בפלט המערכת: python3 -m obs.golden".
-Each scenario runs end to end on the real State Manager, Policy Service (OPA + Prolog),
-Readiness Check (Z3), Temporal Monitor and Tool Executor against the mock external
-systems; only the components sub-projects 4-5 will build are scripted
-(hospital_agent.scripted). Only the mock's script changes between scenarios (§0).
+Each scenario runs end to end on the real Agent Orchestrator and LLM components (with the
+deterministic FakeProvider), State Manager, Policy Service (OPA + Prolog), Readiness Check
+(Z3), Temporal Monitor and Tool Executor against the mock external systems; only the
+Session Service and the reviewers, which sub-project 5 builds, are scripted
+(hospital_agent.scripted). Only patient input and the mock's script change between
+scenarios (§0).
 
 It runs on the test database (Execution design decision 6): it migrates it and clears
 its tables first, and never touches the main database.
@@ -23,6 +25,9 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Engine
 
 from hospital_agent.execution.gateway import MockGateway
+from hospital_agent.llm.model_selector import llm_version
+from hospital_agent.llm.orchestrator import Orchestrator
+from hospital_agent.llm.provider import FakeProvider
 from hospital_agent.naming import Event, State
 from hospital_agent.policy.temporal import trace_rows
 from hospital_agent.repository import AuditEntry
@@ -41,54 +46,38 @@ class ScenarioRun:
     entries: list[AuditEntry]  # every audit row of the case, in order
 
 
-def _scenario_1(a: ScriptedAgents) -> None:
-    a.submit()
-    a.validate()
-    a.classify()
-    a.plan()
-    a.run_step()          # CheckAppointment
-    a.advance()
-    a.run_step()          # CheckDocuments: blood_test is missing
-    a.advance()
-    a.run_step()          # LoadInstructions -> AssessingReadiness
-    a.assess()            # Z3 unsat: safe to ask the patient
-    a.upload("blood_test")
-    a.classify()          # re-classified, readiness in progress
-    a.assess()            # everything held -> Ready
-    a.plan_delivery()
-    a.run_step()          # SendStatusUpdate -> Completed
+MEDICAL_REQUEST = "Should I stop taking my blood thinner before the colonoscopy?"
 
 
-def _scenario_2(a: ScriptedAgents) -> None:
-    a.submit()
-    a.validate()
-    a.medical_question()
-    a.human(Event.HUMAN_RESOLVED_CASE, a.approval("resolve"))
+def _scenario_1(patient: ScriptedAgents, agent: Orchestrator) -> None:
+    patient.submit()
+    patient.validate()
+    agent.run_case(patient.case_id)   # classify, plan, three retrievals, Z3: ask for blood_test
+    patient.upload("blood_test")
+    agent.run_case(patient.case_id)   # re-classified, readiness passes, the status message is sent
 
 
-def _scenario_3(a: ScriptedAgents) -> None:
-    a.submit()
-    a.validate()
-    a.classify()
-    a.plan()
-    a.run_step()          # CheckAppointment
-    a.advance()
-    for _ in range(3):    # the document system times out three times; no fourth attempt
-        a.run_step()
-    a.human(Event.HUMAN_APPROVED, a.approval("approve"))  # fixed - a new, bounded retry cycle
-    a.run_step()          # CheckDocuments succeeds
-    a.advance()
-    a.run_step()          # LoadInstructions
-    a.assess()
-    a.upload("blood_test")
-    a.classify()
-    a.assess()
-    a.plan_delivery()
-    a.run_step()          # SendStatusUpdate
+def _scenario_2(patient: ScriptedAgents, agent: Orchestrator) -> None:
+    patient.submit()
+    patient.validate(MEDICAL_REQUEST)
+    agent.run_case(patient.case_id)   # MedicalQuestion: a human decides
+    patient.human(Event.HUMAN_RESOLVED_CASE, patient.approval("resolve"))
 
+
+def _scenario_3(patient: ScriptedAgents, agent: Orchestrator) -> None:
+    patient.submit()
+    patient.validate()
+    agent.run_case(patient.case_id)   # the document system times out three times: RetryExhausted
+    patient.human(Event.HUMAN_APPROVED, patient.approval("approve"))  # fixed - a new, bounded retry cycle
+    agent.run_case(patient.case_id)
+    patient.upload("blood_test")
+    agent.run_case(patient.case_id)
+
+
+Scenario = Callable[[ScriptedAgents, Orchestrator], None]
 
 # number -> (title, the mock's script, the scenario)
-SCENARIOS: dict[int, tuple[str, Callable[[], MockGateway], Callable[[ScriptedAgents], None]]] = {
+SCENARIOS: dict[int, tuple[str, Callable[[], MockGateway], Scenario]] = {
     1: ("normal operational flow", MockGateway, _scenario_1),
     2: ("medical escalation", MockGateway, _scenario_2),
     3: ("technical failure  (3 automatic attempts)", lambda: MockGateway(failures={"CheckDocuments": 3}), _scenario_3),
@@ -96,10 +85,15 @@ SCENARIOS: dict[int, tuple[str, Callable[[], MockGateway], Callable[[ScriptedAge
 
 
 def run_scenario(number: int, sm: StateManager, engine: Engine) -> ScenarioRun:
+    """The real Agent Orchestrator with the deterministic FakeProvider (LLM design §8)."""
     title, gateway, play = SCENARIOS[number]
-    agents = ScriptedAgents(sm, engine, gateway())
-    play(agents)
-    return ScenarioRun(number, title, agents.state, agents.trace())
+    patient = ScriptedAgents(sm, engine)
+    agent = Orchestrator(sm, FakeProvider(), gateway())
+    try:
+        play(patient, agent)
+    finally:
+        agent.close()
+    return ScenarioRun(number, title, patient.state, patient.trace())
 
 
 def trace_lines(entries: list[AuditEntry]) -> list[tuple[str, str]]:
@@ -145,7 +139,7 @@ def _prepare_test_database() -> Engine:
 def main() -> int:
     engine = _prepare_test_database()
     try:
-        sm = build_state_manager(engine)
+        sm = build_state_manager(engine, llm_version(FakeProvider()))
         print("\n\n".join(render(run_scenario(number, sm, engine)) for number in SCENARIOS))
     finally:
         engine.dispose()

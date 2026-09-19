@@ -1,30 +1,110 @@
-"""The scripted demo components (hospital_agent.scripted) plus test-only shortcuts.
+"""The scripted Session Service and reviewers (hospital_agent.scripted) plus test-only shortcuts.
 
-The shortcuts emit a component's event directly - without the real Tool Executor or
-Readiness Check - so a test can put a case in an exact spot (a given document set, an
-exhausted retry, a delivery that failed) and check one guard or rule there.
+The shortcuts emit a component's event directly - instead of the Agent Orchestrator and its
+LLM components - so a test can put a case in an exact spot (a given classification, plan
+step, document set, exhausted retry, failed delivery) and check one guard or rule there.
+The Policy Service, Tool Executor and Readiness Check they drive are the real ones.
 """
 from __future__ import annotations
 
 import uuid
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 
 from sqlalchemy.engine import Engine
 
 from hospital_agent import repository
 from hospital_agent.case import ExecutionRecord
-from hospital_agent.execution.gateway import MockGateway, ToolGateway
-from hospital_agent.naming import Component, Event
-from hospital_agent.scripted import PLAN, ScriptedAgents
+from hospital_agent.execution.executor import ToolExecutor
+from hospital_agent.execution.gateway import ACTION_TARGETS, MockGateway, ToolGateway
+from hospital_agent.execution.verify import EXECUTING_STATES
+from hospital_agent.naming import Action, Component, Event
+from hospital_agent.policy.readiness import ReadinessCheck
+from hospital_agent.policy.service import InstructionSource, OutgoingMessage, PolicyRequest, PolicyService, ProposedAction
+from hospital_agent.scripted import ScriptedAgents
 from hospital_agent.state_manager import StateManager, TransitionResult
 
 __all__ = ["PLAN", "Driver"]
+
+PLAN = [
+    {"step": 1, "action": "CheckAppointment"},
+    {"step": 2, "action": "CheckDocuments"},
+    {"step": 3, "action": "LoadInstructions"},
+    {"step": 4, "action": "SendStatusUpdate"},
+]
+APPROVED_SOURCE = InstructionSource("INSTR-PREP-COLONOSCOPY", "3")
+STATUS_MESSAGE = OutgoingMessage(evaluated=True, medical_content_flag=False, content_hash="HASH-STATUS-1")
 
 
 class Driver(ScriptedAgents):
     def __init__(self, sm: StateManager, engine: Engine, patient_id: str = "P-10041",
                  gateway: ToolGateway | None = None) -> None:
-        super().__init__(sm, engine, gateway or MockGateway(), patient_id)
+        super().__init__(sm, engine, patient_id)
+        self.policy = PolicyService(engine)
+        self.executor = ToolExecutor(sm, gateway or MockGateway())
+        self.readiness = ReadinessCheck(sm)
+        self.last_execution_id: str | None = None
+
+    # --- Classifier / Planner / Orchestrator, emitted directly -----------------------------
+
+    def classify(self, safety_level: str = "MediumRisk") -> TransitionResult:
+        payload = {"intent": "AppointmentPreparation", "safety_level": safety_level}
+        return self._emit(Event.INTENT_CLASSIFIED, payload, Component.CLASSIFIER_SERVICE)
+
+    def medical_question(self) -> TransitionResult:
+        payload = {"intent": "MedicalQuestion", "safety_level": "HighRisk"}
+        return self._emit(Event.MEDICAL_QUESTION_DETECTED, payload, Component.CLASSIFIER_SERVICE)
+
+    def plan(self) -> TransitionResult:
+        return self._emit(Event.PLAN_CREATED, {"plan_complete": True, "ordered_steps": PLAN}, Component.PLANNER_SERVICE)
+
+    def propose(self) -> TransitionResult:
+        case = self.case
+        proposal = {"action": case.current_action.value, "from_step": case.current_step}
+        return self._emit(Event.ACTION_PROPOSED, {"proposed_action": proposal}, Component.PLANNER_SERVICE)
+
+    def advance(self) -> TransitionResult:
+        return self._emit(Event.STEP_ADVANCED, {}, Component.AGENT_ORCHESTRATOR)
+
+    def plan_delivery(self) -> TransitionResult:
+        return self._emit(Event.DELIVERY_PLANNED, {}, Component.AGENT_ORCHESTRATOR)
+
+    # --- the real Policy Service / Tool Executor / Readiness Check -------------------------
+
+    def request(self, **overrides) -> PolicyRequest:
+        """A well-formed PolicyRequest for the current plan step; overrides replace fields."""
+        case = self.case
+        action = case.current_action
+        target, fields = ACTION_TARGETS[action.value]
+        request = PolicyRequest(
+            execution_id=f"EXEC-{uuid.uuid4().hex[:8]}",
+            proposed_action=ProposedAction(action.value, case.current_step, target, fields),
+            outgoing_message=STATUS_MESSAGE if action is Action.SEND_STATUS_UPDATE else None,
+            instruction_source=APPROVED_SOURCE if action is Action.LOAD_INSTRUCTIONS else None,
+        )
+        return replace(request, **overrides)
+
+    def allow(self, **overrides) -> TransitionResult:
+        """The real Policy Service decides the current step (Allow for a well-formed request)."""
+        request = self.request(**overrides)
+        self.last_execution_id = request.execution_id
+        return self.policy.apply(self.sm, self.case_id, request)
+
+    def execute(self) -> TransitionResult:
+        """The real Tool Executor runs the decision allow() just accepted."""
+        return self.executor.execute(self.case_id, self.last_execution_id)
+
+    def run_step(self, **overrides) -> TransitionResult:
+        """One plan step: propose -> decide -> execute."""
+        self.propose()
+        decided = self.allow(**overrides)
+        if decided.committed and decided.state_after in EXECUTING_STATES:
+            return self.execute()
+        return decided
+
+    def assess(self) -> TransitionResult:
+        """The real Readiness Check with Z3 (§9.1), on the stored appointment time."""
+        return self.readiness.run(self.case_id)
 
     # --- direct emissions (no real Tool Executor / Readiness Check) ---------------------------
 
