@@ -46,6 +46,13 @@ def content_approval(d: Driver, execution_id: str, **changes) -> ApprovalRecord:
     return replace(base, **changes)
 
 
+def insert_approval(app_engine, approval: ApprovalRecord) -> str:
+    """F2: the Policy Service loads a content approval by id - the caller inserts the row first."""
+    with app_engine.begin() as conn:
+        repository.insert_approval(conn, approval)
+    return approval.approval_id
+
+
 def test_d3_proposal_outside_the_plan_is_denied(sm, app_engine):
     d = Driver(sm, app_engine)
     at_step(d, 2)
@@ -97,7 +104,8 @@ def test_d11_medical_output_with_a_matching_content_approval(sm, app_engine):
     d = Driver(sm, app_engine)
     at_step(d, 4)
     request = d.request(outgoing_message=MEDICAL)
-    request = replace(request, approval=content_approval(d, request.execution_id))
+    approval_id = insert_approval(app_engine, content_approval(d, request.execution_id))
+    request = replace(request, approval_id=approval_id)
     assert d.policy.apply(sm, d.case_id, request).state_after is State.DELIVERING
     row = d.trace()[-1]
     assert row.guards["ContentApprovalValid"] is True and row.content_hash == MEDICAL.content_hash
@@ -114,7 +122,8 @@ def test_d13_d22_an_approval_not_bound_to_this_message_is_rejected(sm, app_engin
     d = Driver(sm, app_engine)
     at_step(d, 4)
     request = d.request(outgoing_message=MEDICAL)
-    request = replace(request, approval=content_approval(d, request.execution_id, **change))
+    approval_id = insert_approval(app_engine, content_approval(d, request.execution_id, **change))
+    request = replace(request, approval_id=approval_id)
     assert d.policy.apply(sm, d.case_id, request).state_after is State.AWAITING_HUMAN_REVIEW
     assert "medical_answer_attempt" in reasons(d)
     if extra:
@@ -124,9 +133,21 @@ def test_d13_d22_an_approval_not_bound_to_this_message_is_rejected(sm, app_engin
 def test_d22_an_approval_for_another_case(sm, app_engine):
     d = Driver(sm, app_engine)
     at_step(d, 4)
+    other = Driver(sm, app_engine, patient_id="P-99999")
+    other.submit()  # a real case, so the approval's case_id FK is satisfiable
     request = d.request(outgoing_message=MEDICAL)
-    request = replace(request, approval=content_approval(d, request.execution_id, case_id="CASE-OTHER"))
+    approval_id = insert_approval(app_engine, content_approval(d, request.execution_id, case_id=other.case_id))
+    request = replace(request, approval_id=approval_id)
     d.policy.apply(sm, d.case_id, request)
+    assert "medical_answer_attempt" in reasons(d)
+
+
+def test_f2_an_approval_id_not_in_the_table_is_treated_as_no_approval(sm, app_engine):
+    d = Driver(sm, app_engine)
+    at_step(d, 4)
+    request = d.request(outgoing_message=MEDICAL)
+    request = replace(request, approval_id="APPR-DOES-NOT-EXIST")
+    assert d.policy.apply(sm, d.case_id, request).state_after is State.AWAITING_HUMAN_REVIEW
     assert "medical_answer_attempt" in reasons(d)
 
 

@@ -69,7 +69,7 @@ class PolicyRequest:
     execution_id: str
     proposed_action: ProposedAction
     outgoing_message: OutgoingMessage | None = None
-    approval: ApprovalRecord | None = None
+    approval_id: str | None = None
     instruction_source: InstructionSource | None = None
     patient_verification_status: str | None = None
 
@@ -106,7 +106,12 @@ def _approval_json(approval: ApprovalRecord | None) -> dict[str, Any] | None:
     return data
 
 
-def build_opa_input(case: CaseRecord, request: PolicyRequest, override: ApprovalRecord | None) -> dict[str, Any]:
+def build_opa_input(
+    case: CaseRecord,
+    request: PolicyRequest,
+    override: ApprovalRecord | None,
+    approval: ApprovalRecord | None = None,
+) -> dict[str, Any]:
     proposal, message, source = request.proposed_action, request.outgoing_message, request.instruction_source
     return {
         "case_id": case.case_id,
@@ -128,7 +133,7 @@ def build_opa_input(case: CaseRecord, request: PolicyRequest, override: Approval
             "medical_content_flag": message.medical_content_flag,
             "content_hash": message.content_hash,
         },
-        "approval": _approval_json(request.approval),
+        "approval": _approval_json(approval),
         "policy_review_override": _approval_json(override),
         "instruction_source": None if source is None else {"source_id": source.source_id, "version": source.version},
         "patient": {"verification_status": request.patient_verification_status},
@@ -186,9 +191,12 @@ class PolicyService:
         now = self.clock()
         with self.engine.connect() as conn:
             override = repository.open_policy_review_override(conn, case.case_id, case.plan_hash, case.current_step)
+            # F2: the caller supplies only an id - the Policy Service loads the trusted record
+            # itself. An id that is not on the approvals table behaves exactly like no approval.
+            approval = repository.load_approval(conn, request.approval_id) if request.approval_id else None
         message = request.outgoing_message
         approval_ok = message is not None and content_approval_valid(
-            request.approval,
+            approval,
             case_id=case.case_id,
             patient_id=case.patient_id,
             execution_id=request.execution_id,
@@ -196,7 +204,7 @@ class PolicyService:
             content_hash=message.content_hash,
             now=now,
         )
-        opa = self.opa(build_opa_input(case, request, override))
+        opa = self.opa(build_opa_input(case, request, override, approval=approval))
         try:
             prolog_allowed, explanation = prolog_verdict(case, request, approval_ok)
         except Exception:  # noqa: BLE001 - any engine failure fails closed (§14)
