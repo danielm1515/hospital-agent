@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project status
 
-Sub-projects 1 (Core), 2 (Policy) and 3 (Execution) are implemented in `backend/` (design and plan under `docs/superpowers/`). The authoritative input is the **binding demo spec** `Hospital_Agent_Clean.docx` (Hebrew, final-project scope). A Markdown copy lives in `docs/spec/`, one file per spec section: **spec §N → `docs/spec/NN-*.md`** (index: `docs/spec/README.md`). The docx is the source of truth. `docs/spec/` is generated, so don't hand-edit it. After the docx changes, regenerate it:
+Sub-projects 1 (Core), 2 (Policy), 3 (Execution) and 4 (LLM) are implemented in `backend/` (design and plan under `docs/superpowers/`). The authoritative input is the **binding demo spec** `Hospital_Agent_Clean.docx` (Hebrew, final-project scope). A Markdown copy lives in `docs/spec/`, one file per spec section: **spec §N → `docs/spec/NN-*.md`** (index: `docs/spec/README.md`). The docx is the source of truth. `docs/spec/` is generated, so don't hand-edit it. After the docx changes, regenerate it:
 
 ```bash
 python scripts/spec_to_md.py
@@ -56,6 +56,12 @@ The §15 golden traces, from the running system (on the test database; prints `f
 docker compose run --rm backend python -m obs.golden
 ```
 
+The LLM needs `OPENAI_API_KEY` (and optionally `OPENAI_MODEL`, default `gpt-5.6-luna`) in `.env` at the repo root; `.env` is git-ignored, and docker compose passes both to the backend. Without a key the server runs but the Agent Orchestrator does not start (`/health` says so). The regular tests never call the model; one smoke test does, only when asked:
+
+```bash
+docker compose run --rm -e RUN_LIVE_LLM=1 backend pytest tests/test_live_llm.py -v
+```
+
 ## Working in the backend (`backend/hospital_agent/`)
 
 - `fsm.py` is the §3 table as data. Each row keeps its Guard cell verbatim in `spec_guard`, and `tests/test_fsm.py` compares all 41 rows with `docs/spec/03-transitions-guards.md`. Change the spec first, then the row.
@@ -66,14 +72,16 @@ docker compose run --rm backend python -m obs.golden
 - `policy/policy.rego` is spec §8 verbatim; `policy/rules.pl` is spec §10 without its CASE-482 example facts (those live in `tests/fixtures/case_482.pl`); `policy/flows.dl` is spec §11. Tests compare all three with `docs/spec/`. `tests/opa_reference.py` must agree with the real OPA on every input in `tests/policy_inputs.py` - change them together.
 - The Temporal Monitor (`policy/temporal.py`) reads guard results and evidence from the audit rows' `guards` JSON. A new rule needs its evidence recorded there by whoever emits the event; only Policy decision events may carry `evidence`.
 - `db.py` mirrors the Alembic migrations, and `tests/test_schema.py` fails if they drift. A schema change is a new migration, never an edit to `0001`. Every new migration must `GRANT` the new tables to `hospital_app` (§18.2) - `SELECT, INSERT, UPDATE` for an ordinary table, but `SELECT, INSERT` only for an audit-style append-only table (as `0001` does for `audit_log`), so the DB itself, not just the app, enforces that Audit can't be changed or deleted.
-- `hospital_agent/scripted.py` plays the components that don't exist yet (Classifier, Planner, Orchestrator, reviewers) around the real Policy Service, Readiness Check and Tool Executor; `tests/driver.py` adds test-only shortcuts that emit one event directly. The Tool Executor is the only code that calls an external system (`execution/gateway.py`); `POLICY_ALLOWED` writes the `executions` intent row, and `StateManager.start_execution()` writes the STARTED / AUDIT_RECORDED pair.
+- `hospital_agent/llm/` holds the four LLM calls of §18.5 and the components around them: `provider.py` (`OpenAIProvider`; `FakeProvider`, deterministic, for tests and `obs.golden` only), `schemas.py`, `prompts/`, `classifier.py`, `planner.py`, `evaluator.py` (a separate process, §6.5), `message.py` (the fixed status template) and `orchestrator.py` (the Agent Orchestrator, which keeps no state of its own and steps each case from its stored State). Every answer is schema-checked; three unusable answers in a row escalate (`ClassificationFailed` / `PlanningFailed`). No schema lets the model assert a fact or a flag.
+- `hospital_agent/data_log.py` is the §12.3 Data Log (table `data_log`, migration 0003): request text, uploaded documents, retrieved instructions and outgoing messages. Audit keeps only `content_hash`; deletion is a tombstone.
+- `hospital_agent/scripted.py` plays the Session Service and the reviewers, which don't exist yet; `tests/driver.py` adds test-only shortcuts that emit a Classifier / Planner / Orchestrator event directly. The Tool Executor is the only code that calls an external system (`execution/gateway.py`); `POLICY_ALLOWED` writes the `executions` intent row, and `StateManager.start_execution()` writes the STARTED / AUDIT_RECORDED pair.
 
-## Hand-off to sub-project 4 (LLM)
+## Hand-off to sub-project 5 (Human Review + API)
 
-- `hospital_agent/scripted.py` plays the Session Service, Classifier, Planner, Agent Orchestrator and reviewers with fixed demo answers; everything it drives is real. Sub-project 4 replaces the Classifier, Planner and Orchestrator parts: the LLM-backed ones must emit the same events from the same components (`naming.EVENT_OWNER`), and `python -m obs.golden` must still print 35 / 4 / 54 audit rows.
-- A Policy request's `outgoing_message` is where the Response Evaluator's verdict enters (`evaluated`, `medical_content_flag`, `content_hash`). Only the Evaluator sets `evaluated`.
-- The Tool Executor needs nothing from the LLM: `ToolExecutor.execute(case_id, execution_id)` runs a decision the Policy Service accepted, and the Retry Manager decides what follows a failure. A retry goes back to `Planning` and needs a fresh `ACTION_PROPOSED`.
-- The Orchestrator runs `ToolExecutor.execute()` right after `POLICY_ALLOWED` commits. On restart, `recover()` escalates both a `started` execution and an `intent` the case is still waiting on as `ExecutionUnknown`; neither is replayed.
+- `hospital_agent/scripted.py` still plays the Session Service (submit, verify identity, upload) and the reviewers. The real ones must emit the same events from the same components (`naming.EVENT_OWNER`), keep the request text and uploaded documents in the Data Log (`data_log.record`, kinds `request_text` / `uploaded_document`) before the event, and call `Orchestrator.wake()` after a patient action so the case moves at once. `python -m obs.golden` must still print 35 / 4 / 54 audit rows.
+- The Agent Orchestrator runs in the background when the server owns its engine and the Model Selector finds a key (`api/app.py` lifespan). It advances cases in Classifying, Classified, Planning, AssessingReadiness and Ready; every other State waits for the patient, a reviewer or the SLA Worker.
+- A medical outgoing message is denied without a ContentApproval (D8, `medical_answer_attempt`): the Human Review Service is where a clinician grants one, bound to the message's `execution_id` + `action` + `content_hash` (§12.5). The message text is in the Data Log (`outgoing_message`), found by its `content_hash`.
+- Show reviewers the Data Log content, never the Audit (it has none). Reading and tombstoning Data Log entries through the API is sub-project 5's; `data_log.entries()` and `data_log.tombstone()` exist.
 
 ## What the system is
 
@@ -177,11 +185,7 @@ The declared event-name exceptions are `HUMAN_RESOLVED_CASE` and `TOOL_TRANSIENT
 
 - **Backend:** Python + FastAPI.
 - **Frontend:** React, with the patient screen and the staff screen described in §1.
-- **Database:** PostgreSQL, using the four-table model in §18.2.
-- **LLM:** OpenAI GPT-5.6 Luna for now. The user expects this may change, so keep the provider behind the Model Selector (§1). Record the model and prompt versions in `rule_version`.
+- **Database:** PostgreSQL, using the four-table model in §18.2, plus the §12.3 Data Log table (`docs/spec_corrections.md` row 29).
+- **LLM:** OpenAI `gpt-5.6-luna`, through the Model Selector (`llm/model_selector.py`; `OPENAI_MODEL` overrides it). It accepts no `temperature` but the default, so the calls use `reasoning_effort="none"` and strict JSON Schemas instead of §18.5's temperature 0 (`docs/spec_corrections.md` row 28). The model and a hash of the four prompts are recorded in `rule_version`.
 - **Policy engines:** OPA (the `opa` 1.9.0 binary, plus a Python reference evaluator) and the Python Prolog/Datalog engines run **inside the backend service**. There is no OPA server and no sidecar, and SWI-Prolog is not installed - it is only the spec's reference engine, used to derive the expected results the tests compare against. Z3 is `z3-solver==4.15.4`, through its Python bindings.
 - **Backend layout:** a **single FastAPI app** with one module per spec component (§1). The components are internal boundaries, not separate services.
-
-## Still open (confirm with the user)
-
-- The exact model ID string for the OpenAI API.
