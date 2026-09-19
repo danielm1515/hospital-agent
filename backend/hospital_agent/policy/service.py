@@ -68,7 +68,6 @@ class PolicyRequest:
 
     execution_id: str
     proposed_action: ProposedAction
-    attempt_count: int = 0
     outgoing_message: OutgoingMessage | None = None
     approval: ApprovalRecord | None = None
     instruction_source: InstructionSource | None = None
@@ -116,7 +115,7 @@ def build_opa_input(case: CaseRecord, request: PolicyRequest, override: Approval
         "identity_verified": case.identity_verified,
         "safety_level": case.safety_level.value if case.safety_level else None,
         "intent": case.intent,
-        "execution": {"attempt_count": request.attempt_count, "max_attempts": MAX_ATTEMPTS},
+        "execution": {"attempt_count": case.attempt_count, "max_attempts": MAX_ATTEMPTS},
         "plan": {"current_step": case.current_step, "plan_hash": case.plan_hash, "ordered_steps": case.ordered_steps},
         "proposed_action": {
             "action": proposal.action,

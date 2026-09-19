@@ -131,6 +131,13 @@ def test_real_engines_allow_the_spec_8_example(app_engine):
     assert (decision.result, decision.reasons) == ("Allow", ())
 
 
+def test_attempt_count_comes_from_state_not_the_request(app_engine):
+    """Attempt count is trusted from case state, not from the request."""
+    decision = PolicyService(app_engine).decide(planned(attempt_count=3), request(fields=("patient_id", "document_id")))
+    assert decision.result == "Deny" and "attempts_exhausted" in decision.reasons
+    assert build_opa_input(planned(attempt_count=2), request(), None)["execution"] == {"attempt_count": 2, "max_attempts": 3}
+
+
 # --- the event ------------------------------------------------------------------------------
 
 
