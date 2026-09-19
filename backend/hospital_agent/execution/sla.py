@@ -5,14 +5,19 @@ TIMEOUT_EXPIRED with the version it read. The State Manager checks that version
 (PatientSlaExpired + the optimistic lock), so an event for a case that has moved on
 is discarded. The deadline itself is registered when the case enters
 AwaitingPatientInput (MISSING_INFORMATION_DETECTED or a human's new deadline).
+A tick that raises (spec §14: fail closed, never silently stop) is logged and the
+background loop keeps running so a later deadline still gets escalated.
 """
 from __future__ import annotations
 
+import logging
 import threading
 
 from .. import repository
 from ..naming import Component, Event
 from ..state_manager import StateManager, TransitionResult
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_INTERVAL_SECONDS = 30.0
 
@@ -37,7 +42,10 @@ class SlaWorker:
 
         def loop() -> None:
             while not stop.wait(interval_seconds):
-                self.tick()
+                try:
+                    self.tick()
+                except Exception:
+                    logger.exception("SLA tick failed")
 
         threading.Thread(target=loop, name="sla-worker", daemon=True).start()
         return stop

@@ -1,4 +1,5 @@
 """The SLA Worker and restart recovery (spec §3.1 PatientSlaExpired, §12.2; Execution design §5)."""
+import time
 from datetime import timedelta
 
 from hospital_agent import repository
@@ -56,6 +57,30 @@ def test_a_stale_timeout_is_discarded(sm, app_engine):
     d.upload("blood_test")
     stale = sm.apply(d.case_id, Event.TIMEOUT_EXPIRED, {"registered_state_version": registered}, Component.SLA_WORKER)
     assert not stale.committed and d.state is State.CLASSIFYING
+
+
+def test_a_failing_tick_does_not_stop_the_worker(sm):
+    """spec §14 fail closed: one bad tick (e.g. ReprocessLimitExceeded, a DB error) must
+    not silently end the background loop - a later expired deadline still has to be
+    escalated."""
+    calls: list[int] = []
+
+    class FailOnceWorker(SlaWorker):
+        def tick(self) -> list:
+            calls.append(1)
+            if len(calls) == 1:
+                raise RuntimeError("boom")
+            return []
+
+    worker = FailOnceWorker(sm)
+    stop = worker.run_in_background(interval_seconds=0.01)
+    try:
+        deadline = time.monotonic() + 5
+        while len(calls) < 2 and time.monotonic() < deadline:
+            time.sleep(0.01)
+    finally:
+        stop.set()
+    assert len(calls) >= 2
 
 
 # --- restart recovery (§12.2, D28) -----------------------------------------------------------
