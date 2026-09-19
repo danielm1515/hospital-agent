@@ -9,14 +9,20 @@ from __future__ import annotations
 
 import hashlib
 import uuid
+from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
+from typing import TYPE_CHECKING
 
 from sqlalchemy import insert, select, update
 from sqlalchemy.engine import Connection
 
 from .db import data_log
+from .naming import Event, State
+
+if TYPE_CHECKING:
+    from .repository import AuditEntry
 
 
 class DataKind(StrEnum):
@@ -67,3 +73,12 @@ def tombstone(conn: Connection, entry_id: str, now: datetime) -> int:
         update(data_log).where(data_log.c.entry_id == entry_id, data_log.c.deleted_at.is_(None))
         .values(content=None, deleted_at=now)
     ).rowcount
+
+
+def accepted_uploads(trace: Iterable[AuditEntry]) -> set[str]:
+    """content_hash of every upload the case accepted: a committed DOCUMENT_UPLOADED into
+    Classifying (D25, §12.3). Only these uploads may be read - by the Classifier, or shown
+    to a reviewer; a rejected upload never is, tombstoned or not."""
+    return {row.content_hash for row in trace
+            if row.record_type == "Transition" and row.event == Event.DOCUMENT_UPLOADED.value
+            and row.state_after == State.CLASSIFYING.value and row.content_hash}

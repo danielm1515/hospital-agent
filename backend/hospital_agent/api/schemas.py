@@ -1,10 +1,14 @@
-"""Response models of the read-only Case Monitor API (design §9)."""
+"""The request and response models of the API (Core design §9; sub-project 5 design §6).
+
+Every model is explicit: a response model is what the client is allowed to see, and a
+request model is the only shape the server accepts - it never carries an identity (§18.3).
+"""
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any
+from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, StringConstraints
 
 from ..naming import EscalationKind, SafetyLevel, State
 
@@ -54,3 +58,95 @@ class AuditRecord(BaseModel):
     approval_id: str | None
     rule_version: str
     recorded_at: datetime
+
+
+# --- authentication (§18.3) ------------------------------------------------------------------
+
+class LoginRequest(BaseModel):
+    user_id: str = Field(max_length=64)
+    password: str = Field(max_length=256)
+
+
+class Identity(BaseModel):
+    user_id: str
+    role: str
+    display_name: str
+
+
+class LoginResponse(Identity):
+    token: str
+
+
+# --- the patient's side --------------------------------------------------------------------
+
+class NewRequest(BaseModel):
+    """§3.1 RequestValid also checks the text; this is the first, cheap gate."""
+
+    text: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=2000)]
+
+
+class DocumentUpload(BaseModel):
+    document_id: Annotated[str, StringConstraints(pattern=r"^[A-Za-z0-9_-]{1,64}$")]
+    format: Literal["pdf", "jpg", "png"]
+    content: Annotated[str, StringConstraints(min_length=1, max_length=20000)]
+
+
+class PatientCaseView(BaseModel):
+    """What a patient may see (design decision 8): never an escalation kind, a reason or Audit."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    case_id: str
+    status: str
+    created_at: datetime
+    updated_at: datetime
+    request_text: str | None
+    missing_document_ids: list[str]
+    missing_document_request_template_id: str | None
+    message: str | None
+
+
+# --- the staff's side -----------------------------------------------------------------------
+
+class ReviewItem(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    case_id: str
+    patient_id: str
+    escalation_kind: str
+    escalated_from_state: str | None
+    reasons: list[str]
+    allowed_decisions: list[str]
+    required_fields: list[str]
+    updated_at: datetime
+
+
+class ReviewContext(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    case_id: str
+    patient_id: str
+    state: str
+    escalation_kind: str | None
+    escalated_from_state: str | None
+    reasons: list[str]
+    data: list[dict[str, Any]]
+    trace: list[dict[str, Any]]
+    shown_context_ref: str
+
+
+class DecisionRequest(BaseModel):
+    """`decision` and `reason` are strings, not an enum: the Human Review Service is the one
+    that judges them, and its reason code (invalid_decision, reason_required) reaches the
+    reviewer as a 409 instead of a schema error. reviewer_id is never accepted (§18.3)."""
+
+    decision: str = Field(max_length=32)
+    reason: str = Field(max_length=2000)
+    shown_context_ref: str = Field(max_length=200)
+    verified_identity_ref: str | None = Field(default=None, max_length=200)
+    patient_deadline: AwareDatetime | None = None
+
+
+class DecisionResponse(BaseModel):
+    case_id: str
+    state: str
