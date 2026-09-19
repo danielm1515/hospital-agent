@@ -63,7 +63,7 @@ class Driver:
 
     def upload(self, document_id: str, **document) -> TransitionResult:
         payload = {"document": {"document_id": document_id, "format": "pdf", "patient_id": self.patient_id, **document}}
-        return self._emit(Event.DOCUMENT_UPLOADED, payload, Component.EXTERNAL)
+        return self._emit(Event.DOCUMENT_UPLOADED, payload, Component.SESSION_SERVICE)
 
     # --- Classifier / Planner / Orchestrator ------------------------------------------------
 

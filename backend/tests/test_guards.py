@@ -6,7 +6,7 @@ import pytest
 
 from hospital_agent.case import ApprovalRecord, CaseRecord, ExecutionRecord, compute_plan_hash, new_case
 from hospital_agent.guards import GUARDS, GuardContext
-from hospital_agent.naming import EscalationKind, Event, State
+from hospital_agent.naming import Component, EscalationKind, Event, State
 from tests.fakes import fake_ports
 from tests.spec_tables import read_table
 
@@ -121,11 +121,25 @@ def test_delivery_confirmed_reads_the_execution_row():
 def test_document_valid_checks_format_owner_and_expiry():
     case = planned(state=State.AWAITING_PATIENT_INPUT)
     doc = {"document_id": "blood_test", "format": "pdf", "patient_id": "P-1"}
-    assert holds("DocumentValid", ctx(case, payload={"document": doc}))
-    assert not holds("DocumentValid", ctx(case, payload={"document": {**doc, "patient_id": "P-2"}}))
-    assert not holds("DocumentValid", ctx(case, payload={"document": {**doc, "format": "docm"}}))
+    source = Component.SESSION_SERVICE
+    assert holds("DocumentValid", ctx(case, payload={"document": doc}, source=source))
+    assert not holds("DocumentValid", ctx(case, payload={"document": {**doc, "patient_id": "P-2"}}, source=source))
+    assert not holds("DocumentValid", ctx(case, payload={"document": {**doc, "format": "docm"}}, source=source))
     expired = {**doc, "expires_at": NOW - timedelta(days=1)}
-    assert not holds("DocumentValid", ctx(case, payload={"document": expired}))
+    assert not holds("DocumentValid", ctx(case, payload={"document": expired}, source=source))
+
+
+def test_document_valid_trusts_the_document_only_from_the_session_service():
+    """F2: DOCUMENT_UPLOADED is external, so State Manager cannot trust an owner check (§13.2).
+
+    DocumentValid must itself require source is SessionService (§3.1 "Session Service
+    קובע · State Manager מאמת"); a patient-supplied document is never trusted directly.
+    """
+    case = planned(state=State.AWAITING_PATIENT_INPUT)
+    doc = {"document_id": "blood_test", "format": "pdf", "patient_id": "P-1"}
+    assert not holds("DocumentValid", ctx(case, payload={"document": doc}))  # default source is External
+    assert not holds("DocumentValid", ctx(case, payload={"document": doc}, source=Component.EXTERNAL))
+    assert holds("DocumentValid", ctx(case, payload={"document": doc}, source=Component.SESSION_SERVICE))
 
 
 def test_ask_patient_safe_only_on_unsat():

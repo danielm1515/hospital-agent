@@ -156,6 +156,7 @@ class StateManager:
                 payload=payload,
                 now=now,
                 ports=self.ports,
+                source=source,
                 approval=repository.load_approval(conn, payload["approval_id"]) if payload.get("approval_id") else None,
                 execution=repository.load_execution(conn, payload["execution_id"]) if payload.get("execution_id") else None,
                 approval_already_used=repository.approval_used(conn, payload["approval_id"])

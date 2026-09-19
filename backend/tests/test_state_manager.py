@@ -135,6 +135,19 @@ def test_stale_version_is_reprocessed_then_fails_closed(sm, app_engine, monkeypa
     assert (d.state, len(d.trace())) == (State.RECEIVED, 1)
 
 
+def test_document_uploaded_from_external_is_not_trusted(sm, app_engine):
+    """F2: DOCUMENT_UPLOADED has no owner (§13.2); DocumentValid itself requires source=SessionService."""
+    d = Driver(sm, app_engine)
+    d.to_assessing_readiness(required=["referral", "blood_test"], held=["referral"])
+    d.missing_information(z3_result="unsat")
+    assert d.state is State.AWAITING_PATIENT_INPUT
+
+    payload = {"document": {"document_id": "blood_test", "format": "pdf", "patient_id": d.patient_id}}
+    result = sm.apply(d.case_id, Event.DOCUMENT_UPLOADED, payload, Component.EXTERNAL)
+    assert result.committed and result.state_after is State.AWAITING_PATIENT_INPUT
+    assert d.case.held_documents == ["referral"]
+
+
 def test_state_survives_a_restart(sm, app_engine):
     """Design §3: the cases row is the only State. A new process continues from it."""
     d = Driver(sm, app_engine)

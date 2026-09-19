@@ -5,10 +5,14 @@ when it does not. Most failures are "guard_failed"; the approval and escalation
 guards return the specific codes the spec names.
 
 §3.1's "who evaluates" column is enforced here. A fact that another component
-determines ("X קובע · State Manager מאמת") is read from the event payload - the
-State Manager has already checked that the event came from its owner (§13.2) -
-and is then compared with the stored State. A guard marked "State Manager, מה־State
-השמור" reads only the cases row.
+determines ("X קובע · State Manager מאמת") is trusted only from its owning
+component: for a system-owned event, the State Manager has already checked
+that the event came from its owner (§13.2), so the guard can read the fact
+straight from the payload; for an external event (DOCUMENT_UPLOADED has no
+owner), the guard itself checks GuardContext.source against the component that
+is supposed to have determined the fact (DocumentValid requires
+Component.SESSION_SERVICE). A guard marked "State Manager, מה־State השמור"
+reads only the cases row.
 """
 from __future__ import annotations
 
@@ -18,7 +22,7 @@ from datetime import datetime
 from typing import Any
 
 from .case import MAX_ATTEMPTS, ApprovalRecord, CaseRecord, ExecutionRecord, compute_plan_hash
-from .naming import AUTOMATIC_ACTIONS, RETRIEVAL_ACTIONS, Action, EscalationKind, Event, State
+from .naming import AUTOMATIC_ACTIONS, RETRIEVAL_ACTIONS, Action, Component, EscalationKind, Event, State
 
 GUARD_FAILED = "guard_failed"
 INVALID_ESCALATION_REASON = "invalid_escalation_reason"
@@ -51,6 +55,7 @@ class GuardContext:
     payload: Mapping[str, Any]
     now: datetime
     ports: GuardPorts
+    source: Component = Component.EXTERNAL  # who emitted the event; populated by the State Manager
     approval: ApprovalRecord | None = None  # loaded from approvals by payload["approval_id"]
     execution: ExecutionRecord | None = None  # loaded from executions by payload["execution_id"]
     escalation_kinds: frozenset[EscalationKind] = frozenset()  # allowlist of the row being evaluated
@@ -196,7 +201,8 @@ def document_valid(ctx: GuardContext) -> str | None:
         return GUARD_FAILED
     expires_at = document.get("expires_at")
     return _check(
-        _nonempty(document.get("document_id"))
+        ctx.source is Component.SESSION_SERVICE
+        and _nonempty(document.get("document_id"))
         and document.get("format") in SUPPORTED_DOCUMENT_FORMATS
         and document.get("patient_id") == case.patient_id
         and (expires_at is None or expires_at > ctx.now)

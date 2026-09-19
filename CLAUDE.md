@@ -41,7 +41,7 @@ After changing `backend/pyproject.toml`: run `uv lock` in `backend/`, then `dock
 ## Working in the backend (`backend/hospital_agent/`)
 
 - `fsm.py` is the §3 table as data. Each row keeps its Guard cell verbatim in `spec_guard`, and `tests/test_fsm.py` compares all 41 rows with `docs/spec/03-transitions-guards.md`. Change the spec first, then the row.
-- A guard (`guards.py`) returns `None` when it holds, or a reason code. A fact that another component determines is trusted only because `StateManager` has already checked that the event came from its owner (`naming.EVENT_OWNER`).
+- A guard (`guards.py`) returns `None` when it holds, or a reason code. A fact that another component determines is trusted only from its owning component: for a system-owned event, because `StateManager` has already checked that the event came from its owner (`naming.EVENT_OWNER`); for an external event (e.g. `DOCUMENT_UPLOADED`, which has no owner), the guard itself checks `GuardContext.source` (e.g. `DocumentValid` requires `Component.SESSION_SERVICE`).
 - Only `StateManager.apply()` writes State. `HUMAN_REVIEW_REQUIRED` enters only through `EscalationCoordinator.signal()`.
 - Guards evaluated by components that don't exist yet are ports (`GuardPorts`, `TraceMonitor`). Their doubles live only in `tests/fakes.py`; application code has no permissive defaults.
 - `db.py` mirrors the Alembic migrations, and `tests/test_schema.py` fails if they drift. A schema change is a new migration, never an edit to `0001`.
