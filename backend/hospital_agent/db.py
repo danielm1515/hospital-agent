@@ -124,5 +124,9 @@ approvals = Table(
 
 
 def make_engine(url: str | None = None) -> Engine:
-    """Engine for the application role (hospital_app). Defaults to $DATABASE_URL."""
-    return create_engine(url or os.environ["DATABASE_URL"], pool_pre_ping=True)
+    """Engine for the application role (hospital_app). Defaults to $DATABASE_URL.
+
+    hide_parameters=True: a SQLAlchemy StatementError otherwise includes bound parameters
+    (e.g. patient_id) in its message, which would leak into the application log (§12.3).
+    """
+    return create_engine(url or os.environ["DATABASE_URL"], pool_pre_ping=True, hide_parameters=True)

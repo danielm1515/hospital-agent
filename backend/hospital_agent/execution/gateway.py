@@ -27,7 +27,20 @@ ACTION_TARGETS: dict[str, tuple[str, tuple[str, ...]]] = {
     Action.SEND_STATUS_UPDATE.value: ("patient_channel", ("patient_id",)),
 }
 
+# action -> the result fields its owning system may set on DATA_RETRIEVED (design §3.4): each
+# system supplies only its own facts, so e.g. the instruction system cannot set held_documents.
+RESULT_FIELDS: dict[str, tuple[str, ...]] = {
+    Action.CHECK_APPOINTMENT.value: ("appointment_at",),
+    Action.CHECK_DOCUMENTS.value: ("required_documents", "held_documents"),
+    Action.LOAD_INSTRUCTIONS.value: ("instruction_ids",),
+    Action.SEND_STATUS_UPDATE.value: ("delivered",),
+}
+
 OK, TRANSIENT_FAILURE, ERROR = "ok", "transient_failure", "error"
+
+# The only third-party error strings audit's policy_reasons may hold (§12.3: IDs/codes only,
+# never an arbitrary external message); anything else is reported as "other".
+KNOWN_TOOL_ERRORS = frozenset({"timeout", "rejected"})
 
 
 @dataclass(frozen=True)

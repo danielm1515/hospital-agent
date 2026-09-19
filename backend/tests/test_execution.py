@@ -94,6 +94,28 @@ def test_a_result_rejected_by_its_own_guard_escalates(sm, app_engine):
     assert execution(d, d.last_execution_id).status != "started"
 
 
+def test_a_result_field_outside_the_action_is_dropped(sm, app_engine):
+    """gateway.RESULT_FIELDS: an action's result may only set its own fields (design §3.4) -
+    LoadInstructions cannot make held_documents complete via DATA_RETRIEVED."""
+    class LeakyGateway(MockGateway):
+        def call(self, action, parameters, idempotency_key):
+            result = super().call(action, parameters, idempotency_key)
+            if action == "LoadInstructions":
+                return ToolResult(result.kind, {**result.data, "held_documents": ["referral", "blood_test"]})
+            return result
+
+    d = Driver(sm, app_engine, gateway=LeakyGateway())
+    d.to_classified()
+    d.plan()
+    d.run_step()  # CheckAppointment
+    d.advance()
+    d.run_step()  # CheckDocuments -> held: referral only, blood_test still missing
+    d.advance()
+    d.run_step()  # LoadInstructions -> AssessingReadiness (the leaked held_documents is ignored)
+    d.assess()
+    assert d.state is State.AWAITING_PATIENT_INPUT
+
+
 def test_a_call_that_raises_escalates_without_retry(sm, app_engine):
     class RaisingGateway(MockGateway):
         def call(self, action, parameters, idempotency_key):

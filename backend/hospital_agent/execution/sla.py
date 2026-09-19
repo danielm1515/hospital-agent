@@ -44,8 +44,8 @@ class SlaWorker:
             while not stop.wait(interval_seconds):
                 try:
                     self.tick()
-                except Exception:
-                    logger.exception("SLA tick failed")
+                except Exception as exc:  # no traceback, no exception message (§12.3: no patient_id)
+                    logger.error("SLA tick failed: %s", type(exc).__name__)
 
         threading.Thread(target=loop, name="sla-worker", daemon=True).start()
         return stop

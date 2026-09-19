@@ -6,7 +6,7 @@ import pytest
 
 from hospital_agent.case import CaseRecord
 from hospital_agent.execution.gateway import (
-    ACTION_TARGETS, ERROR, IDEMPOTENT_ACTIONS, OK, TRANSIENT_FAILURE, MockGateway,
+    ACTION_TARGETS, ERROR, IDEMPOTENT_ACTIONS, OK, RESULT_FIELDS, TRANSIENT_FAILURE, MockGateway,
 )
 from hospital_agent.execution.retry import after_failure
 from hospital_agent.naming import AUTOMATIC_ACTIONS, EscalationKind, Event, State
@@ -19,6 +19,10 @@ NOW = datetime(2026, 9, 19, 12, 0, tzinfo=UTC)
 
 def test_every_automatic_action_has_a_target_and_is_idempotent():
     assert set(ACTION_TARGETS) == {a.value for a in AUTOMATIC_ACTIONS} == IDEMPOTENT_ACTIONS
+
+
+def test_every_action_has_result_fields():
+    assert set(RESULT_FIELDS) == set(ACTION_TARGETS)
 
 
 def test_action_parameters_are_within_the_minimized_fields():

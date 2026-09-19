@@ -24,7 +24,7 @@ from typing import Any
 from ..case import CaseRecord, ExecutionRecord
 from ..naming import Action, Component, EscalationKind, Event
 from ..state_manager import ExecutionOutcome, StateManager, TransitionResult
-from .gateway import ACTION_TARGETS, OK, TRANSIENT_FAILURE, ToolGateway, ToolResult
+from .gateway import ACTION_TARGETS, KNOWN_TOOL_ERRORS, OK, RESULT_FIELDS, TRANSIENT_FAILURE, ToolGateway, ToolResult
 from .retry import after_failure
 from .verify import EXECUTING_STATES
 
@@ -66,10 +66,13 @@ class ToolExecutor:
             if execution.action == Action.SEND_STATUS_UPDATE.value:
                 return self._apply_result_event(case_id, Event.CASE_RESOLVED, {"execution_id": execution_id},
                                                  Component.RESPONSE_DELIVERY, outcome)
-            return self._apply_result_event(case_id, Event.DATA_RETRIEVED, {**result.data, "execution_id": execution_id},
+            fields = RESULT_FIELDS[execution.action]
+            payload = {k: result.data[k] for k in fields if k in result.data}
+            return self._apply_result_event(case_id, Event.DATA_RETRIEVED, {**payload, "execution_id": execution_id},
                                              Component.TOOL_EXECUTOR, outcome)
 
-        reason = f"tool:{result.kind}:{result.data.get('error', '')}".rstrip(":")
+        error = result.data.get("error", "")
+        reason = f"tool:{result.kind}:{error if error in KNOWN_TOOL_ERRORS else 'other'}"
         outcome = ExecutionOutcome(execution_id, "failed", reason)
         case = sm.load(case_id)
         verdict = after_failure(case, idempotent=self.gateway.idempotent(execution.action),

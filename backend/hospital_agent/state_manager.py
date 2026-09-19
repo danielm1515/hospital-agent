@@ -167,7 +167,9 @@ class StateManager:
         """Apply one event. case_id is None only for REQUEST_SUBMITTED.
 
         execution_outcome: the call this event reports on; its outcome row is written in
-        the same transaction, whether the event commits or is blocked.
+        the same transaction, whether the event commits or its guards block it - except an
+        event from the wrong owner (`system_owned_event`), which is refused before anything
+        is written.
         """
         event = canonical_event(event)
         if event in NON_TRANSITION_EVENTS:
