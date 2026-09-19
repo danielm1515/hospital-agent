@@ -175,24 +175,38 @@ def approval_used(conn: Connection, approval_id: str) -> bool:
 def open_policy_review_override(
     conn: Connection, case_id: str, plan_hash: str | None, current_step: int | None
 ) -> ApprovalRecord | None:
-    """The newest unconsumed PolicyReview approval bound to this plan step (§3.1 PolicyReviewOverrideValid).
+    """The approval the case's latest committed HUMAN_APPROVED used, if it still is a valid
+    open PolicyReview override for this plan step (§3.1 PolicyReviewOverrideValid).
 
-    OPA judges its validity; this only finds the candidate the Policy Service presents.
+    F1: this must NOT be "any unconsumed PolicyReview approval for the step" - a double-submit
+    can leave two such approvals open, and only the one that actually resumed the case (the
+    approval_id on its latest committed HUMAN_APPROVED audit row) is a valid override. OPA
+    judges its validity; this only finds the candidate the Policy Service presents.
     """
-    row = conn.execute(
-        select(approvals)
+    latest = conn.execute(
+        select(audit_log.c.approval_id)
         .where(
-            approvals.c.case_id == case_id,
-            approvals.c.approval_type == "WorkflowDecision",
-            approvals.c.escalation_kind == "PolicyReview",
-            approvals.c.decision == "approve",
-            approvals.c.consumed_at.is_(None),
-            approvals.c.plan_hash == plan_hash,
-            approvals.c.current_step == current_step,
+            audit_log.c.case_id == case_id,
+            audit_log.c.record_type == "Transition",
+            audit_log.c.event == "HUMAN_APPROVED",
         )
-        .order_by(approvals.c.granted_at.desc())
-    ).mappings().first()
-    return None if row is None else ApprovalRecord(**dict(row))
+        .order_by(audit_log.c.audit_id.desc())
+        .limit(1)
+    ).first()
+    if latest is None or latest.approval_id is None:
+        return None
+    approval = load_approval(conn, latest.approval_id)
+    if (
+        approval is None
+        or approval.approval_type != "WorkflowDecision"
+        or approval.escalation_kind != "PolicyReview"
+        or approval.decision != "approve"
+        or approval.consumed_at is not None
+        or approval.plan_hash != plan_hash
+        or approval.current_step != current_step
+    ):
+        return None
+    return approval
 
 
 def consume_approval(conn: Connection, approval_id: str, now: datetime) -> int:

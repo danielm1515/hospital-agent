@@ -4,6 +4,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
+from hospital_agent import repository
 from hospital_agent.case import ApprovalRecord
 from hospital_agent.fsm import TRANSITIONS
 from hospital_agent.naming import Event, EscalationKind, State
@@ -167,6 +168,38 @@ def test_d18_high_risk_needs_a_scoped_one_shot_override(sm, app_engine):
     d.propose()
     assert d.allow().state_after is State.AWAITING_HUMAN_REVIEW     # no reuse on the next step
     assert d.case.escalation_kind is EscalationKind.POLICY_REVIEW
+
+
+def test_f1_override_is_only_the_approval_the_latest_human_approved_used(sm, app_engine):
+    """F1: a double-submit leaves two open PolicyReview approvals for the same step. Only the
+    one the latest committed HUMAN_APPROVED referenced may resume automation - the other
+    stays open and cannot be silently picked up by a later Policy decision on the same step."""
+    d = Driver(sm, app_engine)
+    d.submit()
+    d.validate()
+    d.classify(safety_level="HighRisk")
+    d.plan()
+    d.propose()
+    assert d.allow().state_after is State.AWAITING_HUMAN_REVIEW
+    assert d.case.escalation_kind is EscalationKind.POLICY_REVIEW
+    case = d.case
+    older = d.approval("approve", plan_hash=case.plan_hash, current_step=case.current_step)
+    newer = d.approval("approve", plan_hash=case.plan_hash, current_step=case.current_step)
+    d.human(Event.HUMAN_APPROVED, older)
+    d.propose()
+    assert d.allow().state_after is State.RETRIEVING_DATA
+    with app_engine.connect() as conn:
+        older_row = repository.load_approval(conn, older)
+        newer_row = repository.load_approval(conn, newer)
+    assert older_row.consumed_at is not None
+    assert newer_row.consumed_at is None
+    d.transient_failure()
+    d.propose()
+    assert d.allow().state_after is State.AWAITING_HUMAN_REVIEW
+    assert d.case.escalation_kind is EscalationKind.POLICY_REVIEW
+    with app_engine.connect() as conn:
+        newer_row = repository.load_approval(conn, newer)
+    assert newer_row.consumed_at is None
 
 
 def test_d30_a_temporal_violation_escalates_and_cannot_be_approved(sm, app_engine, monkeypatch):
