@@ -1,11 +1,13 @@
-"""Read-only Case Monitor API (design §9)."""
+"""The app itself: /health (public) and the shape of the route table.
+
+The Case Monitor routes moved behind staff auth - they are tested in tests/test_api_staff.py.
+"""
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.exc import ProgrammingError
 
 from hospital_agent.api.app import create_app
-from tests.driver import Driver
 
 
 class _BrokenConnection:
@@ -53,40 +55,24 @@ def test_health_is_503_for_any_sqlalchemy_error_not_just_operational_error():
     assert response.json()["database"] == "unavailable"
 
 
-def test_cases_list_and_filter_by_state(client, sm, app_engine):
-    classified = Driver(sm, app_engine)
-    classified.to_classified()
-    received = Driver(sm, app_engine, patient_id="P-2")
-    received.submit()
-
-    all_cases = client.get("/cases").json()
-    assert {c["case_id"] for c in all_cases} == {classified.case_id, received.case_id}
-    assert set(all_cases[0]) == {"case_id", "state", "escalation_kind", "updated_at"}
-
-    only_received = client.get("/cases", params={"state": "Received"}).json()
-    assert [c["case_id"] for c in only_received] == [received.case_id]
-
-    assert client.get("/cases", params={"state": "Sleeping"}).status_code == 422
+def test_the_routes_never_carry_a_patient_id(client):
+    """§12.3: an id in a path would leak into the application log. The patient's own id
+    comes from the token, and a case is addressed by case_id."""
+    paths = [getattr(route, "path", "") for route in client.app.routes]
+    assert not any("patient_id" in path for path in paths)
 
 
-def test_case_detail_and_404(client, sm, app_engine):
-    d = Driver(sm, app_engine)
-    d.to_classified()
-    detail = client.get(f"/cases/{d.case_id}").json()
-    assert (detail["state"], detail["state_version"], detail["identity_verified"]) == ("Classified", 3, True)
-    assert detail["safety_level"] == "MediumRisk"
-    assert client.get("/cases/CASE-NOPE").status_code == 404
+def test_the_public_surface_is_health_and_login_only(client):
+    assert client.get("/health").status_code == 200
+    for path in ("/api/patient/requests", "/api/staff/cases", "/api/staff/reviews", "/api/auth/me"):
+        assert client.get(path).status_code == 401, path
 
 
-def test_case_audit_is_the_ordered_trace(client, sm, app_engine):
-    d = Driver(sm, app_engine)
-    d.to_classified()
-    audit = client.get(f"/cases/{d.case_id}/audit").json()
-    assert [row["event"] for row in audit] == ["REQUEST_SUBMITTED", "REQUEST_VALIDATED", "INTENT_CLASSIFIED"]
-    assert [row["audit_id"] for row in audit] == sorted(row["audit_id"] for row in audit)
-    assert client.get("/cases/CASE-NOPE/audit").status_code == 404
-
-
-def test_patient_id_is_not_part_of_any_route(client):
-    paths = [route.path for route in client.app.routes]
-    assert not any("patient" in path for path in paths)
+def test_cors_allows_the_ui_dev_server(client):
+    response = client.options("/api/auth/login", headers={
+        "Origin": "http://localhost:5173",
+        "Access-Control-Request-Method": "POST",
+        "Access-Control-Request-Headers": "authorization,content-type",
+    })
+    assert response.status_code == 200
+    assert response.headers["access-control-allow-origin"] == "http://localhost:5173"

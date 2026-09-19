@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project status
 
-Sub-projects 1 (Core), 2 (Policy), 3 (Execution) and 4 (LLM) are implemented in `backend/` (design and plan under `docs/superpowers/`). The authoritative input is the **binding demo spec** `Hospital_Agent_Clean.docx` (Hebrew, final-project scope). A Markdown copy lives in `docs/spec/`, one file per spec section: **spec §N → `docs/spec/NN-*.md`** (index: `docs/spec/README.md`). The docx is the source of truth. `docs/spec/` is generated, so don't hand-edit it. After the docx changes, regenerate it:
+Sub-projects 1 (Core), 2 (Policy), 3 (Execution), 4 (LLM) and 5 (Human Review + the authenticated API) are implemented in `backend/` (design and plan under `docs/superpowers/`). The authoritative input is the **binding demo spec** `Hospital_Agent_Clean.docx` (Hebrew, final-project scope). A Markdown copy lives in `docs/spec/`, one file per spec section: **spec §N → `docs/spec/NN-*.md`** (index: `docs/spec/README.md`). The docx is the source of truth. `docs/spec/` is generated, so don't hand-edit it. After the docx changes, regenerate it:
 
 ```bash
 python scripts/spec_to_md.py
@@ -25,9 +25,8 @@ The user wants the project finished without being asked questions. Until they sa
 - **Parallel agents are welcome** where tasks are independent (isolated worktrees, each with its own compose project and database: `docker compose -p <name> -f docker-compose.yml -f <override without host ports>`). Never disturb the user's running stack on 54322 / 8000 except to restart it after a merge.
 - **Never** read, print or commit the OpenAI key; never push to a remote; never delete user data.
 - Remaining work, in order:
-  1. **Sub-project 5 — Human Review Service + write API** (§1, §12.4–12.5, §18.3): patient and staff endpoints, the fixed IdP user list, approvals, Data Log reads/tombstones, `Orchestrator.wake()`.
-  2. **Sub-project 6 — React UI** (§1 patient screen + staff screen, D24), styled after the design the user supplied (`design/ramon-ui/`: `tokens.css`, `components.html`, `index.html`, `patient-login.html`, `admin-login.html`).
-  3. **Sub-project 7 — D33**: the Response Evaluator's labelled evaluation set and recall report (§6.5).
+  1. **Sub-project 6 — React UI** (§1 patient screen + staff screen, D24), styled after the design the user supplied (`design/ramon-ui/`: `tokens.css`, `components.html`, `index.html`, `patient-login.html`, `admin-login.html`).
+  2. **Sub-project 7 — D33**: the Response Evaluator's labelled evaluation set and recall report (§6.5).
 
 ## Commands
 
@@ -69,6 +68,8 @@ The §15 golden traces, from the running system (on the test database; prints `f
 docker compose run --rm backend python -m obs.golden
 ```
 
+`AUTH_SECRET` (the key that signs the API's tokens) and `DEMO_PASSWORD` (the one password of the §18.3 demo users, default `demo`) can also be set in `.env`; both have a development default, so the demo runs without them. `CORS_ORIGINS` adds allowed origins beyond the UI dev server.
+
 The LLM needs `OPENAI_API_KEY` (and optionally `OPENAI_MODEL`, default `gpt-5.6-luna`) in `.env` at the repo root; `.env` is git-ignored, and docker compose passes both to the backend. Without a key the server runs but the Agent Orchestrator does not start (`/health` says so). The regular tests never call the model; one smoke test does, only when asked:
 
 ```bash
@@ -86,16 +87,19 @@ docker compose run --rm -e RUN_LIVE_LLM=1 backend pytest tests/test_live_llm.py 
 - The Temporal Monitor (`policy/temporal.py`) reads guard results and evidence from the audit rows' `guards` JSON. A new rule needs its evidence recorded there by whoever emits the event; only Policy decision events may carry `evidence`.
 - `db.py` mirrors the Alembic migrations, and `tests/test_schema.py` fails if they drift. A schema change is a new migration, never an edit to `0001`. Every new migration must `GRANT` the new tables to `hospital_app` (§18.2) - `SELECT, INSERT, UPDATE` for an ordinary table, but `SELECT, INSERT` only for an audit-style append-only table (as `0001` does for `audit_log`), so the DB itself, not just the app, enforces that Audit can't be changed or deleted.
 - `hospital_agent/llm/` holds the four LLM calls of §18.5 and the components around them: `provider.py` (`OpenAIProvider`; `FakeProvider`, deterministic, for tests and `obs.golden` only), `schemas.py`, `prompts/`, `classifier.py`, `planner.py`, `evaluator.py` (a separate process, §6.5), `message.py` (the fixed status template) and `orchestrator.py` (the Agent Orchestrator, which keeps no state of its own and steps each case from its stored State). Every answer is schema-checked; three unusable answers in a row escalate (`ClassificationFailed` / `PlanningFailed`). No schema lets the model assert a fact or a flag.
+- `hospital_agent/auth.py` (the §18.3 demo IdP: the fixed user list and HMAC tokens), `session.py` (the patient's side: submit, upload, `patient_view`) and `human_review.py` (the staff's side: the queue, the shown context and the decision) are the components behind the `/api` routes (`api/routes_auth.py`, `routes_patient.py`, `routes_staff.py`, with `api/deps.py` for the identity). Identity always comes from the verified token - `patient_id`, `reviewer_id` and `reviewer_role` are never read from a request body (§18.3). A decision is bound to what the reviewer was shown by `shown_context_ref`; a context that changed meanwhile is refused (409 `context_changed`). The API's contract is `docs/api.md`.
 - `hospital_agent/data_log.py` is the §12.3 Data Log (table `data_log`, migration 0003): request text, uploaded documents, retrieved instructions and outgoing messages. Audit keeps only `content_hash`; deletion is a tombstone.
-- `hospital_agent/scripted.py` plays the Session Service and the reviewers, which don't exist yet; `tests/driver.py` adds test-only shortcuts that emit a Classifier / Planner / Orchestrator event directly. The Tool Executor is the only code that calls an external system (`execution/gateway.py`); `POLICY_ALLOWED` writes the `executions` intent row, and `StateManager.start_execution()` writes the STARTED / AUDIT_RECORDED pair.
+- `hospital_agent/scripted.py` drives the patient through the real Session Service and still inserts the reviewers' approvals directly (so a test can build an invalid one); `tests/driver.py` adds test-only shortcuts that emit a Classifier / Planner / Orchestrator event directly. The Tool Executor is the only code that calls an external system (`execution/gateway.py`); `POLICY_ALLOWED` writes the `executions` intent row, and `StateManager.start_execution()` writes the STARTED / AUDIT_RECORDED pair.
 
-## Hand-off to sub-project 5 (Human Review + API)
+## Hand-off to sub-project 6 (React UI)
 
-- `hospital_agent/scripted.py` still plays the Session Service (submit, verify identity, upload) and the reviewers. The real ones must emit the same events from the same components (`naming.EVENT_OWNER`), keep the request text and uploaded documents in the Data Log (`data_log.record`, kinds `request_text` / `uploaded_document`) before the event, and call `Orchestrator.wake()` after a patient action so the case moves at once (the running Orchestrator is `app.state.orchestrator`, `None` when it did not start). `python -m obs.golden` must still print 35 / 4 / 54 audit rows.
-- An upload, in the real Session Service: record it in the Data Log, put its `content_hash` in the `DOCUMENT_UPLOADED` payload, and tombstone the entry if the event does not move the case to Classifying. The Orchestrator classifies only accepted uploads - those whose `content_hash` is on a committed `DOCUMENT_UPLOADED` row into Classifying (D25, `docs/spec_corrections.md` row 37).
-- The Agent Orchestrator runs in the background when the server owns its engine and the Model Selector finds a key (`api/app.py` lifespan). It advances cases in Classifying, Classified, Planning, AssessingReadiness and Ready; every other State waits for the patient, a reviewer or the SLA Worker.
-- A medical outgoing message is denied without a ContentApproval (D8, `medical_answer_attempt`): the Human Review Service is where a clinician grants one, bound to the message's `execution_id` + `action` + `content_hash` (§12.5). The message text is in the Data Log (`outgoing_message`), found by its `content_hash`.
-- Show reviewers the Data Log content, never the Audit (it has none). Reading and tombstoning Data Log entries through the API is sub-project 5's; `data_log.entries()` and `data_log.tombstone()` exist.
+- **`docs/api.md` is the contract**: every route, request body, response body and error code, with real JSON. Build the UI from that file; if something is missing there, fix the file, not the UI's assumptions.
+- **Two screens (§1, D24):** the patient screen (login, submit, status, upload) and the staff screen (queue, context, decision, case monitor). The design the user supplied is in `design/ramon-ui/` (`tokens.css`, `components.html`, `index.html`, `patient-login.html`, `admin-login.html`) - follow it.
+- **Auth:** `POST /api/auth/login` with a demo user and `DEMO_PASSWORD` (default `demo`), then `Authorization: Bearer <token>` on every `/api` call; the token lasts 8 hours and there is no refresh. The demo users are `P-10041`, `P-20000`, `P-30000` (identity fails on purpose), `coordinator_nurse` and `admin_coordinator`. `role` decides which screen to show.
+- **CORS** already allows `http://localhost:5173` and `http://127.0.0.1:5173`; any other origin goes in `CORS_ORIGINS`.
+- **The patient sees only the abstract status** (`received`, `in_progress`, `needs_document`, `in_review`, `completed`, `closed`) - never an escalation kind, a reason or an audit row (§12.3). The case advances in the background, so poll the case after a submit or an upload.
+- **A staff decision is two steps:** GET the context, show it, then POST the decision with that `shown_context_ref`. Render exactly the queue item's `allowed_decisions` and `required_fields`; a 409 means re-fetch and decide again on what is now true.
+- Nothing in the UI is authoritative: every state it shows comes from a response, and it may never send `patient_id`, `reviewer_id` or `reviewer_role`.
 
 ## What the system is
 
