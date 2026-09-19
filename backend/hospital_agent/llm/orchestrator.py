@@ -15,7 +15,11 @@ thing that State calls for, so a restart simply carries on (the State is in Post
 Every other State waits for someone else (the patient, a reviewer, the SLA Worker) or is
 final. Failures fail closed (§14): three unusable LLM answers in a row, or three blocked
 events in a row in one State, escalate with that State's failure kind; three InPlan
-rejections of the same step are exactly the latter (§3.1 InPlan).
+rejections of the same step are exactly the latter (§3.1 InPlan). tick() also fails
+closed on its own errors: a case whose step raises an unexpected exception three ticks
+in a row (counted in memory per case, reset on a tick that does not raise) escalates the
+same way, and neither that nor a failure listing the active cases is ever allowed to
+stop the other cases or kill the background thread.
 
 Only the Tool Executor calls an external system; LLM calls change nothing outside, so a
 step interrupted by a crash is simply done again.
@@ -73,6 +77,9 @@ class Orchestrator:
         self.executor = ToolExecutor(state_manager, gateway, content_check=self.classifier.safety)
         self.readiness = ReadinessCheck(state_manager)
         self._wake = threading.Event()
+        self._consecutive_errors: dict[str, int] = {}
+        self._background_stop: threading.Event | None = None
+        self._background_thread: threading.Thread | None = None
 
     # --- one step ------------------------------------------------------------------------
 
@@ -109,12 +116,41 @@ class Orchestrator:
         return self.sm.load(case_id).state
 
     def tick(self) -> None:
-        """One pass over every case that is waiting for the orchestrator."""
-        for case_id in self._active_case_ids():
+        """One pass over every case that is waiting for the orchestrator.
+
+        Guarded end to end (§14 fail closed applied to the orchestrator itself): listing
+        the active cases is guarded so a transient DB error there cannot kill
+        run_in_background's loop, and one case's step raising is caught so it never stops
+        the others. A case whose step keeps raising is escalated after
+        MAX_CONSECUTIVE_BLOCKED consecutive failures - counted in memory, reset the moment
+        a tick runs it without raising - and that escalation call is itself guarded too.
+        """
+        try:
+            case_ids = self._active_case_ids()
+        except Exception as exc:
+            logger.error("orchestrator tick failed: %s", type(exc).__name__)
+            return
+        for case_id in case_ids:
             try:
                 self.run_case(case_id)
             except Exception as exc:  # one broken case never stops the others; no patient data logged (§12.3)
                 logger.error("orchestrator step failed: %s", type(exc).__name__)
+                count = self._consecutive_errors[case_id] = self._consecutive_errors.get(case_id, 0) + 1
+                if count >= MAX_CONSECUTIVE_BLOCKED:
+                    self._fail_on_error(case_id, exc)
+            else:
+                self._consecutive_errors.pop(case_id, None)
+
+    def _fail_on_error(self, case_id: str, exc: Exception) -> None:
+        """§14: three unexpected exceptions in a row on one case escalate it, never crash the tick."""
+        try:
+            case = self.sm.load(case_id)
+            if case.state in FAILURE:
+                self._fail(case_id, case.state, f"orchestrator_error:{type(exc).__name__}")
+        except Exception as inner:
+            logger.error("orchestrator tick failed: %s", type(inner).__name__)
+        finally:
+            self._consecutive_errors.pop(case_id, None)
 
     def wake(self) -> None:
         """Run the next tick now (e.g. a new request was submitted)."""
@@ -129,10 +165,18 @@ class Orchestrator:
                 self._wake.wait(interval_seconds)
                 self._wake.clear()
 
-        threading.Thread(target=loop, name="agent-orchestrator", daemon=True).start()
+        thread = threading.Thread(target=loop, name="agent-orchestrator", daemon=True)
+        self._background_stop, self._background_thread = stop, thread
+        thread.start()
         return stop
 
     def close(self) -> None:
+        """Stop the background thread (if any) and join it before closing the Evaluator's
+        process pool, so a tick is never left running against a closed Evaluator."""
+        if self._background_stop is not None:
+            self._background_stop.set()
+            self.wake()
+            self._background_thread.join(timeout=10)
         self.evaluator.close()
 
     # --- per State -----------------------------------------------------------------------

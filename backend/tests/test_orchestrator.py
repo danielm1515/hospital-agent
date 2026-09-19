@@ -13,7 +13,7 @@ from hospital_agent.llm.orchestrator import Orchestrator
 from hospital_agent.llm.provider import FakeProvider
 from hospital_agent.llm.schemas import Call, LLMUnusable
 from hospital_agent.naming import EscalationKind, Event, SafetyLevel, State
-from hospital_agent.scripted import ScriptedAgents
+from hospital_agent.scripted import DOCUMENT_TEXT, ScriptedAgents
 
 MEDICAL = "Should I stop taking my blood thinner before the colonoscopy?"
 UNUSABLE = [LLMUnusable("x")] * 3
@@ -274,3 +274,68 @@ def test_the_background_thread_wakes_on_demand(run):
     finally:
         stop.set()
         agent.wake()
+
+
+def test_close_after_run_in_background_joins_the_thread(run):
+    patient, agent = run()
+    agent.run_in_background(interval_seconds=3600)
+    thread = agent._background_thread
+    assert thread.is_alive()
+    agent.close()
+    assert not thread.is_alive()
+
+
+# --- fix round 1: tick() fails closed on its own errors; a rejected upload is tombstoned ---
+
+def _raise_runtime_error() -> list[str]:
+    raise RuntimeError("boom")
+
+
+def test_a_tick_survives_active_case_ids_raising_once(run):
+    patient, agent = run()
+    patient.submit()
+    patient.validate()
+    assert patient.state is State.CLASSIFYING
+    original = agent._active_case_ids
+    agent._active_case_ids = _raise_runtime_error
+    agent.tick()  # the whole tick is guarded: nothing raises out of it, nothing changes
+    assert patient.state is State.CLASSIFYING
+    agent._active_case_ids = original
+    agent.tick()  # the next tick advances the case normally
+    assert patient.state is State.AWAITING_PATIENT_INPUT
+
+
+def test_a_case_whose_step_keeps_raising_escalates_after_three_ticks(run):
+    patient, agent = run()
+    patient.submit()
+    patient.validate()
+    agent.step(patient.case_id)  # Classifying -> Classified
+    assert patient.state is State.CLASSIFIED
+
+    def _fail_plan(*_args, **_kwargs):
+        raise RuntimeError("boom")
+
+    agent.planner.plan = _fail_plan
+    agent.tick()
+    assert patient.state is State.CLASSIFIED  # 1st failure: not escalated yet
+    agent.tick()
+    assert patient.state is State.CLASSIFIED  # 2nd failure: still not escalated
+    agent.tick()  # 3rd failure in a row: fails closed
+    assert escalation(patient) == (State.AWAITING_HUMAN_REVIEW, EscalationKind.PLANNING_FAILED)
+    assert patient.trace()[-1].policy_reasons == ["orchestrator_error:RuntimeError"]
+
+
+def test_a_rejected_upload_is_tombstoned_and_never_reaches_the_llm(run):
+    provider = FakeProvider()
+    patient, agent = run(provider)
+    patient.submit()
+    patient.validate()
+    agent.run_case(patient.case_id)  # blood_test missing, Z3 unsat -> AwaitingPatientInput
+    rejected = "Someone else's chart: severe complications, do not disclose."
+    result = patient.upload("blood_test", content=rejected, patient_id="P-OTHER")  # D25: another patient's document
+    assert result.committed and result.state_after is State.AWAITING_PATIENT_INPUT  # rejected: stays put
+    patient.upload("blood_test")  # the real document
+    agent.run_case(patient.case_id)
+    documents = [user_input for call, user_input in provider.calls if call is Call.INTENT][-1]["documents"]
+    assert rejected not in documents
+    assert any(DOCUMENT_TEXT in document for document in documents)

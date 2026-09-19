@@ -5,7 +5,11 @@ uploading a document) and the human reviewers with fixed demo input. Everything 
 real: the Agent Orchestrator with the LLM components (hospital_agent.llm), the State
 Manager, the Policy Service, the Readiness Check, the Temporal Monitor and the Tool
 Executor. Each event comes from the component that owns it (§13.2), and the Session
-Service keeps the request text and uploaded documents in the Data Log (§12.3).
+Service keeps the request text and uploaded documents in the Data Log (§12.3). A document
+is recorded before DOCUMENT_UPLOADED is emitted (the Orchestrator may classify the instant
+it commits), but a rejected upload (DocumentValid fails, e.g. another patient's document,
+D25) is tombstoned right after - it must never sit in the Data Log readable, or be fed to
+the LLM on the next classification; the real Session Service must do the same.
 
 Used by `python -m obs.golden` and, through tests/driver.py, by the tests. Sub-project 5
 replaces it with the real Session Service and Human Review Service.
@@ -49,9 +53,9 @@ class ScriptedAgents:
     def _emit(self, event: Event, payload: dict, source: Component) -> TransitionResult:
         return self.sm.apply(self.case_id, event, payload, source)
 
-    def _keep(self, kind: data_log.DataKind, content: str) -> None:
+    def _keep(self, kind: data_log.DataKind, content: str) -> data_log.DataEntry:
         with self.engine.begin() as conn:
-            data_log.record(conn, self.case_id, self.patient_id, kind, content, self.sm.clock())
+            return data_log.record(conn, self.case_id, self.patient_id, kind, content, self.sm.clock())
 
     # --- patient / Session Service ---------------------------------------------------------
 
@@ -69,9 +73,15 @@ class ScriptedAgents:
         return self._emit(Event.PATIENT_VERIFICATION_FAILED, {}, Component.SESSION_SERVICE)
 
     def upload(self, document_id: str, content: str = DOCUMENT_TEXT, **document) -> TransitionResult:
-        self._keep(data_log.DataKind.UPLOADED_DOCUMENT, content)
+        entry = self._keep(data_log.DataKind.UPLOADED_DOCUMENT, content)
         payload = {"document": {"document_id": document_id, "format": "pdf", "patient_id": self.patient_id, **document}}
-        return self._emit(Event.DOCUMENT_UPLOADED, payload, Component.SESSION_SERVICE)
+        result = self._emit(Event.DOCUMENT_UPLOADED, payload, Component.SESSION_SERVICE)
+        if not result.committed or result.state_after is not State.CLASSIFYING:
+            # §12.3 privacy: a rejected upload (guard_failed self-loop, or Blocked) must not
+            # stay readable - _classify() already skips a tombstoned (content None) entry.
+            with self.engine.begin() as conn:
+                data_log.tombstone(conn, entry.entry_id, self.sm.clock())
+        return result
 
     # --- human reviewers -----------------------------------------------------------------
 
