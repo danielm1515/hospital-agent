@@ -421,7 +421,7 @@ automatically. What to expect:
 |---|---|---|
 | `resolve` | any | `Completed` (the patient sees `closed` - nothing was sent) |
 | `reject` | any | `Failed` (the patient sees `closed`) |
-| `approve` | `PatientVerificationFailed` | `Classifying` (the request is re-validated automatically and goes on) |
+| `approve` | `PatientVerificationFailed` | `Classifying` - the request is re-validated automatically and goes on; or `Received` if the request text had been deleted: the decision stands and the case waits for staff |
 | `approve` | `RetryExhausted` | `Planning` (a new retry cycle) |
 | `approve` | `PolicyReview` | `Planning` (a one-shot override for this plan and step) |
 | `approve` | `Z3Counterexample` / `PatientSlaExpired` | `AwaitingPatientInput` with the new deadline |
@@ -439,7 +439,6 @@ Errors - all of them leave the case exactly as it was:
 | 409 | `verified_identity_ref_required` | `approve` on `PatientVerificationFailed` without it |
 | 409 | `patient_deadline_required` | `approve` on `Z3Counterexample` / `PatientSlaExpired` without it |
 | 409 | `workflow_decision_invalid` | The state machine refused the approval record (e.g. a non-staff reviewer role) |
-| 409 | `request_text_unavailable` | An approved `PatientVerificationFailed` case whose request text was deleted: the decision stands, but the case stays in `Received` |
 | 409 | other codes | Any other guard that refused the human event; show `detail` and re-fetch the case |
 | 422 | (validation body) | A field is over its length limit, or `patient_deadline` has no timezone |
 

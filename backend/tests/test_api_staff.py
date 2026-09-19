@@ -151,6 +151,21 @@ def test_approving_retry_exhausted_opens_a_new_cycle(client, staff, sm, app_engi
     assert (d.case.retry_cycle, d.case.attempt_count) == (1, 0)
 
 
+def test_approving_identity_without_a_request_text_keeps_the_case_in_received(client, staff, app_engine):
+    """The decision is already committed when the re-validation cannot run, so it is never
+    reported as an error: 200, and the case waits for the staff in Received."""
+    token = client.post("/api/auth/login", json={"user_id": "P-30000", "password": demo_password()}).json()["token"]
+    case_id = client.post("/api/patient/requests", json={"text": MEDICAL.replace("?", ".")},
+                          headers={"Authorization": f"Bearer {token}"}).json()["case_id"]
+    with app_engine.connect() as conn:
+        [entry] = data_log.entries(conn, case_id, data_log.DataKind.REQUEST_TEXT)
+    assert client.delete(f"/api/staff/cases/{case_id}/data/{entry.entry_id}", headers=staff).status_code == 204
+
+    response = decide(client, staff, case_id, "approve", verified_identity_ref="ID-DESK-17")
+    assert response.status_code == 200
+    assert response.json() == {"case_id": case_id, "state": "Received"}
+
+
 def test_a_stale_shown_context_ref_is_409(client, staff, sm, app_engine):
     d = medical_question(sm, app_engine)
     response = decide(client, staff, d.case_id, "resolve", shown_context_ref="ctx-stale")

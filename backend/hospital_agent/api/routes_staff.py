@@ -14,7 +14,7 @@ from .. import repository
 from ..auth import Principal
 from ..human_review import ContextChanged, DecisionRejected, HumanReviewService, NotInReview
 from ..naming import State
-from ..session import CaseNotFound, EventRejected
+from ..session import CaseNotFound
 from .deps import get_engine, get_reviews, require_staff
 from .schemas import (
     AuditRecord,
@@ -90,11 +90,6 @@ def decide(case_id: str, body: DecisionRequest, principal: Principal = Depends(r
     except ContextChanged:
         raise HTTPException(status_code=409, detail="context_changed") from None
     except DecisionRejected as rejected:
-        raise HTTPException(status_code=409, detail=rejected.reason) from None
-    except EventRejected as rejected:
-        # The approval committed, but what should follow it could not: e.g. an approved
-        # PatientVerificationFailed whose request text was tombstoned meanwhile. The case
-        # stays where the decision left it, and the reviewer is told why (design §5.4).
         raise HTTPException(status_code=409, detail=rejected.reason) from None
     return DecisionResponse(case_id=case_id, state=reviews.sm.load(case_id).state.value)
 
