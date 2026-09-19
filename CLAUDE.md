@@ -13,8 +13,21 @@ python scripts/spec_to_md.py
 (Requires `python-docx`.)
 
 - **Scope is exactly the three scenarios in §0**: normal flow with a missing document, medical escalation, and technical failure with bounded retry. The spec calls the "full characterization" (אפיון מלא) a vision document, so do not build beyond the demo.
-- The spec keeps pointing to a **companion document (המסמך הנלווה)** that uses the same section numbers, and its implementation conditions are binding. It is **not in the repo**. When a detail is deferred to it, ask the user instead of inventing it.
+- The spec keeps pointing to a **companion document (המסמך הנלווה)** that uses the same section numbers, and its implementation conditions are binding. It is **not in the repo**. When a detail is deferred to it, take the most conservative (fail-closed) reading and record it in `docs/spec_corrections.md` (see *Autonomous mode* below).
 - Spec inconsistencies found while implementing, and decisions the spec leaves open, are in `docs/spec_corrections.md`.
+
+## Autonomous mode (the user's standing instruction, 2026-09-20)
+
+The user wants the project finished without being asked questions. Until they say otherwise:
+
+- **Do not stop to ask.** At every decision point choose the option you would recommend, prefer the one that stays closest to the spec and fails closed, and record it: a row in `docs/spec_corrections.md` for spec-level decisions, a line in the sub-project's design doc for the rest.
+- **Keep the process, drop the approval waits.** Each sub-project still gets a design doc, a prototype-validated plan, subagent-driven execution with task reviews and a final whole-branch review. The user's approval of each step is given in advance; merge a sub-project to `main` once its final review is clean and the full suite passes.
+- **Parallel agents are welcome** where tasks are independent (isolated worktrees, each with its own compose project and database: `docker compose -p <name> -f docker-compose.yml -f <override without host ports>`). Never disturb the user's running stack on 54322 / 8000 except to restart it after a merge.
+- **Never** read, print or commit the OpenAI key; never push to a remote; never delete user data.
+- Remaining work, in order:
+  1. **Sub-project 5 — Human Review Service + write API** (§1, §12.4–12.5, §18.3): patient and staff endpoints, the fixed IdP user list, approvals, Data Log reads/tombstones, `Orchestrator.wake()`.
+  2. **Sub-project 6 — React UI** (§1 patient screen + staff screen, D24), styled after the design the user supplied (`design/ramon-ui/`: `tokens.css`, `components.html`, `index.html`, `patient-login.html`, `admin-login.html`).
+  3. **Sub-project 7 — D33**: the Response Evaluator's labelled evaluation set and recall report (§6.5).
 
 ## Commands
 

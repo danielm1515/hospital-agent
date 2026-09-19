@@ -1,0 +1,513 @@
+<!doctype html>
+<html lang="he" dir="rtl" data-theme="light">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>כניסת מטופל · המרכז הרפואי רמון</title>
+  <meta name="description" content="מסך כניסת מטופל: מספר טלפון וקוד SMS בן שש ספרות.">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Hebrew:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+  <style>
+/* Ramon Patient Agent — design tokens
+   נוצר מתוך tokens.json של מערכת העיצוב. אל תערכו ידנית. */
+
+:root,
+[data-theme="light"] {
+  --surface-000: #ffffff;
+  --surface-100: #f2f6f8;
+  --surface-200: #e6edf1;
+  --surface-300: #d7e2e8;
+  --surface-brand: #0b5871;
+  --ink-900: #0c1a22;
+  --ink-700: #2c4653;
+  --ink-500: #506a79;
+  --ink-000: #ffffff;
+  --on-brand: #ffffff;
+  --brand-mist: #c8e6f2;
+  --brand-700: #0b5871;
+  --brand-600: #0e6f8e;
+  --brand-500: #1189ae;
+  --brand-100: #def0f7;
+  --line-200: #cdd9e0;
+  --line-300: #6d8697;
+  --focus-500: #0e6f8e;
+  --teal-500: #0a7f75;
+  --teal-100: #d8f2ee;
+  --success-500: #14775a;
+  --warning-500: #8c5a06;
+  --danger-500: #ad2d2d;
+  --scrim: #0c1a2299;
+  --shadow-card: 0 1px 2px #0c1a220f, 0 8px 24px #0c1a2214;
+  --shadow-modal: 0 12px 48px #0c1a2226;
+}
+
+[data-theme="dark"] {
+  --surface-000: #14212b;
+  --surface-100: #0d161d;
+  --surface-200: #1a2a35;
+  --surface-300: #233543;
+  --surface-brand: #0a1f2a;
+  --ink-900: #eef5f8;
+  --ink-700: #c3d4dd;
+  --ink-500: #8ba3b0;
+  --ink-000: #06141c;
+  --on-brand: #04202b;
+  --brand-mist: #9fc6d6;
+  --brand-700: #9adcf2;
+  --brand-600: #63c8e8;
+  --brand-500: #2fabd3;
+  --brand-100: #0f2f3c;
+  --line-200: #27363f;
+  --line-300: #667d8c;
+  --focus-500: #63c8e8;
+  --teal-500: #45d2c2;
+  --teal-100: #0d322f;
+  --success-500: #4fcb9f;
+  --warning-500: #e8ab52;
+  --danger-500: #ff8f8f;
+  --scrim: #000000cc;
+  --shadow-card: 0 1px 2px #00000066, 0 8px 24px #0000008c;
+  --shadow-modal: 0 12px 48px #000000a6;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --surface-000: #14212b;
+    --surface-100: #0d161d;
+    --surface-200: #1a2a35;
+    --surface-300: #233543;
+    --surface-brand: #0a1f2a;
+    --ink-900: #eef5f8;
+    --ink-700: #c3d4dd;
+    --ink-500: #8ba3b0;
+    --ink-000: #06141c;
+    --on-brand: #04202b;
+    --brand-mist: #9fc6d6;
+    --brand-700: #9adcf2;
+    --brand-600: #63c8e8;
+    --brand-500: #2fabd3;
+    --brand-100: #0f2f3c;
+    --line-200: #27363f;
+    --line-300: #667d8c;
+    --focus-500: #63c8e8;
+    --teal-500: #45d2c2;
+    --teal-100: #0d322f;
+    --success-500: #4fcb9f;
+    --warning-500: #e8ab52;
+    --danger-500: #ff8f8f;
+    --scrim: #000000cc;
+    --shadow-card: 0 1px 2px #00000066, 0 8px 24px #0000008c;
+    --shadow-modal: 0 12px 48px #000000a6;
+  }
+}
+
+:root {
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+  --space-7: 48px;
+  --space-8: 64px;
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 18px;
+  --radius-pill: 999px;
+  --opacity-disabled: 0.45;
+  --opacity-muted: 0.7;
+  --font-sans: "IBM Plex Sans Hebrew", "Segoe UI", Arial, sans-serif;
+  --font-mono: "IBM Plex Mono", "Courier New", monospace;
+}
+
+/* Display */
+.display-lg {
+  font-family: var(--font-sans);
+  font-size: 34px;
+  line-height: 40px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+.display-sm {
+  font-family: var(--font-sans);
+  font-size: 26px;
+  line-height: 32px;
+  font-weight: 600;
+}
+
+/* Heading */
+.heading-md {
+  font-family: var(--font-sans);
+  font-size: 19px;
+  line-height: 26px;
+  font-weight: 600;
+}
+.heading-sm {
+  font-family: var(--font-sans);
+  font-size: 16px;
+  line-height: 22px;
+  font-weight: 600;
+}
+
+/* Text */
+.body {
+  font-family: var(--font-sans);
+  font-size: 15px;
+  line-height: 24px;
+  font-weight: 400;
+}
+.body-strong {
+  font-family: var(--font-sans);
+  font-size: 15px;
+  line-height: 24px;
+  font-weight: 600;
+}
+.small {
+  font-family: var(--font-sans);
+  font-size: 13px;
+  line-height: 20px;
+  font-weight: 400;
+}
+.label {
+  font-family: var(--font-sans);
+  font-size: 13px;
+  line-height: 18px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+.eyebrow {
+  font-family: var(--font-sans);
+  font-size: 11px;
+  line-height: 16px;
+  font-weight: 600;
+  letter-spacing: 0.09em;
+}
+
+/* Data */
+.otp {
+  font-family: var(--font-mono);
+  font-size: 26px;
+  line-height: 30px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+}
+.code {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 20px;
+  font-weight: 400;
+}
+.state {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 16px;
+  font-weight: 500;
+  letter-spacing: 0.06em;
+}
+
+
+    * { box-sizing: border-box; }
+    html, body { margin: 0; padding: 0; }
+    body {
+      background: var(--surface-100);
+      color: var(--ink-700);
+      font-family: var(--font-sans);
+      -webkit-font-smoothing: antialiased;
+    }
+    img { max-width: 100%; }
+    [hidden] { display: none !important; }
+
+    .theme-toggle {
+      position: fixed; inset-block-start: 16px; inset-inline-start: 16px; z-index: 50;
+      font: inherit; font-size: 13px; font-weight: 600;
+      padding: 8px 14px; border-radius: 999px;
+      background: var(--surface-000); color: var(--ink-700);
+      border: 1px solid var(--line-300); cursor: pointer;
+    }
+    .theme-toggle:focus-visible { outline: 2px solid var(--focus-500); outline-offset: 2px; }
+
+#root {
+    font-family: var(--font-sans, "IBM Plex Sans Hebrew", sans-serif);
+    background: var(--surface-100);
+    min-height: 100vh;
+    box-sizing: border-box;
+    padding: var(--space-5);
+  }
+#root .screen {
+    display: flex;
+    gap: 0;
+    background: var(--surface-000);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-card);
+    overflow: hidden;
+    min-height: 700px;
+  }
+#root .pane { box-sizing: border-box; }
+#root .form-pane {
+    flex: 1 1 58%;
+    padding: var(--space-6) var(--space-8);
+    display: flex; flex-direction: column; gap: var(--space-5);
+  }
+#root .brand-pane {
+    flex: 1 1 42%;
+    position: relative;
+    background: var(--surface-brand);
+    padding: var(--space-8);
+    display: flex; align-items: flex-end;
+    overflow: hidden;
+  }
+#root .top { display: flex; align-items: center; justify-content: space-between; gap: var(--space-4); }
+#root .lock { display: flex; align-items: center; gap: var(--space-2); }
+#root .org { font-size: 16px; font-weight: 600; color: var(--ink-900); }
+#root .lang { display: inline-flex; background: var(--surface-200); border-radius: var(--radius-pill); padding: 3px; }
+#root .lang-btn {
+    font: inherit; font-size: 13px; font-weight: 600;
+    padding: 4px 12px; border: 0; border-radius: var(--radius-pill);
+    background: transparent; color: var(--ink-500); cursor: pointer;
+  }
+#root .lang-btn.on { background: var(--surface-000); color: var(--ink-900); }
+#root .lang-btn:focus-visible { outline: 2px solid var(--focus-500); outline-offset: 2px; }
+#root .step { display: flex; flex-direction: column; gap: var(--space-4); max-width: 420px; }
+#root .steps { display: flex; align-items: center; gap: var(--space-2); }
+#root .dot { width: 8px; height: 8px; border-radius: var(--radius-pill); background: var(--surface-300); }
+#root .dot.on { background: var(--brand-500); }
+#root .steps-txt { font-size: 11px; font-weight: 600; letter-spacing: .06em; color: var(--ink-500); margin-inline-start: var(--space-1); }
+#root .h1 { margin: 0; font-size: 34px; line-height: 40px; font-weight: 600; letter-spacing: -.01em; color: var(--ink-900); text-wrap: balance; }
+#root .lede { margin: 0; font-size: 15px; line-height: 24px; color: var(--ink-700); }
+#root .num { font-family: var(--font-mono, monospace); font-size: 14px; color: var(--ink-900); }
+#root .form { display: flex; flex-direction: column; gap: var(--space-5); margin-top: var(--space-2); }
+#root .field { display: flex; flex-direction: column; gap: var(--space-2); }
+#root .label { font-size: 13px; line-height: 18px; font-weight: 600; letter-spacing: .02em; color: var(--ink-700); }
+#root .control {
+    display: flex; align-items: stretch;
+    background: var(--surface-200);
+    border: 1px solid var(--line-300);
+    border-radius: var(--radius-md);
+    overflow: hidden;
+  }
+#root .control:focus-within { outline: 2px solid var(--focus-500); outline-offset: 2px; }
+#root .prefix { display: flex; align-items: center; gap: var(--space-1); padding-inline: var(--space-3); color: var(--ink-500); border-inline-end: 1px solid var(--line-200); }
+#root .cc { font-family: var(--font-mono, monospace); font-size: 13px; }
+#root .input {
+    font: inherit; font-size: 15px; line-height: 24px;
+    font-variant-numeric: tabular-nums;
+    flex: 1; min-width: 0; padding: 12px var(--space-3);
+    border: 0; background: transparent; color: var(--ink-900);
+  }
+#root .input:focus { outline: none; }
+#root .input::placeholder { color: var(--ink-500); }
+#root .hint { margin: 0; font-size: 13px; line-height: 20px; color: var(--ink-500); }
+#root .otp { display: flex; gap: var(--space-2); }
+#root .box {
+    width: 54px; height: 62px; text-align: center;
+    font-family: var(--font-mono, monospace); font-size: 26px; font-weight: 500;
+    color: var(--ink-900); background: var(--surface-200);
+    border: 1px solid var(--line-300); border-radius: var(--radius-md);
+    caret-color: var(--brand-600);
+  }
+#root .box:focus,
+#root .box.focusd { outline: 2px solid var(--focus-500); outline-offset: 2px; border-color: var(--brand-600); }
+#root .btn {
+    font: inherit; font-size: 15px; font-weight: 600; line-height: 24px;
+    padding: 12px var(--space-5); border-radius: var(--radius-md);
+    border: 1px solid transparent; cursor: pointer;
+    display: inline-flex; align-items: center; justify-content: center;
+  }
+#root .btn:focus-visible { outline: 2px solid var(--focus-500); outline-offset: 2px; }
+#root .primary { background: var(--brand-700); color: var(--on-brand); }
+#root .primary:hover { background: var(--brand-600); }
+#root .quiet { background: transparent; color: var(--brand-700); padding-inline: var(--space-3); }
+#root .quiet:disabled { opacity: var(--opacity-disabled); cursor: not-allowed; }
+#root .resend { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; margin-top: calc(var(--space-3) * -1); }
+#root .timer { font-size: 13px; color: var(--ink-500); }
+#root .link,
+#root .linkbtn { color: var(--brand-700); }
+#root .linkbtn { font: inherit; font-size: 15px; background: none; border: 0; padding: 0; cursor: pointer; text-decoration: underline; }
+#root .linkbtn:focus-visible,
+#root .link:focus-visible { outline: 2px solid var(--focus-500); outline-offset: 2px; border-radius: 3px; }
+#root .legal { margin: 0; font-size: 13px; line-height: 20px; color: var(--ink-500); max-width: 420px; }
+#root .help {
+    margin-top: auto;
+    background: var(--surface-100);
+    border: 1px solid var(--line-200);
+    border-radius: var(--radius-md);
+    padding: var(--space-4);
+  }
+#root .help-t { margin: 0 0 2px; font-size: 15px; font-weight: 600; color: var(--ink-900); }
+#root .help-b { margin: 0; font-size: 13px; line-height: 20px; color: var(--ink-700); }
+#root .tel { font-family: var(--font-mono, monospace); color: var(--ink-900); }
+#root .alert {
+    display: flex; gap: var(--space-3);
+    padding: var(--space-3) var(--space-4);
+    border: 1px solid var(--danger-500);
+    border-radius: var(--radius-md);
+    max-width: 420px;
+  }
+#root .ico { width: 20px; height: 20px; flex: none; margin-top: 2px; color: var(--danger-500); }
+#root .a-t { margin: 0 0 2px; font-size: 15px; font-weight: 600; color: var(--ink-900); }
+#root .a-b { margin: 0; font-size: 13px; line-height: 20px; color: var(--ink-700); }
+#root .pattern { position: absolute; inset-block-start: 0; inset-inline-end: 0; height: 100%; width: 100%; opacity: var(--opacity-muted); }
+#root .brand-body { position: relative; max-width: 380px; }
+#root .eyebrow { margin: 0 0 var(--space-3); font-size: 11px; font-weight: 600; letter-spacing: .09em; color: var(--brand-mist); }
+#root .brand-h { margin: 0 0 var(--space-3); font-size: 28px; line-height: 36px; font-weight: 600; color: #ffffff; }
+#root .brand-p { margin: 0 0 var(--space-5); font-size: 15px; line-height: 24px; color: var(--brand-mist); }
+#root .facts { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: var(--space-2); }
+#root .facts li { display: flex; align-items: center; gap: var(--space-2); font-size: 14px; color: #ffffff; }
+#root .dotlive { width: 8px; height: 8px; border-radius: var(--radius-pill); background: var(--teal-500); flex: none; }
+#root .tick { color: var(--teal-500); font-size: 14px; flex: none; width: 8px; }
+@media (max-width: 900px) {
+#root .screen { flex-direction: column; min-height: 0; }
+#root .form-pane { padding: var(--space-5) var(--space-4); order: 2; }
+#root .brand-pane { order: 1; padding: var(--space-5) var(--space-4); align-items: flex-start; }
+#root .brand-h { font-size: 22px; line-height: 30px; }
+#root .facts { display: none; }
+#root .box { width: 44px; height: 54px; font-size: 22px; }
+#root .h1 { font-size: 26px; line-height: 32px; }
+
+  
+}
+
+
+  </style>
+</head>
+<body>
+<div id="root" dir="rtl">
+  <div class="screen">
+
+    <section class="pane form-pane">
+      <header class="top">
+        <div class="lock">
+          <svg width="32" height="32" viewBox="0 0 40 40" aria-hidden="true">
+            <rect width="40" height="40" rx="12" fill="var(--brand-500)"></rect>
+            <path d="M22 40h6a12 12 0 0 0 12-12v-6a18 18 0 0 1-18 18Z" fill="var(--teal-500)"></path>
+            <path d="M8 21h5l3-6 4 12 3-6h5" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"></path>
+          </svg>
+          <span class="org">המרכז הרפואי רמון</span>
+        </div>
+        <div class="lang" role="group" aria-label="בחירת שפה">
+          <button type="button" class="lang-btn on" aria-pressed="true">עב</button>
+          <button type="button" class="lang-btn" aria-pressed="false">EN</button>
+        </div>
+      </header>
+
+      <!-- שלב 1 -->
+      <div class="step" id="step1">
+        <div class="steps" aria-label="שלב 1 מתוך 2">
+          <span class="dot on"></span><span class="dot"></span>
+          <span class="steps-txt">שלב 1 מתוך 2</span>
+        </div>
+        <h1 class="h1">כניסה לפניות מטופלים</h1>
+        <p class="lede">הזינו את מספר הטלפון הנייד הרשום בתיק שלכם. נשלח לכם קוד חד-פעמי לאימות.</p>
+
+        <form class="form" onsubmit="return false">
+          <div class="field">
+            <label class="label" for="pl-phone">מספר טלפון נייד</label>
+            <div class="control">
+              <span class="prefix">
+                <svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="2.5" width="10" height="15" rx="1.8"/><path d="M9 15h2"/></svg>
+                <span class="cc">972+</span>
+              </span>
+              <input id="pl-phone" class="input" type="tel" inputmode="tel" dir="ltr" placeholder="050-000-0000" autocomplete="tel">
+            </div>
+            <p class="hint">הקוד יישלח ב-SMS. עלולות לחול עלויות מפעיל.</p>
+          </div>
+
+          <button type="button" class="btn primary" onclick="go(2)">שלחו לי קוד</button>
+        </form>
+
+        <p class="legal">הכניסה מהווה הסכמה ל<a href="#" class="link">תנאי השימוש</a> ול<a href="#" class="link">מדיניות הפרטיות</a> של המרכז הרפואי רמון.</p>
+
+        <div class="help">
+          <p class="help-t">אין לכם טלפון נייד רשום?</p>
+          <p class="help-b">התקשרו למוקד המטופלים בטלפון <span class="tel" dir="ltr">*2700</span>, בימים א׳–ה׳ בין 07:00 ל-20:00.</p>
+        </div>
+      </div>
+
+      <!-- שלב 2 -->
+      <div class="step" id="step2" hidden>
+        <div class="steps" aria-label="שלב 2 מתוך 2">
+          <span class="dot on"></span><span class="dot on"></span>
+          <span class="steps-txt">שלב 2 מתוך 2</span>
+        </div>
+        <h1 class="h1">הזינו את הקוד שקיבלתם</h1>
+        <p class="lede">שלחנו קוד בן שש ספרות למספר <span class="num">052-000-0000</span>.
+          <button type="button" class="linkbtn" onclick="go(1)">החלפת מספר</button>
+        </p>
+
+        <form class="form" onsubmit="return false">
+          <div class="field">
+            <div class="otp" dir="ltr" role="group" aria-label="קוד אימות בן שש ספרות">
+              <input class="box" inputmode="numeric" autocomplete="one-time-code" maxlength="1" value="4" aria-label="ספרה 1">
+              <input class="box" inputmode="numeric" maxlength="1" value="8" aria-label="ספרה 2">
+              <input class="box" inputmode="numeric" maxlength="1" value="1" aria-label="ספרה 3">
+              <input class="box" inputmode="numeric" maxlength="1" value="9" aria-label="ספרה 4">
+              <input class="box focusd" inputmode="numeric" maxlength="1" value="" aria-label="ספרה 5">
+              <input class="box" inputmode="numeric" maxlength="1" value="" aria-label="ספרה 6">
+            </div>
+            <p class="hint">הקוד תקף לחמש דקות.</p>
+          </div>
+
+          <button type="button" class="btn primary">כניסה למערכת</button>
+          <div class="resend">
+            <button type="button" class="btn quiet" disabled>שלחו קוד חדש</button>
+            <span class="timer">אפשר לבקש קוד חדש בעוד <span class="num">00:42</span></span>
+          </div>
+        </form>
+
+        <div class="alert error" role="alert">
+          <svg class="ico" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><circle cx="10" cy="10" r="7.5"/><path d="M10 6.5v4.5"/><path d="M10 13.6v.1"/></svg>
+          <div>
+            <p class="a-t">הקוד שגוי</p>
+            <p class="a-b">נשארו שני ניסיונות. בדקו שהזנתם את הקוד האחרון שקיבלתם.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <aside class="pane brand-pane">
+      <svg class="pattern" viewBox="0 0 420 760" aria-hidden="true" preserveAspectRatio="xMidYMid slice">
+        <rect x="48" y="96" width="120" height="120" rx="18" fill="var(--brand-500)" opacity=".5"></rect>
+        <rect x="184" y="96" width="56" height="120" rx="18" fill="var(--teal-500)" opacity=".55"></rect>
+        <rect x="48" y="232" width="192" height="56" rx="18" fill="#ffffff" opacity=".12"></rect>
+        <circle cx="300" cy="156" r="28" fill="var(--teal-500)" opacity=".4"></circle>
+        <path d="M48 620h48l24-48 32 96 24-48h96" fill="none" stroke="var(--teal-500)" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" opacity=".6"></path>
+      </svg>
+
+      <div class="brand-body">
+        <p class="eyebrow">PATIENT SERVICES</p>
+        <p class="brand-h">פנייה אחת, מענה אחד,<br>בלי להמתין על הקו.</p>
+        <p class="brand-p">הסוכן הדיגיטלי אוסף את הפרטים, מאתר את המסמכים בתיק שלכם ומעביר לרופא רק את מה שדורש החלטה רפואית.</p>
+
+        <ul class="facts">
+          <li><span class="dotlive" aria-hidden="true"></span>זמין בכל שעה, כל ימות השבוע</li>
+          <li><span class="tick" aria-hidden="true">✓</span>כל פנייה רפואית עוברת אישור אדם</li>
+          <li><span class="tick" aria-hidden="true">✓</span>הפרטים נשמרים בתיק הרפואי בלבד</li>
+        </ul>
+      </div>
+    </aside>
+
+  </div>
+</div>
+<script>
+  function go(n) {
+    document.getElementById('step1').hidden = n !== 1;
+    document.getElementById('step2').hidden = n !== 2;
+  }
+</script>
+
+  <button type="button" id="themeBtn" class="theme-toggle" aria-label="החלפת ערכת צבע">מצב כהה</button>
+  <script>
+    (function () {
+      var b = document.getElementById('themeBtn'), r = document.documentElement;
+      function label() { b.textContent = r.getAttribute('data-theme') === 'dark' ? 'מצב בהיר' : 'מצב כהה'; }
+      r.setAttribute('data-theme', window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+      label();
+      b.addEventListener('click', function () {
+        r.setAttribute('data-theme', r.getAttribute('data-theme') === 'dark' ? 'light' : 'dark');
+        label();
+      });
+    })();
+  </script>
+
+</body>
+</html>

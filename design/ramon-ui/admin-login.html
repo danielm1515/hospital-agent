@@ -1,0 +1,462 @@
+<!doctype html>
+<html lang="he" dir="rtl" data-theme="light">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>כניסת צוות · המרכז הרפואי רמון</title>
+  <meta name="description" content="מסך כניסת צוות רפואי: טלפון וקוד מ-Microsoft Authenticator.">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Hebrew:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+  <style>
+/* Ramon Patient Agent — design tokens
+   נוצר מתוך tokens.json של מערכת העיצוב. אל תערכו ידנית. */
+
+:root,
+[data-theme="light"] {
+  --surface-000: #ffffff;
+  --surface-100: #f2f6f8;
+  --surface-200: #e6edf1;
+  --surface-300: #d7e2e8;
+  --surface-brand: #0b5871;
+  --ink-900: #0c1a22;
+  --ink-700: #2c4653;
+  --ink-500: #506a79;
+  --ink-000: #ffffff;
+  --on-brand: #ffffff;
+  --brand-mist: #c8e6f2;
+  --brand-700: #0b5871;
+  --brand-600: #0e6f8e;
+  --brand-500: #1189ae;
+  --brand-100: #def0f7;
+  --line-200: #cdd9e0;
+  --line-300: #6d8697;
+  --focus-500: #0e6f8e;
+  --teal-500: #0a7f75;
+  --teal-100: #d8f2ee;
+  --success-500: #14775a;
+  --warning-500: #8c5a06;
+  --danger-500: #ad2d2d;
+  --scrim: #0c1a2299;
+  --shadow-card: 0 1px 2px #0c1a220f, 0 8px 24px #0c1a2214;
+  --shadow-modal: 0 12px 48px #0c1a2226;
+}
+
+[data-theme="dark"] {
+  --surface-000: #14212b;
+  --surface-100: #0d161d;
+  --surface-200: #1a2a35;
+  --surface-300: #233543;
+  --surface-brand: #0a1f2a;
+  --ink-900: #eef5f8;
+  --ink-700: #c3d4dd;
+  --ink-500: #8ba3b0;
+  --ink-000: #06141c;
+  --on-brand: #04202b;
+  --brand-mist: #9fc6d6;
+  --brand-700: #9adcf2;
+  --brand-600: #63c8e8;
+  --brand-500: #2fabd3;
+  --brand-100: #0f2f3c;
+  --line-200: #27363f;
+  --line-300: #667d8c;
+  --focus-500: #63c8e8;
+  --teal-500: #45d2c2;
+  --teal-100: #0d322f;
+  --success-500: #4fcb9f;
+  --warning-500: #e8ab52;
+  --danger-500: #ff8f8f;
+  --scrim: #000000cc;
+  --shadow-card: 0 1px 2px #00000066, 0 8px 24px #0000008c;
+  --shadow-modal: 0 12px 48px #000000a6;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --surface-000: #14212b;
+    --surface-100: #0d161d;
+    --surface-200: #1a2a35;
+    --surface-300: #233543;
+    --surface-brand: #0a1f2a;
+    --ink-900: #eef5f8;
+    --ink-700: #c3d4dd;
+    --ink-500: #8ba3b0;
+    --ink-000: #06141c;
+    --on-brand: #04202b;
+    --brand-mist: #9fc6d6;
+    --brand-700: #9adcf2;
+    --brand-600: #63c8e8;
+    --brand-500: #2fabd3;
+    --brand-100: #0f2f3c;
+    --line-200: #27363f;
+    --line-300: #667d8c;
+    --focus-500: #63c8e8;
+    --teal-500: #45d2c2;
+    --teal-100: #0d322f;
+    --success-500: #4fcb9f;
+    --warning-500: #e8ab52;
+    --danger-500: #ff8f8f;
+    --scrim: #000000cc;
+    --shadow-card: 0 1px 2px #00000066, 0 8px 24px #0000008c;
+    --shadow-modal: 0 12px 48px #000000a6;
+  }
+}
+
+:root {
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+  --space-7: 48px;
+  --space-8: 64px;
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 18px;
+  --radius-pill: 999px;
+  --opacity-disabled: 0.45;
+  --opacity-muted: 0.7;
+  --font-sans: "IBM Plex Sans Hebrew", "Segoe UI", Arial, sans-serif;
+  --font-mono: "IBM Plex Mono", "Courier New", monospace;
+}
+
+/* Display */
+.display-lg {
+  font-family: var(--font-sans);
+  font-size: 34px;
+  line-height: 40px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+.display-sm {
+  font-family: var(--font-sans);
+  font-size: 26px;
+  line-height: 32px;
+  font-weight: 600;
+}
+
+/* Heading */
+.heading-md {
+  font-family: var(--font-sans);
+  font-size: 19px;
+  line-height: 26px;
+  font-weight: 600;
+}
+.heading-sm {
+  font-family: var(--font-sans);
+  font-size: 16px;
+  line-height: 22px;
+  font-weight: 600;
+}
+
+/* Text */
+.body {
+  font-family: var(--font-sans);
+  font-size: 15px;
+  line-height: 24px;
+  font-weight: 400;
+}
+.body-strong {
+  font-family: var(--font-sans);
+  font-size: 15px;
+  line-height: 24px;
+  font-weight: 600;
+}
+.small {
+  font-family: var(--font-sans);
+  font-size: 13px;
+  line-height: 20px;
+  font-weight: 400;
+}
+.label {
+  font-family: var(--font-sans);
+  font-size: 13px;
+  line-height: 18px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+.eyebrow {
+  font-family: var(--font-sans);
+  font-size: 11px;
+  line-height: 16px;
+  font-weight: 600;
+  letter-spacing: 0.09em;
+}
+
+/* Data */
+.otp {
+  font-family: var(--font-mono);
+  font-size: 26px;
+  line-height: 30px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+}
+.code {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 20px;
+  font-weight: 400;
+}
+.state {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 16px;
+  font-weight: 500;
+  letter-spacing: 0.06em;
+}
+
+
+    * { box-sizing: border-box; }
+    html, body { margin: 0; padding: 0; }
+    body {
+      background: var(--surface-100);
+      color: var(--ink-700);
+      font-family: var(--font-sans);
+      -webkit-font-smoothing: antialiased;
+    }
+    img { max-width: 100%; }
+    [hidden] { display: none !important; }
+
+    .theme-toggle {
+      position: fixed; inset-block-start: 16px; inset-inline-start: 16px; z-index: 50;
+      font: inherit; font-size: 13px; font-weight: 600;
+      padding: 8px 14px; border-radius: 999px;
+      background: var(--surface-000); color: var(--ink-700);
+      border: 1px solid var(--line-300); cursor: pointer;
+    }
+    .theme-toggle:focus-visible { outline: 2px solid var(--focus-500); outline-offset: 2px; }
+
+#root {
+    font-family: var(--font-sans, "IBM Plex Sans Hebrew", sans-serif);
+    background: var(--surface-100);
+    min-height: 100vh;
+    box-sizing: border-box;
+    padding: var(--space-5);
+  }
+#root .screen {
+    display: flex;
+    background: var(--surface-000);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-card);
+    overflow: hidden;
+    min-height: 700px;
+  }
+#root .pane { box-sizing: border-box; }
+#root .form-pane { flex: 1 1 60%; padding: var(--space-6) var(--space-8); display: flex; flex-direction: column; gap: var(--space-5); }
+#root .side-pane { flex: 1 1 40%; background: var(--surface-100); border-inline-start: 1px solid var(--line-200); padding: var(--space-6); }
+#root .top { display: flex; align-items: center; justify-content: space-between; gap: var(--space-4); }
+#root .lock { display: flex; align-items: center; gap: var(--space-2); }
+#root .org { font-size: 16px; font-weight: 600; color: var(--ink-900); }
+#root .lang { display: inline-flex; background: var(--surface-200); border-radius: var(--radius-pill); padding: 3px; }
+#root .lang-btn { font: inherit; font-size: 13px; font-weight: 600; padding: 4px 12px; border: 0; border-radius: var(--radius-pill); background: transparent; color: var(--ink-500); cursor: pointer; }
+#root .lang-btn.on { background: var(--surface-000); color: var(--ink-900); }
+#root .lang-btn:focus-visible { outline: 2px solid var(--focus-500); outline-offset: 2px; }
+#root .step { display: flex; flex-direction: column; gap: var(--space-4); max-width: 440px; }
+#root .badge {
+    align-self: flex-start; margin: 0;
+    display: inline-flex; align-items: center; gap: var(--space-1);
+    background: var(--brand-100); color: var(--brand-700);
+    padding: 5px 12px; border-radius: var(--radius-sm);
+    font-size: 11px; font-weight: 600; letter-spacing: .09em;
+  }
+#root .key { display: inline-flex; }
+#root .h1 { margin: 0; font-size: 26px; line-height: 32px; font-weight: 600; color: var(--ink-900); text-wrap: balance; }
+#root .lede { margin: 0; font-size: 15px; line-height: 24px; color: var(--ink-700); }
+#root .form { display: flex; flex-direction: column; gap: var(--space-5); margin-top: var(--space-1); }
+#root .field { display: flex; flex-direction: column; gap: var(--space-2); }
+#root .label-row { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); flex-wrap: wrap; }
+#root .label { font-size: 13px; line-height: 18px; font-weight: 600; letter-spacing: .02em; color: var(--ink-700); }
+#root .ring-wrap { display: inline-flex; align-items: center; gap: var(--space-1); }
+#root .ring { flex: none; }
+#root .ring-t { font-size: 12px; color: var(--ink-500); }
+#root .num { font-family: var(--font-mono, monospace); color: var(--ink-700); }
+#root .control { display: flex; align-items: stretch; background: var(--surface-200); border: 1px solid var(--line-300); border-radius: var(--radius-md); overflow: hidden; }
+#root .control:focus-within { outline: 2px solid var(--focus-500); outline-offset: 2px; }
+#root .prefix { display: flex; align-items: center; gap: var(--space-1); padding-inline: var(--space-3); color: var(--ink-500); border-inline-end: 1px solid var(--line-200); }
+#root .cc { font-family: var(--font-mono, monospace); font-size: 13px; }
+#root .input { font: inherit; font-size: 15px; line-height: 24px; font-variant-numeric: tabular-nums; flex: 1; min-width: 0; padding: 12px var(--space-3); border: 0; background: transparent; color: var(--ink-900); }
+#root .input:focus { outline: none; }
+#root .hint { margin: 0; font-size: 13px; line-height: 20px; color: var(--ink-500); }
+#root .otp { display: flex; gap: var(--space-2); }
+#root .box {
+    width: 54px; height: 62px; text-align: center;
+    font-family: var(--font-mono, monospace); font-size: 26px; font-weight: 500;
+    color: var(--ink-900); background: var(--surface-200);
+    border: 1px solid var(--line-300); border-radius: var(--radius-md);
+    caret-color: var(--brand-600);
+  }
+#root .box:focus,
+#root .box.focusd { outline: 2px solid var(--focus-500); outline-offset: 2px; border-color: var(--brand-600); }
+#root .btn { font: inherit; font-size: 15px; font-weight: 600; line-height: 24px; padding: 12px var(--space-5); border-radius: var(--radius-md); border: 1px solid transparent; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; }
+#root .btn:focus-visible { outline: 2px solid var(--focus-500); outline-offset: 2px; }
+#root .primary { background: var(--brand-700); color: var(--on-brand); }
+#root .primary:hover { background: var(--brand-600); }
+#root .alert { display: flex; gap: var(--space-3); padding: var(--space-3) var(--space-4); background: var(--surface-000); border: 1px solid var(--line-200); border-radius: var(--radius-md); }
+#root .ico { width: 20px; height: 20px; flex: none; margin-top: 2px; }
+#root .warn .ico { color: var(--warning-500); }
+#root .a-t { margin: 0 0 2px; font-size: 15px; font-weight: 600; color: var(--ink-900); }
+#root .a-b { margin: 0; font-size: 13px; line-height: 20px; color: var(--ink-700); }
+#root .mono { font-family: var(--font-mono, monospace); font-size: 12px; letter-spacing: .04em; }
+#root .audit { margin: auto 0 0; display: flex; align-items: center; gap: var(--space-2); font-size: 13px; line-height: 20px; color: var(--ink-500); }
+#root .audit svg { flex: none; }
+#root .side-body { display: flex; flex-direction: column; gap: var(--space-5); height: 100%; }
+#root .side-h { margin: 0; font-size: 19px; line-height: 26px; font-weight: 600; color: var(--ink-900); }
+#root .steps-list { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: var(--space-3); }
+#root .steps-list li { display: flex; gap: var(--space-3); font-size: 15px; line-height: 24px; color: var(--ink-700); }
+#root .n {
+    flex: none; width: 24px; height: 24px; border-radius: var(--radius-pill);
+    background: var(--brand-100); color: var(--brand-700);
+    font-family: var(--font-mono, monospace); font-size: 13px;
+    display: inline-flex; align-items: center; justify-content: center;
+    margin-top: 2px;
+  }
+#root .note { background: var(--surface-000); border: 1px solid var(--line-200); border-radius: var(--radius-md); padding: var(--space-4); }
+#root .note-t { margin: 0 0 2px; font-size: 15px; font-weight: 600; color: var(--ink-900); }
+#root .note-b { margin: 0; font-size: 13px; line-height: 20px; color: var(--ink-700); }
+#root .scope-t { margin: 0 0 var(--space-2); font-size: 13px; font-weight: 600; letter-spacing: .02em; color: var(--ink-700); }
+#root .scope-l { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: var(--space-2); }
+#root .scope-l li { display: flex; align-items: flex-start; gap: var(--space-2); font-size: 14px; line-height: 22px; color: var(--ink-700); }
+#root .ok { color: var(--success-500); flex: none; }
+#root .no { color: var(--danger-500); flex: none; }
+#root .foot { margin: auto 0 0; font-size: 12px; line-height: 18px; color: var(--ink-500); }
+@media (max-width: 900px) {
+#root .screen { flex-direction: column; min-height: 0; }
+#root .form-pane { padding: var(--space-5) var(--space-4); }
+#root .side-pane { border-inline-start: 0; border-block-start: 1px solid var(--line-200); padding: var(--space-5) var(--space-4); }
+#root .box { width: 44px; height: 54px; font-size: 22px; }
+#root .h1 { font-size: 22px; line-height: 30px; }
+
+  
+}
+
+
+  </style>
+</head>
+<body>
+<div id="root" dir="rtl">
+  <div class="screen">
+
+    <section class="pane form-pane">
+      <header class="top">
+        <div class="lock">
+          <svg width="32" height="32" viewBox="0 0 40 40" aria-hidden="true">
+            <rect width="40" height="40" rx="12" fill="var(--brand-500)"></rect>
+            <path d="M22 40h6a12 12 0 0 0 12-12v-6a18 18 0 0 1-18 18Z" fill="var(--teal-500)"></path>
+            <path d="M8 21h5l3-6 4 12 3-6h5" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"></path>
+          </svg>
+          <span class="org">המרכז הרפואי רמון</span>
+        </div>
+        <div class="lang" role="group" aria-label="בחירת שפה">
+          <button type="button" class="lang-btn on" aria-pressed="true">עב</button>
+          <button type="button" class="lang-btn" aria-pressed="false">EN</button>
+        </div>
+      </header>
+
+      <div class="step">
+        <p class="badge"><span class="key" aria-hidden="true">
+          <svg width="14" height="14" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="8.5" width="12" height="8" rx="2"/><path d="M7 8.5V6a3 3 0 0 1 6 0v2.5"/></svg>
+        </span>STAFF ACCESS</p>
+
+        <h1 class="h1">כניסת צוות רפואי</h1>
+        <p class="lede">אזור זה מיועד למאשרי פניות רפואיות. אימות דו-שלבי חובה בכל כניסה.</p>
+
+        <form class="form" onsubmit="return false">
+          <div class="field">
+            <label class="label" for="al-phone">מספר טלפון נייד רשום</label>
+            <div class="control">
+              <span class="prefix">
+                <svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="2.5" width="10" height="15" rx="1.8"/><path d="M9 15h2"/></svg>
+                <span class="cc">972+</span>
+              </span>
+              <input id="al-phone" class="input" type="tel" inputmode="tel" dir="ltr" value="054-000-0000" autocomplete="tel">
+            </div>
+            <p class="hint">המספר שנרשם על ידי מחלקת מערכות מידע. אינו ניתן לשינוי עצמי.</p>
+          </div>
+
+          <div class="field">
+            <div class="label-row">
+              <label class="label" id="al-code-lbl">קוד מאפליקציית Microsoft Authenticator</label>
+              <span class="ring-wrap" title="הקוד מתחלף בעוד 18 שניות">
+                <svg class="ring" width="22" height="22" viewBox="0 0 22 22" aria-hidden="true">
+                  <circle cx="11" cy="11" r="9" fill="none" stroke="var(--surface-300)" stroke-width="2.5"></circle>
+                  <circle cx="11" cy="11" r="9" fill="none" stroke="var(--brand-600)" stroke-width="2.5"
+                          stroke-linecap="round" stroke-dasharray="56.5" stroke-dashoffset="22.6"
+                          transform="rotate(-90 11 11)"></circle>
+                </svg>
+                <span class="ring-t">מתחלף בעוד <span class="num">18</span> שנ׳</span>
+              </span>
+            </div>
+            <div class="otp" dir="ltr" role="group" aria-labelledby="al-code-lbl">
+              <input class="box" inputmode="numeric" maxlength="1" value="7" aria-label="ספרה 1">
+              <input class="box" inputmode="numeric" maxlength="1" value="2" aria-label="ספרה 2">
+              <input class="box" inputmode="numeric" maxlength="1" value="5" aria-label="ספרה 3">
+              <input class="box focusd" inputmode="numeric" maxlength="1" value="" aria-label="ספרה 4">
+              <input class="box" inputmode="numeric" maxlength="1" value="" aria-label="ספרה 5">
+              <input class="box" inputmode="numeric" maxlength="1" value="" aria-label="ספרה 6">
+            </div>
+          </div>
+
+          <button type="button" class="btn primary">כניסה למערכת</button>
+        </form>
+
+        <div class="alert warn" role="status">
+          <svg class="ico" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 3.2 17.5 16.3h-15Z"/><path d="M10 8.2v3.4"/><path d="M10 13.8v.1"/></svg>
+          <div>
+            <p class="a-t">ניסיון כניסה אחד נכשל</p>
+            <p class="a-b">נשארו ארבעה ניסיונות לפני נעילה של רבע שעה. ודאו שהקוד נלקח מהחשבון <span class="mono">ramon-med</span> באפליקציה.</p>
+          </div>
+        </div>
+
+        <p class="audit">
+          <svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 2.8 16 5v5c0 3.4-2.4 6.1-6 7.2-3.6-1.1-6-3.8-6-7.2V5Z"/><path d="M7.6 10.2 9.4 12l3.2-3.4"/></svg>
+          כל כניסה, אישור ודחייה נרשמים ביומן הביקורת עם מזהה המשתמש וחותמת זמן.
+        </p>
+      </div>
+    </section>
+
+    <aside class="pane side-pane">
+      <div class="side-body">
+        <h2 class="side-h">איך מפיקים את הקוד</h2>
+        <ol class="steps-list">
+          <li><span class="n">1</span><span>פתחו את Microsoft Authenticator בטלפון שרשום על שמכם.</span></li>
+          <li><span class="n">2</span><span>בחרו את החשבון <span class="mono">ramon-med</span>.</span></li>
+          <li><span class="n">3</span><span>הזינו כאן את שש הספרות לפני שהן מתחלפות. הקוד מתחלף כל שלושים שניות.</span></li>
+        </ol>
+
+        <div class="note">
+          <p class="note-t">אין לכם גישה לאפליקציה?</p>
+          <p class="note-b">פנו למחלקת מערכות מידע בשלוחה <span class="mono">4400</span>. איפוס אימות דו-שלבי מחייב זיהוי מול מנהל המחלקה ואינו מתבצע בטלפון.</p>
+        </div>
+
+        <div class="scope">
+          <p class="scope-t">מה מותר מהמסך הזה</p>
+          <ul class="scope-l">
+            <li><span class="ok">✓</span>אישור, דחייה וסגירה של פניות שהוסלמו</li>
+            <li><span class="ok">✓</span>צפייה ביומן הביקורת של פנייה</li>
+            <li><span class="no">✕</span>עריכת תיק רפואי או מסמכים</li>
+          </ul>
+        </div>
+
+        <p class="foot">גישה בלתי מורשית למערכות רפואיות היא עבירה פלילית. הפעילות מנוטרת.</p>
+      </div>
+    </aside>
+
+  </div>
+</div>
+
+  <button type="button" id="themeBtn" class="theme-toggle" aria-label="החלפת ערכת צבע">מצב כהה</button>
+  <script>
+    (function () {
+      var b = document.getElementById('themeBtn'), r = document.documentElement;
+      function label() { b.textContent = r.getAttribute('data-theme') === 'dark' ? 'מצב בהיר' : 'מצב כהה'; }
+      r.setAttribute('data-theme', window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+      label();
+      b.addEventListener('click', function () {
+        r.setAttribute('data-theme', r.getAttribute('data-theme') === 'dark' ? 'light' : 'dark');
+        label();
+      });
+    })();
+  </script>
+
+</body>
+</html>

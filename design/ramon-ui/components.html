@@ -1,0 +1,639 @@
+<!doctype html>
+<html lang="he" dir="rtl" data-theme="light">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>פקדי הבסיס · המרכז הרפואי רמון</title>
+  <meta name="description" content="לוגו, כפתור, שדה קלט, קוד חד-פעמי והודעת מערכת.">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Hebrew:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+  <style>
+/* Ramon Patient Agent — design tokens
+   נוצר מתוך tokens.json של מערכת העיצוב. אל תערכו ידנית. */
+
+:root,
+[data-theme="light"] {
+  --surface-000: #ffffff;
+  --surface-100: #f2f6f8;
+  --surface-200: #e6edf1;
+  --surface-300: #d7e2e8;
+  --surface-brand: #0b5871;
+  --ink-900: #0c1a22;
+  --ink-700: #2c4653;
+  --ink-500: #506a79;
+  --ink-000: #ffffff;
+  --on-brand: #ffffff;
+  --brand-mist: #c8e6f2;
+  --brand-700: #0b5871;
+  --brand-600: #0e6f8e;
+  --brand-500: #1189ae;
+  --brand-100: #def0f7;
+  --line-200: #cdd9e0;
+  --line-300: #6d8697;
+  --focus-500: #0e6f8e;
+  --teal-500: #0a7f75;
+  --teal-100: #d8f2ee;
+  --success-500: #14775a;
+  --warning-500: #8c5a06;
+  --danger-500: #ad2d2d;
+  --scrim: #0c1a2299;
+  --shadow-card: 0 1px 2px #0c1a220f, 0 8px 24px #0c1a2214;
+  --shadow-modal: 0 12px 48px #0c1a2226;
+}
+
+[data-theme="dark"] {
+  --surface-000: #14212b;
+  --surface-100: #0d161d;
+  --surface-200: #1a2a35;
+  --surface-300: #233543;
+  --surface-brand: #0a1f2a;
+  --ink-900: #eef5f8;
+  --ink-700: #c3d4dd;
+  --ink-500: #8ba3b0;
+  --ink-000: #06141c;
+  --on-brand: #04202b;
+  --brand-mist: #9fc6d6;
+  --brand-700: #9adcf2;
+  --brand-600: #63c8e8;
+  --brand-500: #2fabd3;
+  --brand-100: #0f2f3c;
+  --line-200: #27363f;
+  --line-300: #667d8c;
+  --focus-500: #63c8e8;
+  --teal-500: #45d2c2;
+  --teal-100: #0d322f;
+  --success-500: #4fcb9f;
+  --warning-500: #e8ab52;
+  --danger-500: #ff8f8f;
+  --scrim: #000000cc;
+  --shadow-card: 0 1px 2px #00000066, 0 8px 24px #0000008c;
+  --shadow-modal: 0 12px 48px #000000a6;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --surface-000: #14212b;
+    --surface-100: #0d161d;
+    --surface-200: #1a2a35;
+    --surface-300: #233543;
+    --surface-brand: #0a1f2a;
+    --ink-900: #eef5f8;
+    --ink-700: #c3d4dd;
+    --ink-500: #8ba3b0;
+    --ink-000: #06141c;
+    --on-brand: #04202b;
+    --brand-mist: #9fc6d6;
+    --brand-700: #9adcf2;
+    --brand-600: #63c8e8;
+    --brand-500: #2fabd3;
+    --brand-100: #0f2f3c;
+    --line-200: #27363f;
+    --line-300: #667d8c;
+    --focus-500: #63c8e8;
+    --teal-500: #45d2c2;
+    --teal-100: #0d322f;
+    --success-500: #4fcb9f;
+    --warning-500: #e8ab52;
+    --danger-500: #ff8f8f;
+    --scrim: #000000cc;
+    --shadow-card: 0 1px 2px #00000066, 0 8px 24px #0000008c;
+    --shadow-modal: 0 12px 48px #000000a6;
+  }
+}
+
+:root {
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+  --space-7: 48px;
+  --space-8: 64px;
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 18px;
+  --radius-pill: 999px;
+  --opacity-disabled: 0.45;
+  --opacity-muted: 0.7;
+  --font-sans: "IBM Plex Sans Hebrew", "Segoe UI", Arial, sans-serif;
+  --font-mono: "IBM Plex Mono", "Courier New", monospace;
+}
+
+/* Display */
+.display-lg {
+  font-family: var(--font-sans);
+  font-size: 34px;
+  line-height: 40px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+.display-sm {
+  font-family: var(--font-sans);
+  font-size: 26px;
+  line-height: 32px;
+  font-weight: 600;
+}
+
+/* Heading */
+.heading-md {
+  font-family: var(--font-sans);
+  font-size: 19px;
+  line-height: 26px;
+  font-weight: 600;
+}
+.heading-sm {
+  font-family: var(--font-sans);
+  font-size: 16px;
+  line-height: 22px;
+  font-weight: 600;
+}
+
+/* Text */
+.body {
+  font-family: var(--font-sans);
+  font-size: 15px;
+  line-height: 24px;
+  font-weight: 400;
+}
+.body-strong {
+  font-family: var(--font-sans);
+  font-size: 15px;
+  line-height: 24px;
+  font-weight: 600;
+}
+.small {
+  font-family: var(--font-sans);
+  font-size: 13px;
+  line-height: 20px;
+  font-weight: 400;
+}
+.label {
+  font-family: var(--font-sans);
+  font-size: 13px;
+  line-height: 18px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+.eyebrow {
+  font-family: var(--font-sans);
+  font-size: 11px;
+  line-height: 16px;
+  font-weight: 600;
+  letter-spacing: 0.09em;
+}
+
+/* Data */
+.otp {
+  font-family: var(--font-mono);
+  font-size: 26px;
+  line-height: 30px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+}
+.code {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 20px;
+  font-weight: 400;
+}
+.state {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 16px;
+  font-weight: 500;
+  letter-spacing: 0.06em;
+}
+
+
+    * { box-sizing: border-box; }
+    html, body { margin: 0; padding: 0; }
+    body {
+      background: var(--surface-100);
+      color: var(--ink-700);
+      font-family: var(--font-sans);
+      -webkit-font-smoothing: antialiased;
+    }
+    img { max-width: 100%; }
+    [hidden] { display: none !important; }
+
+    .theme-toggle {
+      position: fixed; inset-block-start: 16px; inset-inline-start: 16px; z-index: 50;
+      font: inherit; font-size: 13px; font-weight: 600;
+      padding: 8px 14px; border-radius: 999px;
+      background: var(--surface-000); color: var(--ink-700);
+      border: 1px solid var(--line-300); cursor: pointer;
+    }
+    .theme-toggle:focus-visible { outline: 2px solid var(--focus-500); outline-offset: 2px; }
+
+
+    .sheet-wrap { max-width: 1100px; margin: 0 auto; padding-block: 48px 64px; padding-inline: 16px; }
+    .sheet-title { font-size: 34px; line-height: 40px; font-weight: 600; color: var(--ink-900); margin: 0 0 8px; }
+    .sheet-lede { font-size: 15px; line-height: 24px; color: var(--ink-500); margin: 0 0 40px; max-width: 62ch; }
+    .sheet-sec { margin-bottom: 40px; }
+    .sheet-h { font-size: 19px; line-height: 26px; font-weight: 600; color: var(--ink-900); margin: 0 0 12px; }
+    .sheet-en { font-family: var(--font-mono); font-size: 13px; font-weight: 400; color: var(--ink-500); }
+    .sheet-sec > div[id^="c-"] { border: 1px solid var(--line-200); border-radius: var(--radius-lg); overflow: hidden; }
+/* Logo */
+#c-Logo {
+    font-family: var(--font-sans, "IBM Plex Sans Hebrew", sans-serif);
+    background: var(--surface-100);
+    padding: var(--space-5);
+    box-sizing: border-box;
+  }
+#c-Logo .row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-5); }
+#c-Logo .lock { display: flex; align-items: center; gap: var(--space-3); }
+#c-Logo .words { display: flex; flex-direction: column; }
+#c-Logo .org { font-size: 18px; line-height: 24px; font-weight: 600; color: var(--ink-900); }
+#c-Logo .product { font-size: 13px; line-height: 18px; color: var(--ink-500); }
+#c-Logo .compact { padding-inline-start: var(--space-5); border-inline-start: 1px solid var(--line-200); }
+#c-Logo .compact-org { font-size: 16px; }
+#c-Logo .onbrand {
+    background: var(--surface-brand);
+    padding: var(--space-3) var(--space-4);
+    border-radius: var(--radius-md);
+  }
+#c-Logo .invert { color: #ffffff; font-size: 15px; }
+
+
+/* Button */
+#c-Button {
+    font-family: var(--font-sans, "IBM Plex Sans Hebrew", sans-serif);
+    background: var(--surface-100);
+    padding: var(--space-5);
+    box-sizing: border-box;
+  }
+#c-Button .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: var(--space-4);
+    max-width: 760px;
+  }
+#c-Button .btn {
+    font: inherit;
+    font-size: 15px;
+    font-weight: 600;
+    line-height: 24px;
+    padding: 10px var(--space-5);
+    border-radius: var(--radius-md);
+    border: 1px solid transparent;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--space-2);
+    transition: background-color .15s ease, border-color .15s ease;
+  }
+#c-Button .btn:focus-visible,
+#c-Button .focused {
+    outline: 2px solid var(--focus-500);
+    outline-offset: 2px;
+  }
+#c-Button .primary { background: var(--brand-700); color: var(--on-brand); }
+#c-Button .primary:hover:not(:disabled) { background: var(--brand-600); }
+#c-Button .secondary { background: transparent; color: var(--brand-700); border-color: var(--line-300); }
+#c-Button .secondary:hover { background: var(--surface-200); }
+#c-Button .quiet { background: transparent; color: var(--brand-700); }
+#c-Button .quiet:hover { background: var(--surface-200); }
+#c-Button .danger { background: transparent; color: var(--danger-500); border-color: var(--danger-500); }
+#c-Button .danger:hover { background: var(--surface-200); }
+#c-Button .btn:disabled { opacity: var(--opacity-disabled); cursor: not-allowed; }
+#c-Button .block { grid-column: 1 / -1; }
+#c-Button .spin {
+    width: 15px; height: 15px; border-radius: var(--radius-pill);
+    border: 2px solid currentColor; border-top-color: transparent;
+    animation: sp .7s linear infinite;
+  }
+@keyframes sp { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+#c-Button .spin { animation: none; }
+ 
+}
+
+
+/* TextField */
+#c-TextField {
+    font-family: var(--font-sans, "IBM Plex Sans Hebrew", sans-serif);
+    background: var(--surface-100);
+    padding: var(--space-5);
+    box-sizing: border-box;
+  }
+#c-TextField .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    gap: var(--space-5);
+    max-width: 780px;
+  }
+#c-TextField .field { display: flex; flex-direction: column; gap: var(--space-2); }
+#c-TextField .label { font-size: 13px; line-height: 18px; font-weight: 600; letter-spacing: .02em; color: var(--ink-700); }
+#c-TextField .control {
+    display: flex;
+    align-items: stretch;
+    background: var(--surface-200);
+    border: 1px solid var(--line-300);
+    border-radius: var(--radius-md);
+    overflow: hidden;
+  }
+#c-TextField .control:focus-within,
+#c-TextField .focused { outline: 2px solid var(--focus-500); outline-offset: 2px; }
+#c-TextField .prefix {
+    display: flex; align-items: center; gap: var(--space-1);
+    padding-inline: var(--space-3);
+    color: var(--ink-500);
+    border-inline-end: 1px solid var(--line-200);
+  }
+#c-TextField .cc { font-family: var(--font-mono, monospace); font-size: 13px; }
+#c-TextField .input {
+    font: inherit; font-size: 15px; line-height: 24px;
+    font-variant-numeric: tabular-nums;
+    flex: 1; min-width: 0;
+    padding: 10px var(--space-3);
+    border: 0; background: transparent; color: var(--ink-900);
+  }
+#c-TextField .input:focus { outline: none; }
+#c-TextField .input::placeholder { color: var(--ink-500); }
+#c-TextField .invalid { border-color: var(--danger-500); box-shadow: inset 0 0 0 1px var(--danger-500); }
+#c-TextField .disabled { opacity: var(--opacity-disabled); }
+#c-TextField .hint { margin: 0; font-size: 13px; line-height: 20px; color: var(--ink-500); }
+#c-TextField .error { color: var(--danger-500); display: flex; align-items: center; gap: var(--space-1); }
+
+
+/* OtpInput */
+#c-OtpInput {
+    font-family: var(--font-sans, "IBM Plex Sans Hebrew", sans-serif);
+    background: var(--surface-100);
+    padding: var(--space-5);
+    box-sizing: border-box;
+  }
+#c-OtpInput .stack { display: flex; flex-wrap: wrap; gap: var(--space-6); }
+#c-OtpInput .case { display: flex; flex-direction: column; gap: var(--space-2); }
+#c-OtpInput .cap { margin: 0; font-size: 11px; line-height: 16px; font-weight: 600; letter-spacing: .09em; text-transform: uppercase; color: var(--ink-500); }
+#c-OtpInput .otp { display: flex; gap: var(--space-2); }
+#c-OtpInput .box {
+    width: 46px; height: 56px;
+    text-align: center;
+    font-family: var(--font-mono, monospace);
+    font-size: 26px; line-height: 30px; font-weight: 500;
+    color: var(--ink-900);
+    background: var(--surface-200);
+    border: 1px solid var(--line-300);
+    border-radius: var(--radius-md);
+    caret-color: var(--brand-600);
+  }
+#c-OtpInput .box:focus,
+#c-OtpInput .active { outline: 2px solid var(--focus-500); outline-offset: 2px; border-color: var(--brand-600); }
+#c-OtpInput .invalid .box { border-color: var(--danger-500); }
+#c-OtpInput .valid .box { border-color: var(--success-500); color: var(--success-500); }
+#c-OtpInput .hint { margin: 0; font-size: 13px; line-height: 20px; color: var(--ink-500); display: flex; align-items: center; gap: var(--space-1); }
+#c-OtpInput .err { color: var(--danger-500); }
+#c-OtpInput .ok { color: var(--success-500); }
+@media (max-width: 560px) {
+#c-OtpInput .box { width: 40px; height: 50px; font-size: 22px; }
+ 
+}
+
+
+/* Alert */
+#c-Alert {
+    font-family: var(--font-sans, "IBM Plex Sans Hebrew", sans-serif);
+    background: var(--surface-100);
+    padding: var(--space-5);
+    box-sizing: border-box;
+  }
+#c-Alert .stack { display: flex; flex-direction: column; gap: var(--space-3); max-width: 620px; }
+#c-Alert .alert {
+    display: flex; gap: var(--space-3);
+    padding: var(--space-3) var(--space-4);
+    background: var(--surface-000);
+    border: 1px solid var(--line-200);
+    border-radius: var(--radius-md);
+  }
+#c-Alert .ico { width: 20px; height: 20px; flex: none; margin-top: 2px; }
+#c-Alert .body { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+#c-Alert .title { margin: 0; font-size: 15px; line-height: 24px; font-weight: 600; color: var(--ink-900); }
+#c-Alert .text { margin: 0; font-size: 13px; line-height: 20px; color: var(--ink-700); }
+#c-Alert .mono { font-family: var(--font-mono, monospace); font-size: 11px; letter-spacing: .06em; color: var(--ink-500); }
+#c-Alert .info .ico { color: var(--brand-600); }
+#c-Alert .warn .ico { color: var(--warning-500); }
+#c-Alert .error { border-color: var(--danger-500); }
+#c-Alert .error .ico { color: var(--danger-500); }
+#c-Alert .ok .ico { color: var(--success-500); }
+
+
+  </style>
+</head>
+<body>
+<div class="sheet-wrap" dir="rtl">
+  <h1 class="sheet-title">פקדי הבסיס</h1>
+  <p class="sheet-lede">הרכיבים שמסכי ההתחברות בנויים מהם. כל צבע, מרווח ורדיוס מגיע מ-tokens.css — אין ערך קשיח בקובץ הזה.</p>
+  <section class="sheet-sec">
+    <h2 class="sheet-h">לוגו <span class="sheet-en">Logo</span></h2>
+<div id="c-Logo" dir="rtl">
+  <div class="row">
+    <div class="lock">
+      <svg class="mark" width="40" height="40" viewBox="0 0 40 40" aria-hidden="true">
+        <rect x="0" y="0" width="40" height="40" rx="12" fill="var(--brand-500)"></rect>
+        <path d="M40 28v-4a12 12 0 0 1-12 12h4a8 8 0 0 0 8-8Z" fill="none"></path>
+        <path d="M22 40h6a12 12 0 0 0 12-12v-6a18 18 0 0 1-18 18Z" fill="var(--teal-500)"></path>
+        <path d="M8 21h5l3-6 4 12 3-6h5" fill="none" stroke="#ffffff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"></path>
+      </svg>
+      <span class="words">
+        <span class="org">המרכז הרפואי רמון</span>
+        <span class="product">סוכן פניות מטופלים</span>
+      </span>
+    </div>
+
+    <div class="lock compact">
+      <svg class="mark" width="28" height="28" viewBox="0 0 40 40" aria-hidden="true">
+        <rect x="0" y="0" width="40" height="40" rx="12" fill="var(--brand-500)"></rect>
+        <path d="M22 40h6a12 12 0 0 0 12-12v-6a18 18 0 0 1-18 18Z" fill="var(--teal-500)"></path>
+        <path d="M8 21h5l3-6 4 12 3-6h5" fill="none" stroke="#ffffff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"></path>
+      </svg>
+      <span class="org compact-org">רמון</span>
+    </div>
+
+    <div class="lock onbrand">
+      <svg class="mark" width="28" height="28" viewBox="0 0 40 40" aria-hidden="true">
+        <rect x="0" y="0" width="40" height="40" rx="12" fill="#ffffff"></rect>
+        <path d="M22 40h6a12 12 0 0 0 12-12v-6a18 18 0 0 1-18 18Z" fill="var(--teal-500)"></path>
+        <path d="M8 21h5l3-6 4 12 3-6h5" fill="none" stroke="var(--brand-700)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"></path>
+      </svg>
+      <span class="org invert">המרכז הרפואי רמון</span>
+    </div>
+  </div>
+</div>
+  </section>
+
+  <section class="sheet-sec">
+    <h2 class="sheet-h">כפתור <span class="sheet-en">Button</span></h2>
+<div id="c-Button" dir="rtl">
+  <div class="grid">
+    <button type="button" class="btn primary">שלחו לי קוד</button>
+    <button type="button" class="btn secondary">החלפת מספר</button>
+    <button type="button" class="btn quiet">שלחו קוד חדש</button>
+    <button type="button" class="btn danger">דחיית פנייה</button>
+
+    <button type="button" class="btn primary" disabled>שלחו לי קוד</button>
+    <button type="button" class="btn primary busy" aria-busy="true">
+      <span class="spin" aria-hidden="true"></span>מאמת קוד
+    </button>
+    <button type="button" class="btn secondary focused">כפתור במיקוד</button>
+    <button type="button" class="btn primary block">כניסה למערכת</button>
+  </div>
+</div>
+  </section>
+
+  <section class="sheet-sec">
+    <h2 class="sheet-h">שדה קלט <span class="sheet-en">TextField</span></h2>
+<div id="c-TextField" dir="rtl">
+  <div class="grid">
+    <div class="field">
+      <label class="label" for="tf-phone">מספר טלפון נייד</label>
+      <div class="control phone">
+        <span class="prefix" aria-hidden="true">
+          <svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6.5 2.5h7a1.5 1.5 0 0 1 1.5 1.5v12a1.5 1.5 0 0 1-1.5 1.5h-7A1.5 1.5 0 0 1 5 16V4a1.5 1.5 0 0 1 1.5-1.5Z"/><path d="M9 15h2"/></svg>
+          <span class="cc">972+</span>
+        </span>
+        <input id="tf-phone" class="input" type="tel" inputmode="tel" dir="ltr" value="052-000-0000" autocomplete="tel">
+      </div>
+      <p class="hint">נשלח קוד חד-פעמי למספר זה.</p>
+    </div>
+
+    <div class="field">
+      <label class="label" for="tf-focus">מספר טלפון נייד</label>
+      <div class="control focused">
+        <input id="tf-focus" class="input" type="tel" inputmode="tel" dir="ltr" placeholder="050-000-0000">
+      </div>
+      <p class="hint">מצב מיקוד — טבעת focus-500.</p>
+    </div>
+
+    <div class="field">
+      <label class="label" for="tf-err">מספר טלפון נייד</label>
+      <div class="control invalid">
+        <input id="tf-err" class="input" type="tel" inputmode="tel" dir="ltr" value="052-00" aria-invalid="true" aria-describedby="tf-err-msg">
+      </div>
+      <p class="hint error" id="tf-err-msg">
+        <svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><circle cx="10" cy="10" r="7.5"/><path d="M10 6.5v4.5"/><path d="M10 13.6v.1"/></svg>
+        מספר לא תקין. הזינו עשר ספרות.
+      </p>
+    </div>
+
+    <div class="field">
+      <label class="label" for="tf-id">מספר תעודת זהות</label>
+      <div class="control disabled">
+        <input id="tf-id" class="input" dir="ltr" value="03•••••9" disabled>
+      </div>
+      <p class="hint">נטען מתיק המטופל ואינו ניתן לעריכה.</p>
+    </div>
+  </div>
+</div>
+  </section>
+
+  <section class="sheet-sec">
+    <h2 class="sheet-h">קוד חד-פעמי <span class="sheet-en">OtpInput</span></h2>
+<div id="c-OtpInput" dir="rtl">
+  <div class="stack">
+    <div class="case">
+      <p class="cap">ריק, התיבה הראשונה במיקוד</p>
+      <div class="otp" dir="ltr" role="group" aria-label="קוד אימות בן שש ספרות">
+        <input class="box active" inputmode="numeric" autocomplete="one-time-code" maxlength="1" value="" aria-label="ספרה 1">
+        <input class="box" inputmode="numeric" maxlength="1" value="" aria-label="ספרה 2">
+        <input class="box" inputmode="numeric" maxlength="1" value="" aria-label="ספרה 3">
+        <input class="box" inputmode="numeric" maxlength="1" value="" aria-label="ספרה 4">
+        <input class="box" inputmode="numeric" maxlength="1" value="" aria-label="ספרה 5">
+        <input class="box" inputmode="numeric" maxlength="1" value="" aria-label="ספרה 6">
+      </div>
+      <p class="hint">הקוד תקף לחמש דקות.</p>
+    </div>
+
+    <div class="case">
+      <p class="cap">שגוי</p>
+      <div class="otp invalid" dir="ltr" role="group" aria-label="קוד אימות בן שש ספרות" aria-describedby="otp-err">
+        <input class="box" inputmode="numeric" maxlength="1" value="4" aria-invalid="true" aria-label="ספרה 1">
+        <input class="box" inputmode="numeric" maxlength="1" value="8" aria-label="ספרה 2">
+        <input class="box" inputmode="numeric" maxlength="1" value="1" aria-label="ספרה 3">
+        <input class="box" inputmode="numeric" maxlength="1" value="9" aria-label="ספרה 4">
+        <input class="box" inputmode="numeric" maxlength="1" value="0" aria-label="ספרה 5">
+        <input class="box" inputmode="numeric" maxlength="1" value="3" aria-label="ספרה 6">
+      </div>
+      <p class="hint err" id="otp-err">
+        <svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><circle cx="10" cy="10" r="7.5"/><path d="M10 6.5v4.5"/><path d="M10 13.6v.1"/></svg>
+        הקוד שגוי. נשארו שני ניסיונות.
+      </p>
+    </div>
+
+    <div class="case">
+      <p class="cap">מאומת</p>
+      <div class="otp valid" dir="ltr" role="group" aria-label="קוד אימות בן שש ספרות">
+        <input class="box" maxlength="1" value="7" readonly aria-label="ספרה 1">
+        <input class="box" maxlength="1" value="2" readonly aria-label="ספרה 2">
+        <input class="box" maxlength="1" value="5" readonly aria-label="ספרה 3">
+        <input class="box" maxlength="1" value="6" readonly aria-label="ספרה 4">
+        <input class="box" maxlength="1" value="1" readonly aria-label="ספרה 5">
+        <input class="box" maxlength="1" value="8" readonly aria-label="ספרה 6">
+      </div>
+      <p class="hint ok">
+        <svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4.5 10.5 8.5 14.5 15.5 6"/></svg>
+        אומת. מעבירים אתכם למערכת.
+      </p>
+    </div>
+  </div>
+</div>
+  </section>
+
+  <section class="sheet-sec">
+    <h2 class="sheet-h">הודעת מערכת <span class="sheet-en">Alert</span></h2>
+<div id="c-Alert" dir="rtl">
+  <div class="stack">
+    <div class="alert info" role="status">
+      <svg class="ico" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><circle cx="10" cy="10" r="7.5"/><path d="M10 9.2v4.3"/><path d="M10 6.4v.1"/></svg>
+      <div class="body">
+        <p class="title">שלחנו קוד ל-052-000-0000</p>
+        <p class="text">הקוד תקף לחמש דקות. אפשר לבקש קוד חדש בעוד 00:42.</p>
+      </div>
+    </div>
+
+    <div class="alert warn" role="status">
+      <svg class="ico" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 3.2 17.5 16.3h-15Z"/><path d="M10 8.2v3.4"/><path d="M10 13.8v.1"/></svg>
+      <div class="body">
+        <p class="title">ממתין לאישור רופא</p>
+        <p class="text">הפנייה הועברה לבדיקת אדם. <span class="mono">AWAITING_HUMAN_REVIEW</span></p>
+      </div>
+    </div>
+
+    <div class="alert error" role="alert">
+      <svg class="ico" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><circle cx="10" cy="10" r="7.5"/><path d="M10 6.5v4.5"/><path d="M10 13.6v.1"/></svg>
+      <div class="body">
+        <p class="title">החשבון ננעל לחמש עשרה דקות</p>
+        <p class="text">חמישה ניסיונות כניסה שגויים. פנו למוקד התמיכה בשלוחה 4400 כדי לשחרר מוקדם יותר.</p>
+      </div>
+    </div>
+
+    <div class="alert ok" role="status">
+      <svg class="ico" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4.5 10.5 8.5 14.5 15.5 6"/></svg>
+      <div class="body">
+        <p class="title">אושר</p>
+        <p class="text">הפנייה <span class="mono">case_8f21c4</span> נמסרה למטופל ונסגרה.</p>
+      </div>
+    </div>
+  </div>
+</div>
+  </section>
+</div>
+
+  <button type="button" id="themeBtn" class="theme-toggle" aria-label="החלפת ערכת צבע">מצב כהה</button>
+  <script>
+    (function () {
+      var b = document.getElementById('themeBtn'), r = document.documentElement;
+      function label() { b.textContent = r.getAttribute('data-theme') === 'dark' ? 'מצב בהיר' : 'מצב כהה'; }
+      r.setAttribute('data-theme', window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+      label();
+      b.addEventListener('click', function () {
+        r.setAttribute('data-theme', r.getAttribute('data-theme') === 'dark' ? 'light' : 'dark');
+        label();
+      });
+    })();
+  </script>
+
+</body>
+</html>
