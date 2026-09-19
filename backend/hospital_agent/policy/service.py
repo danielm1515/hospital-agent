@@ -146,7 +146,9 @@ def _rule_clauses() -> tuple:
 
 
 def _atom(value: str) -> str:
-    return "'" + value.replace("'", "\\'") + "'"
+    # M3: backslash must be escaped first, or a value ending "...\\'" produces an unterminated
+    # (or wrongly-terminated) quoted atom once the quote's own escape is added after it.
+    return "'" + value.replace("\\", "\\\\").replace("'", "\\'") + "'"
 
 
 def prolog_verdict(case: CaseRecord, request: PolicyRequest, approval_ok: bool) -> tuple[bool, str]:

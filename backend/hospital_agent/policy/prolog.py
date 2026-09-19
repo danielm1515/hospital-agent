@@ -75,6 +75,7 @@ _TOKEN = re.compile(
     r"|(?P<punct>[(),\[\]|!])"
     r")"
 )
+_ESCAPE = re.compile(r"\\(.)")
 _DIRECTIVE = re.compile(r"^\s*:-.*$", re.MULTILINE)
 _COMMENT = re.compile(r"%[^\n]*")
 
@@ -94,7 +95,9 @@ def _tokenize(text: str) -> list[tuple[str, str]]:
         kind = match.lastgroup
         value = match.group(kind)
         if kind == "quoted":
-            value = value[1:-1].replace("\\'", "'")
+            # M3: unescape both \\ -> \ and \' -> ' (any backslash is followed by exactly the
+            # one character it escapes, so a single left-to-right pass is correct and unambiguous).
+            value = _ESCAPE.sub(lambda m: m.group(1), value[1:-1])
         tokens.append((kind, value))
     return tokens
 

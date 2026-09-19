@@ -5,6 +5,7 @@ import pytest
 
 from hospital_agent.naming import Action, to_prolog
 from hospital_agent.policy.prolog import RULES_FILE, Prolog, PrologSyntaxError, parse_program
+from hospital_agent.policy.service import _atom
 from tests.spec_programs import prolog_program_and_queries
 
 CASE_482 = Path(__file__).with_name("fixtures") / "case_482.pl"
@@ -82,3 +83,16 @@ def test_anonymous_variables_are_distinct():
 def test_syntax_error_is_reported():
     with pytest.raises(PrologSyntaxError):
         Prolog("p(a")
+
+
+def test_m3_an_id_with_a_backslash_and_a_quote_round_trips():
+    """M3: _atom must escape a backslash before it escapes a quote, or a value containing a
+    backslash immediately before a quote produces an unterminated/misparsed quoted atom
+    (a\\'b -> 'a\\\\'b' reads as the atom a\\ followed by stray text); the tokenizer must then
+    unescape both \\\\ -> \\ and \\' -> ' to recover the exact original value."""
+    value = "a" + "\\" + "'" + "b"
+    engine = Prolog()
+    engine.assertz(f"thing({_atom(value)})")
+    [clause] = engine.clauses
+    assert clause.head.args[0].functor == value
+    assert engine.ask(f"thing({_atom(value)})")
