@@ -153,7 +153,7 @@ class StateManager:
 
             owner = EVENT_OWNER.get(event)
             if owner is not None and source is not owner:
-                return self._block(conn, case, event, "system_owned_event", now)
+                return self._block(conn, case, event, "system_owned_event", now, payload=payload)
 
             ctx = GuardContext(
                 case=case,
@@ -170,7 +170,7 @@ class StateManager:
             )
             resolution = resolve(state, event, ctx)
             if resolution.transition is None:
-                return self._block(conn, case, event, resolution.reason, now)
+                return self._block(conn, case, event, resolution.reason, now, payload=payload)
             row = resolution.transition
 
             if case is None:
@@ -182,7 +182,7 @@ class StateManager:
             trace = repository.load_trace(conn, after.case_id) if case else []
             violation = self.monitor.check(trace, candidate)
             if violation:
-                blocked = self._block(conn, case, event, f"temporal_violation:{violation}", now)
+                blocked = self._block(conn, case, event, f"temporal_violation:{violation}", now, payload=payload)
                 return replace(blocked, temporal_violation=violation)
 
             if case is None:
@@ -204,6 +204,7 @@ class StateManager:
         now: datetime,
         *,
         check_version: bool = True,
+        payload: Mapping[str, Any] | None = None,
     ) -> TransitionResult:
         if case is None:  # a rejected REQUEST_SUBMITTED: there is no case row to attach an audit row to
             return TransitionResult(None, False, None, None, reason=reason)
@@ -223,6 +224,10 @@ class StateManager:
             policy_reasons=[reason],
             attempt_number=case.attempt_count,
             retry_cycle=case.retry_cycle,
+            # M1: keep approval_id/execution_id from the payload; record_blocked() has no
+            # payload (the Escalation Coordinator's invalid-signal path), so both stay None.
+            approval_id=payload.get("approval_id") if payload else None,
+            execution_id=payload.get("execution_id") if payload else None,
         )
         audit_id = repository.insert_audit(conn, entry)
         return TransitionResult(case.case_id, False, case.state, case.state, reason=reason, audit_id=audit_id)

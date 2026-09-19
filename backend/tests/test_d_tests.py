@@ -106,8 +106,11 @@ def test_d34_identity_approval_needs_verified_identity_ref(sm, app_engine):
     d.verification_failed()
     assert (d.state, d.case.escalation_kind) == (State.AWAITING_HUMAN_REVIEW, EscalationKind.PATIENT_VERIFICATION_FAILED)
 
-    without = d.human(Event.HUMAN_APPROVED, d.approval("approve"))
+    attempted_approval_id = d.approval("approve")
+    without = d.human(Event.HUMAN_APPROVED, attempted_approval_id)
     assert (without.committed, without.reason, d.state) == (False, "identity_not_established", State.AWAITING_HUMAN_REVIEW)
+    blocked = d.trace()[-1]
+    assert (blocked.record_type, blocked.approval_id) == ("Blocked", attempted_approval_id)  # M1
 
     with_ref = d.human(Event.HUMAN_APPROVED, d.approval("approve", verified_identity_ref="ID-DESK-17"))
     assert with_ref.committed and d.state is State.RECEIVED
