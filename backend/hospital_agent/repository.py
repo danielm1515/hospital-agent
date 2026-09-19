@@ -65,6 +65,7 @@ def _case_from_row(row: RowMapping) -> CaseRecord:
         escalation_kind=EscalationKind(row["escalation_kind"]) if row["escalation_kind"] else None,
         escalated_from_state=State(row["escalated_from_state"]) if row["escalated_from_state"] else None,
         patient_deadline=row["patient_deadline"],
+        appointment_at=row["appointment_at"],
     )
 
 
@@ -87,6 +88,7 @@ def _case_values(case: CaseRecord) -> dict[str, Any]:
         "escalation_kind": case.escalation_kind.value if case.escalation_kind else None,
         "escalated_from_state": case.escalated_from_state.value if case.escalated_from_state else None,
         "patient_deadline": case.patient_deadline,
+        "appointment_at": case.appointment_at,
         "updated_at": case.updated_at,
     }
 
@@ -229,3 +231,37 @@ def load_execution(conn: Connection, execution_id: str) -> ExecutionRecord | Non
 
 def insert_execution(conn: Connection, execution: ExecutionRecord) -> None:
     conn.execute(insert(executions).values(**asdict(execution)))
+
+
+def set_execution_status(
+    conn: Connection, execution_id: str, from_statuses: tuple[str, ...], to_status: str, now: datetime
+) -> int:
+    """Move an execution along intent -> started -> succeeded|failed|unknown (§18.2).
+
+    Returns 0 if the row is not in one of `from_statuses` (it moved on, or never existed).
+    started_at is stamped on entering 'started'; finished_at on any final status.
+    """
+    stamp = {"started_at": now} if to_status == "started" else {"finished_at": now}
+    result = conn.execute(
+        update(executions)
+        .where(executions.c.execution_id == execution_id, executions.c.status.in_(from_statuses))
+        .values(status=to_status, **stamp)
+    )
+    return result.rowcount
+
+
+def executions_with_status(conn: Connection, status: str) -> list[ExecutionRecord]:
+    rows = conn.execute(
+        select(executions).where(executions.c.status == status).order_by(executions.c.started_at)
+    ).mappings()
+    return [ExecutionRecord(**dict(row)) for row in rows]
+
+
+def expired_patient_deadlines(conn: Connection, now: datetime) -> list[CaseRecord]:
+    """Cases waiting for the patient whose deadline has passed - the SLA Worker's scan (§18.2 index)."""
+    rows = conn.execute(
+        select(cases)
+        .where(cases.c.state == State.AWAITING_PATIENT_INPUT.value, cases.c.patient_deadline <= now)
+        .order_by(cases.c.patient_deadline)
+    ).mappings()
+    return [_case_from_row(row) for row in rows]

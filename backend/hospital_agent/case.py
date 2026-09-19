@@ -50,6 +50,7 @@ class CaseRecord:
     escalation_kind: EscalationKind | None = None
     escalated_from_state: State | None = None
     patient_deadline: datetime | None = None
+    appointment_at: datetime | None = None  # from CheckAppointment's result (Execution design §5)
 
     def step_action(self, step: int | None) -> Action | None:
         """The action at 1-based `step` of the approved plan, or None outside the plan."""
@@ -125,3 +126,9 @@ class ExecutionRecord:
     decision_token: str | None = None
     started_at: datetime | None = None
     finished_at: datetime | None = None
+    # what the Policy decision was bound to (Execution design §3.1)
+    state_version: int | None = None
+    plan_hash: str | None = None
+    approval_id: str | None = None
+    content_hash: str | None = None
+    medical_content_flag: bool = False

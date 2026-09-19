@@ -47,6 +47,7 @@ cases = Table(
     Column("patient_deadline", DateTime(timezone=True)),
     Column("created_at", DateTime(timezone=True), nullable=False),
     Column("updated_at", DateTime(timezone=True), nullable=False),
+    Column("appointment_at", DateTime(timezone=True)),  # migration 0002
 )
 
 executions = Table(
@@ -64,6 +65,12 @@ executions = Table(
     Column("status", Text, nullable=False),
     Column("started_at", DateTime(timezone=True)),
     Column("finished_at", DateTime(timezone=True)),
+    # migration 0002: what the Policy decision was bound to (ExecutorReverified)
+    Column("state_version", Integer),
+    Column("plan_hash", Text),
+    Column("approval_id", Text),
+    Column("content_hash", Text),
+    Column("medical_content_flag", Boolean, nullable=False),
 )
 
 audit_log = Table(
