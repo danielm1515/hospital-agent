@@ -1,0 +1,84 @@
+"""Prolog engine and rules.pl (spec §10)."""
+from pathlib import Path
+
+import pytest
+
+from hospital_agent.naming import Action, to_prolog
+from hospital_agent.policy.prolog import RULES_FILE, Prolog, PrologSyntaxError, parse_program
+from tests.spec_programs import prolog_program_and_queries
+
+CASE_482 = Path(__file__).with_name("fixtures") / "case_482.pl"
+
+
+def spec_engine() -> Prolog:
+    engine = Prolog(RULES_FILE.read_text(encoding="utf-8"))
+    engine.consult(CASE_482.read_text(encoding="utf-8"))
+    return engine
+
+
+def test_rules_pl_plus_the_case_482_fixture_is_the_spec_program():
+    spec_program, _ = prolog_program_and_queries()
+    ours = parse_program(RULES_FILE.read_text(encoding="utf-8")) + parse_program(CASE_482.read_text(encoding="utf-8"))
+    assert sorted(map(repr, ours)) == sorted(map(repr, parse_program(spec_program)))
+
+
+@pytest.mark.parametrize("query, answer", prolog_program_and_queries()[1])
+def test_spec_10_queries_give_the_documented_answers(query, answer):
+    answers = spec_engine().solve(query, limit=1)  # fresh engine: retract/1 must not leak between queries
+    if answer in ("true.", "false."):
+        assert bool(answers) is (answer == "true.")
+    else:
+        name, value = answer.removesuffix(".").split(" = ", 1)
+        assert answers == [{name: value}]
+
+
+def test_every_action_in_rules_pl_maps_to_the_action_registry():
+    engine = Prolog(RULES_FILE.read_text(encoding="utf-8"))
+    names = {a["A"] for a in engine.solve("action_requires_role(A, _)")}
+    assert names == {to_prolog(action) for action in Action}
+
+
+def test_d29_human_actions_are_not_bound_to_the_current_step():
+    """D29: InPlan applies to automatic actions only; human actions go through approval facts."""
+    engine = spec_engine()
+    engine.assertz("workflow_decision_valid('CASE-482', close_medical_case)")
+    assert engine.ask("allowed(coordinator_nurse, close_medical_case, 'CASE-482')")
+    assert engine.ask("allowed(admin_coordinator, close_medical_case, 'CASE-482')")
+    engine.assertz("content_approval_valid('EXEC-482-02', 'P-10041', answer_clinical_q, 'HASH-DEMO-001')")
+    assert engine.ask("allowed(coordinator_nurse, answer_clinical_q, 'CASE-482')")
+
+
+def test_cut_negation_and_conjunction_in_negation():
+    engine = Prolog("p(one). p(two). q(X) :- p(X), !. r(X) :- p(X), \\+ (X == two, true).")
+    assert engine.solve("q(X)") == [{"X": "one"}]
+    assert engine.solve("r(X)") == [{"X": "one"}]
+
+
+def test_lists_memberchk_atom_and_identity():
+    engine = Prolog("flag(true).")
+    assert engine.ask("flag(F), memberchk(F, [true, false])")
+    assert not engine.ask("memberchk(maybe, [true, false])")
+    assert engine.ask("atom(x), x \\== y, x == x")
+    assert not engine.ask("atom(X)")
+    assert not engine.ask("'' \\== ''")
+
+
+def test_retract_and_assertz_change_only_this_database():
+    first, second = Prolog("f(a)."), Prolog("f(a).")
+    assert first.ask("retract(f(a))")
+    first.assertz("f(b)")
+    assert first.solve("f(X)") == [{"X": "b"}]
+    assert second.solve("f(X)") == [{"X": "a"}]
+
+
+def test_undefined_predicate_fails_like_a_dynamic_one():
+    assert not Prolog("p(a).").ask("nothing_here(a)")
+
+
+def test_anonymous_variables_are_distinct():
+    assert Prolog("pair(a, b).").ask("pair(_, _)")
+
+
+def test_syntax_error_is_reported():
+    with pytest.raises(PrologSyntaxError):
+        Prolog("p(a")
