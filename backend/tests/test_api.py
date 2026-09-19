@@ -2,9 +2,27 @@
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
+from sqlalchemy.exc import ProgrammingError
 
 from hospital_agent.api.app import create_app
 from tests.driver import Driver
+
+
+class _BrokenConnection:
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc_info):
+        return False
+
+    def execute(self, *args, **kwargs):
+        # A SQLAlchemyError that is NOT an OperationalError (e.g. a bad migration state).
+        raise ProgrammingError("SELECT 1", {}, Exception('relation "x" does not exist'))
+
+
+class _BrokenEngine:
+    def connect(self):
+        return _BrokenConnection()
 
 
 @pytest.fixture
@@ -22,6 +40,14 @@ def test_health_reports_the_database(client):
 def test_health_is_503_when_the_database_is_unreachable():
     unreachable = create_engine("postgresql+psycopg://nobody:nothing@localhost:1/none")
     with TestClient(create_app(unreachable)) as client:
+        response = client.get("/health")
+    assert response.status_code == 503
+    assert response.json()["database"] == "unavailable"
+
+
+def test_health_is_503_for_any_sqlalchemy_error_not_just_operational_error():
+    """M3: a non-OperationalError SQLAlchemyError (e.g. a bad migration state) is also 503."""
+    with TestClient(create_app(_BrokenEngine())) as client:
         response = client.get("/health")
     assert response.status_code == 503
     assert response.json()["database"] == "unavailable"

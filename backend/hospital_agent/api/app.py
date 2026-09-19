@@ -12,7 +12,7 @@ from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
-from sqlalchemy.exc import OperationalError
+from sqlalchemy.exc import SQLAlchemyError
 
 from .. import repository
 from ..db import make_engine
@@ -40,7 +40,7 @@ def create_app(engine: Engine | None = None) -> FastAPI:
         try:
             with db.connect() as conn:
                 conn.execute(text("SELECT 1"))
-        except OperationalError:
+        except SQLAlchemyError:
             return JSONResponse({"status": "degraded", "database": "unavailable"}, status_code=503)
         return JSONResponse({"status": "ok", "database": "ok"})
 
