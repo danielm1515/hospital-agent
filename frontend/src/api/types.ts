@@ -1,11 +1,6 @@
 /**
- * Request and response shapes of sub-project 5's `/api`.
- *
- * `docs/api.md` did not exist when this file was written, so the shapes are
- * derived from the sub-project 5 plan (`docs/superpowers/plans/2026-09-20-human-review-api.md`,
- * Task 2 dataclasses and Task 3 routes) and its design §6, plus the existing
- * Case Monitor schemas (`backend/hospital_agent/api/schemas.py`).
- * Keep every API type here so it is easy to align with `docs/api.md`.
+ * Request and response shapes of sub-project 5's `/api`, as documented in `docs/api.md`.
+ * Keep every API type here so it stays easy to align with that contract.
  */
 
 // ---- Names (spec §2, §17) -------------------------------------------------
@@ -243,7 +238,7 @@ export interface DecisionResult {
 
 // ---- Errors ---------------------------------------------------------------
 
-/** FastAPI's error body: `{"detail": "<code>"}` (422 bodies carry a list instead). */
+/** FastAPI's error body: `{"detail": "<code>"}`, including for a `422`. */
 export interface ErrorBody {
   detail: unknown
 }

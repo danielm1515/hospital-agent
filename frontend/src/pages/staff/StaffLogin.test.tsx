@@ -46,6 +46,16 @@ describe('StaffLogin', () => {
     expect(login).toHaveBeenCalledWith('admin_coordinator', 'demo')
   })
 
+  it('does not call the API when a field is empty', async () => {
+    const login = vi.fn(async () => STAFF_USER)
+    renderWithAuth(<StaffLogin />, { login })
+
+    await userEvent.click(screen.getByRole('button', { name: 'כניסה למערכת' }))
+
+    expect(login).not.toHaveBeenCalled()
+    expect(await screen.findByRole('alert')).toHaveTextContent('יש להזין מזהה משתמש וסיסמה.')
+  })
+
   it('reports wrong credentials', async () => {
     const login = vi.fn(async () => {
       throw new ApiError(401, 'invalid_credentials')

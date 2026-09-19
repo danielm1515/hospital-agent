@@ -69,6 +69,7 @@ export function PatientLogin() {
             dir="ltr"
             autoComplete="username"
             placeholder="P-10041"
+            maxLength={64}
             onChange={(event) => setUserId(event.target.value)}
           />
           <TextField
@@ -76,6 +77,7 @@ export function PatientLogin() {
             type="password"
             value={password}
             autoComplete="current-password"
+            maxLength={256}
             onChange={(event) => setPassword(event.target.value)}
           />
           <Button type="submit" variant="primary" busy={busy}>
