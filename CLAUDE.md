@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project status
 
-Greenfield: no application code yet. The only authoritative input is the **binding demo spec** `Hospital_Agent_Clean.docx` (Hebrew, final-project scope). A Markdown copy lives in `docs/spec/`, one file per spec section: **spec §N → `docs/spec/NN-*.md`** (index: `docs/spec/README.md`). The docx is the source of truth. `docs/spec/` is generated, so don't hand-edit it. After the docx changes, regenerate it:
+Sub-project 1 (Core) is implemented in `backend/` (design and plan under `docs/superpowers/`). The authoritative input is the **binding demo spec** `Hospital_Agent_Clean.docx` (Hebrew, final-project scope). A Markdown copy lives in `docs/spec/`, one file per spec section: **spec §N → `docs/spec/NN-*.md`** (index: `docs/spec/README.md`). The docx is the source of truth. `docs/spec/` is generated, so don't hand-edit it. After the docx changes, regenerate it:
 
 ```bash
 python scripts/spec_to_md.py
@@ -14,7 +14,38 @@ python scripts/spec_to_md.py
 
 - **Scope is exactly the three scenarios in §0**: normal flow with a missing document, medical escalation, and technical failure with bounded retry. The spec calls the "full characterization" (אפיון מלא) a vision document, so do not build beyond the demo.
 - The spec keeps pointing to a **companion document (המסמך הנלווה)** that uses the same section numbers, and its implementation conditions are binding. It is **not in the repo**. When a detail is deferred to it, ask the user instead of inventing it.
-- No build/test/lint commands exist yet. Add them here once the project is scaffolded.
+- Spec inconsistencies found while implementing, and decisions the spec leaves open, are in `docs/spec_corrections.md`.
+
+## Commands
+
+Run from the repo root. The backend runs in Docker (Python 3.13). The repo is mounted into the container, so code changes need no rebuild; dependency changes do.
+
+```bash
+docker compose up --build
+```
+
+Postgres on `localhost:54322` (database `hospital`, owner `hospital_owner`; the app connects as `hospital_app`), API on `localhost:8000`. Migrations run on start.
+
+```bash
+docker compose run --rm backend pytest
+```
+
+All tests, against the separate `hospital_test` database. One test:
+
+```bash
+docker compose run --rm backend pytest tests/test_fsm.py::test_table_matches_spec_3_row_by_row -v
+```
+
+After changing `backend/pyproject.toml`: run `uv lock` in `backend/`, then `docker compose build backend`. `docker compose down -v` wipes the database volume and re-runs `db/init/`.
+
+## Working in the backend (`backend/hospital_agent/`)
+
+- `fsm.py` is the §3 table as data. Each row keeps its Guard cell verbatim in `spec_guard`, and `tests/test_fsm.py` compares all 41 rows with `docs/spec/03-transitions-guards.md`. Change the spec first, then the row.
+- A guard (`guards.py`) returns `None` when it holds, or a reason code. A fact that another component determines is trusted only because `StateManager` has already checked that the event came from its owner (`naming.EVENT_OWNER`).
+- Only `StateManager.apply()` writes State. `HUMAN_REVIEW_REQUIRED` enters only through `EscalationCoordinator.signal()`.
+- Guards evaluated by components that don't exist yet are ports (`GuardPorts`, `TraceMonitor`). Their doubles live only in `tests/fakes.py`; application code has no permissive defaults.
+- `db.py` mirrors the Alembic migrations, and `tests/test_schema.py` fails if they drift. A schema change is a new migration, never an edit to `0001`.
+- `tests/driver.py` plays the components that don't exist yet (Classifier, Planner, Policy Service, Tool Executor, reviewers). The scenario and D-tests drive cases through it.
 
 ## What the system is
 

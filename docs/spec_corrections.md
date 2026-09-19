@@ -1,0 +1,35 @@
+# Spec corrections and open decisions
+
+Found while implementing `Hospital_Agent_Clean.docx`. Every item names the section,
+what the spec says, and what the code does. The spec itself is not edited here:
+`docs/spec/` is generated from the docx.
+
+## Inconsistencies in the spec
+
+### 1. Number of Postgres tables (§1 vs §18.2)
+
+§1 lists the Postgres Database as "טבלאות cases, executions ו־audit_log" (3 tables).
+§18.2 defines 4 tables: `cases`, `executions`, `audit_log` and `approvals`.
+
+**Code:** follows §18.2. `approvals` is required by `WorkflowDecisionValid`
+(§3.1) and by the single-use rule (`consumed_at`, §18.2).
+
+### 2. audit_log columns (§12.2 vs §18.2)
+
+§12.2 lists the Audit record fields, including `action` and `outcome`. The
+`audit_log` table in §18.2 has neither column.
+
+**Code:** `audit_log` carries both (`alembic/versions/0001_initial_schema.py`).
+`outcome` stays NULL for Transition and Blocked rows, as §12.2 requires.
+
+## Decisions the spec leaves open
+
+| # | Question | Decision | Where |
+|---|---|---|---|
+| 1 | When is a PolicyReview approval consumed? | Not at `HUMAN_APPROVED`. It stays open as `PolicyReviewOverrideValid` and is consumed by the next Policy decision (§3.1 "נצרך בהחלטת Policy הבאה"; OPA's `approval_envelope` requires `consumed_at == null`). | `fsm.py` row 38, `test_policy_review_approval_stays_open_for_the_next_policy_decision` |
+| 2 | How often is an event re-processed after a stale `state_version`? | At most 3 times, then `ReprocessLimitExceeded` and nothing is committed. | `state_manager.py` `MAX_REPROCESS` |
+| 3 | What happens to `escalation_kind` after a human resumes the case? | `HUMAN_APPROVED` clears `escalation_kind` / `escalated_from_state`; the Audit keeps the history. Resolve/reject keep them on the closed case. | `fsm.py` `Effect.CLEAR_ESCALATION` |
+| 4 | Reason code for a WorkflowDecision that fails a check the spec does not name | `workflow_decision_invalid`. The spec-named codes are kept: `approval_decision_mismatch`, `identity_not_established`, `patient_deadline_missing`. | `guards.py` `workflow_decision_valid` |
+| 5 | Which document formats are "supported" (`RequestValid`, `DocumentValid`)? | `pdf`, `jpg`, `png`. | `guards.py` `SUPPORTED_DOCUMENT_FORMATS` |
+| 6 | How is `Initial` stored in the Audit? | `state_before` is NULL on the `REQUEST_SUBMITTED` row. | `state_manager.py` `_audit_entry` |
+| 7 | Can the Core record `TOOL_EXECUTION_STARTED` / `AUDIT_RECORDED`? | Not yet: `apply()` refuses them with `NonTransitionEvent`. The Tool Executor records them as an atomic pair in sub-project 3. | `state_manager.py` |
