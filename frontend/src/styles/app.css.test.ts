@@ -12,24 +12,25 @@ function stripComments(source: string): string {
 }
 
 /**
- * Removes every top-level `@media { ... }` block (braces and all), so a selector
- * that is only re-declared inside a media query does not count as a second
- * top-level rule block. Assumes braces are already known to be balanced.
+ * Removes every top-level at-rule block (`@media { ... }`, `@keyframes { ... }`, etc.),
+ * braces and all, so a selector that only exists inside one (or a keyframe selector like
+ * `to`/`from`/`50%`) never counts as a top-level rule. Assumes braces are already known
+ * to be balanced.
  */
-function stripMediaBlocks(source: string): string {
+function stripAtRuleBlocks(source: string): string {
   let result = ''
   let i = 0
   while (i < source.length) {
-    const atMedia = source.indexOf('@media', i)
-    if (atMedia === -1) {
+    const at = source.indexOf('@', i)
+    if (at === -1) {
       result += source.slice(i)
       break
     }
-    result += source.slice(i, atMedia)
-    const openBrace = source.indexOf('{', atMedia)
+    result += source.slice(i, at)
+    const openBrace = source.indexOf('{', at)
     if (openBrace === -1) {
       // Malformed input; let the brace-balance test catch this separately.
-      result += source.slice(atMedia)
+      result += source.slice(at)
       break
     }
     let depth = 1
@@ -39,17 +40,45 @@ function stripMediaBlocks(source: string): string {
       if (source[j] === '}') depth--
       j++
     }
-    i = j // skip past the matched closing brace of the @media block
+    i = j // skip past the matched closing brace of the at-rule block
   }
   return result
 }
 
-/** Counts how many times a top-level rule block's selector opens with exactly this selector text. */
-function countTopLevelRule(source: string, selector: string): number {
-  const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-  const pattern = new RegExp(`(^|\\})\\s*${escaped}\\s*\\{`, 'g')
-  return (source.match(pattern) ?? []).length
+/**
+ * Walks the (comment- and at-rule-free) source at brace depth 0 and returns every
+ * top-level selector, in file order, exactly as declared (whitespace collapsed).
+ * A rule with no top-level content between selector text and `{` is skipped
+ * (defensive; shouldn't happen once braces are balanced).
+ */
+function collectTopLevelSelectors(source: string): string[] {
+  const selectors: string[] = []
+  let depth = 0
+  let buffer = ''
+  for (const char of source) {
+    if (char === '{') {
+      if (depth === 0) {
+        const selector = buffer.replace(/\s+/g, ' ').trim()
+        if (selector) selectors.push(selector)
+        buffer = ''
+      }
+      depth++
+    } else if (char === '}') {
+      depth--
+      if (depth === 0) buffer = ''
+    } else if (depth === 0) {
+      buffer += char
+    }
+  }
+  return selectors
 }
+
+/**
+ * Selectors that are deliberately declared in more than one top-level rule block.
+ * Add an entry here only with a comment explaining why the duplicate is intentional -
+ * everything else must be a single rule block (merge the declarations instead).
+ */
+const ALLOWED_DUPLICATE_SELECTORS: readonly string[] = []
 
 describe('app.css structural integrity', () => {
   it('has balanced braces', () => {
@@ -65,26 +94,25 @@ describe('app.css structural integrity', () => {
     expect(depth).toBe(0)
   })
 
-  it('declares .timeline exactly once outside media queries', () => {
-    // Regression test: a merge once left two `.timeline` rule blocks in the file
-    // (the patient status stepper and the staff Audit trace), so the staff one
-    // silently inherited the patient's `flex-direction: column` layout. The
-    // staff trace must use a distinct class (`.audit-timeline`) instead.
-    const outsideMedia = stripMediaBlocks(stripComments(css))
-    expect(countTopLevelRule(outsideMedia, '.timeline')).toBe(1)
-  })
+  it('never declares the same top-level selector in two separate rule blocks', () => {
+    // Regression test: a merge has repeatedly left a selector declared twice at the
+    // top level (`.timeline`, `.control .select`, `.plan-steps li`, `.page-head`), so
+    // whichever rule comes later silently wins and the earlier declarations are dead.
+    // This check is generic instead of naming those selectors individually, so the
+    // next such merge collision is caught automatically instead of needing its own
+    // hand-written regression case.
+    const outsideAtRules = stripAtRuleBlocks(stripComments(css))
+    const selectors = collectTopLevelSelectors(outsideAtRules)
 
-  it('declares .control .select exactly once outside media queries', () => {
-    // Regression test: a merge left `.control .select` closed early, with three
-    // trailing declarations and a stray `}` as dead text after the rule.
-    const outsideMedia = stripMediaBlocks(stripComments(css))
-    expect(countTopLevelRule(outsideMedia, '.control .select')).toBe(1)
-  })
+    const counts = new Map<string, number>()
+    for (const selector of selectors) {
+      counts.set(selector, (counts.get(selector) ?? 0) + 1)
+    }
 
-  it('declares .plan-steps li exactly once outside media queries', () => {
-    // Regression test: the same merge duplicated `.plan-steps li` into two
-    // separate rule blocks instead of one with every declaration.
-    const outsideMedia = stripMediaBlocks(stripComments(css))
-    expect(countTopLevelRule(outsideMedia, '.plan-steps li')).toBe(1)
+    const duplicates = [...counts.entries()]
+      .filter(([selector, count]) => count > 1 && !ALLOWED_DUPLICATE_SELECTORS.includes(selector))
+      .map(([selector, count]) => `${selector} (${count}x)`)
+
+    expect(duplicates).toEqual([])
   })
 })

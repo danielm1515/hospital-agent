@@ -227,6 +227,7 @@ function UploadForm({
   const [fileName, setFileName] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [notice, setNotice] = useState<string | null>(null)
   const label = documentLabel(documentId)
   const formatId = `fmt-${documentId}`
   const fileId = `file-${documentId}`
@@ -258,12 +259,22 @@ function UploadForm({
       return
     }
     setError(null)
+    setNotice(null)
     setBusy(true)
     try {
       const next = await api.uploadDocument(caseId, { document_id: documentId, format, content: trimmed })
       onUploaded(next)
-      setContent('')
-      setFileName(null)
+      // `docs/api.md` §4: a `200` here is not necessarily success. The only reliable
+      // signal is whether `status` actually left `needs_document` - a document that
+      // failed validation is a committed self-loop (status unchanged, state advanced),
+      // and a document the case was not waiting for at all (D25) changes nothing. Either
+      // way the content must be kept so the patient can look at it and try again.
+      if (next.status !== 'needs_document') {
+        setContent('')
+        setFileName(null)
+      } else {
+        setNotice('המסמך נשלח. הפנייה עדיין ממתינה למסמך — בדקו את הקובץ ונסו שוב.')
+      }
     } catch (caught) {
       setError(errorMessage(caught))
     } finally {
@@ -326,6 +337,7 @@ function UploadForm({
         </div>
 
         {error && <Alert variant="error">{error}</Alert>}
+        {notice && <Alert variant="info">{notice}</Alert>}
 
         <div className="actions">
           <Button type="submit" variant="primary" busy={busy}>

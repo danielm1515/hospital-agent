@@ -100,6 +100,43 @@ describe('RequestDetail: needs_document (D24)', () => {
     })
   })
 
+  it('keeps the pasted content and shows a neutral notice when the document fails validation (committed self-loop, D24/D25)', async () => {
+    const user = userEvent.setup()
+    getRequest.mockResolvedValue(needsDocument({ missing_document_ids: ['blood_test'] }))
+    // §4: a document the case was still waiting for but that fails validation is a
+    // committed self-loop - `state_version`/`updated_at` move but `status` stays
+    // `needs_document`.
+    uploadDocument.mockResolvedValue(
+      needsDocument({ missing_document_ids: ['blood_test'], updated_at: '2026-09-20T12:00:00Z' }),
+    )
+    renderDetail()
+
+    const form = await screen.findByRole('region', { name: 'העלאת מסמך blood_test' })
+    await user.type(within(form).getByLabelText('תוכן המסמך'), 'תוצאות בדיקת דם')
+    await user.click(within(form).getByRole('button', { name: 'שליחת המסמך' }))
+
+    expect(await within(form).findByText('המסמך נשלח. הפנייה עדיין ממתינה למסמך — בדקו את הקובץ ונסו שוב.')).toBeInTheDocument()
+    expect(within(form).getByLabelText('תוכן המסמך')).toHaveValue('תוצאות בדיקת דם')
+    // The request stays visible - this was not a confirmation of success.
+    expect(screen.getByText('כדי להשלים את ההכנה לתור חסרים המסמכים הבאים:')).toBeInTheDocument()
+  })
+
+  it('keeps the pasted content and shows a neutral notice for a document the case was not waiting for (D25)', async () => {
+    const user = userEvent.setup()
+    const unchanged = needsDocument({ missing_document_ids: ['blood_test'] })
+    getRequest.mockResolvedValue(unchanged)
+    // §4: a document the case was not waiting for at all changes nothing, not even `updated_at`.
+    uploadDocument.mockResolvedValue(unchanged)
+    renderDetail()
+
+    const form = await screen.findByRole('region', { name: 'העלאת מסמך blood_test' })
+    await user.type(within(form).getByLabelText('תוכן המסמך'), 'תוצאות בדיקת דם')
+    await user.click(within(form).getByRole('button', { name: 'שליחת המסמך' }))
+
+    expect(await within(form).findByText('המסמך נשלח. הפנייה עדיין ממתינה למסמך — בדקו את הקובץ ונסו שוב.')).toBeInTheDocument()
+    expect(within(form).getByLabelText('תוכן המסמך')).toHaveValue('תוצאות בדיקת דם')
+  })
+
   it('does not send an empty document', async () => {
     const user = userEvent.setup()
     getRequest.mockResolvedValue(needsDocument({ missing_document_ids: ['blood_test'] }))

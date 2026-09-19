@@ -36,10 +36,15 @@ export function StaffLogin() {
 
   async function submit(event: React.FormEvent) {
     event.preventDefault()
+    const id = userId.trim()
+    if (!id || !password) {
+      setError('יש להזין מזהה משתמש וסיסמה.')
+      return
+    }
     setBusy(true)
     setError(null)
     try {
-      await login(userId.trim(), password)
+      await login(id, password)
       navigate(STAFF_HOME, { replace: true })
     } catch (caught) {
       const detail = caught instanceof ApiError ? caught.detail : 'network_error'
@@ -109,6 +114,7 @@ export function StaffLogin() {
             value={userId}
             dir="ltr"
             autoComplete="username"
+            maxLength={64}
             onChange={(event) => setUserId(event.target.value)}
           />
           <TextField
@@ -116,6 +122,7 @@ export function StaffLogin() {
             type="password"
             value={password}
             autoComplete="current-password"
+            maxLength={256}
             onChange={(event) => setPassword(event.target.value)}
           />
           <Button type="submit" variant="primary" busy={busy}>
@@ -131,7 +138,7 @@ export function StaffLogin() {
 
         <div className="demo-users">
           <p className="scope-t">משתמשי דמו</p>
-          <div className="demo-row">
+          <div className="demo-users-row">
             {STAFF_DEMO_USERS.map((user) => (
               <Button key={user.user_id} variant="secondary" onClick={() => fillDemoUser(user.user_id)}>
                 {user.display_name} <span className="mono">{user.user_id}</span>
