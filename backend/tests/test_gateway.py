@@ -6,7 +6,7 @@ import pytest
 
 from hospital_agent.case import CaseRecord
 from hospital_agent.execution.gateway import (
-    ACTION_TARGETS, ERROR, IDEMPOTENT_ACTIONS, OK, RESULT_FIELDS, TRANSIENT_FAILURE, MockGateway,
+    ACTION_TARGETS, ERROR, IDEMPOTENT_ACTIONS, INSTRUCTION_TEXT, OK, RESULT_FIELDS, TRANSIENT_FAILURE, MockGateway,
 )
 from hospital_agent.execution.retry import after_failure
 from hospital_agent.naming import AUTOMATIC_ACTIONS, EscalationKind, Event, State
@@ -37,7 +37,8 @@ def test_mock_returns_the_demo_data():
         type(gw.call("CheckAppointment", {}, "k0"))(OK, {"appointment_at": NOW + timedelta(hours=96)})
     docs = gw.call("CheckDocuments", {"patient_id": "P"}, "k2")
     assert docs.data == {"required_documents": ["referral", "blood_test"], "held_documents": ["referral"]}
-    assert gw.call("LoadInstructions", {}, "k3").data == {"instruction_ids": ["INSTR-PREP-COLONOSCOPY:3"]}
+    assert gw.call("LoadInstructions", {}, "k3").data == {"instruction_ids": ["INSTR-PREP-COLONOSCOPY:3"],
+                                                          "instruction_text": INSTRUCTION_TEXT}
 
 
 def test_mock_fails_as_scripted_then_recovers():

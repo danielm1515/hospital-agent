@@ -32,11 +32,16 @@ ACTION_TARGETS: dict[str, tuple[str, tuple[str, ...]]] = {
 RESULT_FIELDS: dict[str, tuple[str, ...]] = {
     Action.CHECK_APPOINTMENT.value: ("appointment_at",),
     Action.CHECK_DOCUMENTS.value: ("required_documents", "held_documents"),
-    Action.LOAD_INSTRUCTIONS.value: ("instruction_ids",),
+    Action.LOAD_INSTRUCTIONS.value: ("instruction_ids",),  # instruction_text goes to the Data Log, not the event
     Action.SEND_STATUS_UPDATE.value: ("delivered",),
 }
 
 OK, TRANSIENT_FAILURE, ERROR = "ok", "transient_failure", "error"
+
+# The demo instruction system's text for INSTR-PREP-COLONOSCOPY v3 (LLM design §5: stored in
+# the Data Log and re-checked by the Safety Classifier before DATA_RETRIEVED).
+INSTRUCTION_TEXT = ("Colonoscopy preparation (INSTR-PREP-COLONOSCOPY v3): clear liquids only on the day "
+                    "before the procedure; nothing by mouth after midnight; arrive 30 minutes early.")
 
 # The only third-party error strings audit's policy_reasons may hold (§12.3: IDs/codes only,
 # never an arbitrary external message); anything else is reported as "other".
@@ -100,7 +105,8 @@ class MockGateway:
                 return ToolResult(OK, {"required_documents": list(self.required_documents),
                                        "held_documents": list(self.held_documents)})
             case Action.LOAD_INSTRUCTIONS.value:
-                return ToolResult(OK, {"instruction_ids": ["INSTR-PREP-COLONOSCOPY:3"]})
+                return ToolResult(OK, {"instruction_ids": ["INSTR-PREP-COLONOSCOPY:3"],
+                                       "instruction_text": INSTRUCTION_TEXT})
             case Action.SEND_STATUS_UPDATE.value:
                 self.delivered.setdefault(idempotency_key, dict(parameters))
                 return ToolResult(OK, {"delivered": True})

@@ -330,6 +330,8 @@ def valid_tool_result(ctx: GuardContext) -> str | None:
 
     Otherwise a string payload silently becomes a list of characters in apply_effects().
     appointment_at (Execution design §5), when present, must be a timezone-aware datetime.
+    safety_level (LLM design §5: the Safety Classifier's re-check of retrieved content), when
+    present, must be one of the four SafetyLevel values.
     """
     payload = ctx.payload
     for key in ("required_documents", "held_documents"):
@@ -339,6 +341,8 @@ def valid_tool_result(ctx: GuardContext) -> str | None:
         at = payload["appointment_at"]
         if not (isinstance(at, datetime) and at.tzinfo is not None):
             return "invalid_tool_result"
+    if "safety_level" in payload and payload["safety_level"] not in {s.value for s in SafetyLevel}:
+        return "invalid_tool_result"
     return None
 
 

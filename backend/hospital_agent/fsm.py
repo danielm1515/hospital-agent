@@ -245,6 +245,11 @@ def resolve(state: S | None, event: E, ctx: GuardContext) -> Resolution:
     return Resolution(None, specific, {})
 
 
+def _higher_risk(current: SafetyLevel | None, new: SafetyLevel) -> SafetyLevel:
+    order = list(SafetyLevel)  # LowRisk < MediumRisk < HighRisk < CriticalRisk
+    return new if current is None or order.index(new) > order.index(current) else current
+
+
 def apply_effects(case: CaseRecord, row: Transition, ctx: GuardContext) -> CaseRecord:
     """The cases row after `row` fires. Pure: the State Manager persists the result."""
     p = ctx.payload
@@ -259,7 +264,8 @@ def apply_effects(case: CaseRecord, row: Transition, ctx: GuardContext) -> CaseR
                 changes["identity_verified"] = True
             case Effect.RECORD_CLASSIFICATION:
                 changes["intent"] = p.get("intent")
-                changes["safety_level"] = SafetyLevel(p["safety_level"]) if p.get("safety_level") else None
+                if p.get("safety_level"):  # LLM design §5: re-classification never lowers the risk
+                    changes["safety_level"] = _higher_risk(case.safety_level, SafetyLevel(p["safety_level"]))
             case Effect.RECORD_PLAN:
                 steps = [dict(step) for step in p["ordered_steps"]]
                 changes.update(ordered_steps=steps, plan_hash=compute_plan_hash(steps), current_step=1,
@@ -273,6 +279,8 @@ def apply_effects(case: CaseRecord, row: Transition, ctx: GuardContext) -> CaseR
                     changes["required_documents"] = list(p["required_documents"])
                 if "held_documents" in p:
                     changes["held_documents"] = list(p["held_documents"])
+                if "safety_level" in p:  # LLM design §5: a re-check only ever raises the risk
+                    changes["safety_level"] = _higher_risk(case.safety_level, SafetyLevel(p["safety_level"]))
             case Effect.RECORD_PATIENT_DEADLINE:
                 changes["patient_deadline"] = p.get("patient_deadline")
             case Effect.HOLD_DOCUMENT:

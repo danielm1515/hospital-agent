@@ -16,13 +16,20 @@ RETRY_EXHAUSTED; a temporal violation escalates as TemporalViolation. Fail close
 covers two later anomalies, both already-recorded outcomes with a stranded case: the result
 event itself blocked by its own guards (e.g. `invalid_tool_result`), and the external call
 raising instead of returning - both escalate as ExecutionUnknown.
+
+Retrieved content (LLM design §5): when a result carries instruction_text, the text is kept
+in the Data Log (never in the event) and, if a content_check is given, re-checked by the
+Safety Classifier; its safety_level rides on DATA_RETRIEVED, where it can only raise the
+case's risk (spec §3). A content check that fails is another stranded case: ExecutionUnknown.
 """
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
 
+from .. import data_log
 from ..case import CaseRecord, ExecutionRecord
-from ..naming import Action, Component, EscalationKind, Event
+from ..naming import Action, Component, EscalationKind, Event, SafetyLevel
 from ..state_manager import ExecutionOutcome, StateManager, TransitionResult
 from .gateway import ACTION_TARGETS, KNOWN_TOOL_ERRORS, OK, RESULT_FIELDS, TRANSIENT_FAILURE, ToolGateway, ToolResult
 from .retry import after_failure
@@ -30,8 +37,9 @@ from .verify import EXECUTING_STATES
 
 
 class ToolExecutor:
-    def __init__(self, state_manager: StateManager, gateway: ToolGateway) -> None:
-        self.state_manager, self.gateway = state_manager, gateway
+    def __init__(self, state_manager: StateManager, gateway: ToolGateway,
+                 content_check: Callable[[str], SafetyLevel] | None = None) -> None:
+        self.state_manager, self.gateway, self.content_check = state_manager, gateway, content_check
 
     def execute(self, case_id: str, execution_id: str) -> TransitionResult:
         sm = self.state_manager
@@ -68,6 +76,18 @@ class ToolExecutor:
                                                  Component.RESPONSE_DELIVERY, outcome)
             fields = RESULT_FIELDS[execution.action]
             payload = {k: result.data[k] for k in fields if k in result.data}
+            text = result.data.get("instruction_text")
+            if isinstance(text, str) and text.strip():
+                try:
+                    level = self._keep_retrieved_content(execution, text)
+                except Exception as exc:  # the re-check could not be made: fail closed (§14)
+                    case = sm.load(case_id)
+                    return sm.escalation.signal(case_id, EscalationKind.EXECUTION_UNKNOWN, case.state,
+                                                Component.TOOL_EXECUTOR,
+                                                reasons=[f"content_check_failed:{type(exc).__name__}"],
+                                                execution_outcome=outcome)
+                if level is not None:
+                    payload["safety_level"] = level.value
             return self._apply_result_event(case_id, Event.DATA_RETRIEVED, {**payload, "execution_id": execution_id},
                                              Component.TOOL_EXECUTOR, outcome)
 
@@ -100,6 +120,14 @@ class ToolExecutor:
                 return sm.escalation.signal(case_id, EscalationKind.EXECUTION_UNKNOWN, case.state,
                                             Component.TOOL_EXECUTOR, reasons=[f"result_event_blocked:{result.reason}"])
         return result
+
+    def _keep_retrieved_content(self, execution: ExecutionRecord, text: str) -> SafetyLevel | None:
+        """Store retrieved instructions in the Data Log (§12.3) and re-check their risk (§3)."""
+        sm = self.state_manager
+        with sm.engine.begin() as conn:
+            data_log.record(conn, execution.case_id, execution.patient_id, data_log.DataKind.INSTRUCTIONS, text,
+                            sm.clock())
+        return self.content_check(text) if self.content_check is not None else None
 
     @staticmethod
     def _parameters(case: CaseRecord, execution: ExecutionRecord) -> dict[str, Any]:
