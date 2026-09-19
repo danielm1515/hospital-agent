@@ -1,0 +1,141 @@
+package hospital_agent.policy
+import rego.v1
+default allow := false
+default require_human_review := false
+retrieval_actions := {"CheckAppointment", "CheckDocuments", "LoadInstructions"}
+patient_facing_actions := {"SendStatusUpdate"}
+known_actions := retrieval_actions | patient_facing_actions
+low_risk := {"LowRisk", "MediumRisk"}
+valid_safety_levels := low_risk | {"HighRisk", "CriticalRisk"}
+nonempty(v) if { is_string(v); trim_space(v) != "" }
+patient_context_present if {
+    nonempty(input.patient_id); nonempty(input.case_id); nonempty(input.execution_id)
+}
+identity_verified if { input.identity_verified == true }
+safety_valid if { input.safety_level in valid_safety_levels }
+known_action if { input.proposed_action.action in known_actions }
+action_in_plan if {
+    is_number(input.plan.current_step)
+    input.plan.current_step == floor(input.plan.current_step)
+    input.plan.current_step >= 1
+    step := input.plan.ordered_steps[input.plan.current_step - 1]
+    step.action == input.proposed_action.action
+    input.proposed_action.from_step == input.plan.current_step
+}
+plan_intact if {
+    is_array(input.plan.ordered_steps)
+    crypto.sha256(json.marshal(input.plan.ordered_steps)) == input.plan.plan_hash
+}
+attempts_valid if {
+    n := input.execution.attempt_count; m := input.execution.max_attempts
+    is_number(n); is_number(m); n == floor(n); m == floor(m); n >= 0; m > 0
+}
+# IDs, approvals, hashes and timestamps come from trusted services / persisted State.
+# This common envelope is checked before either kind of approval is accepted.
+approval_envelope(a) if {
+    nonempty(a.approval_id); nonempty(a.reviewer_id); nonempty(a.reason)
+    nonempty(a.shown_context_ref)
+    a.case_id == input.case_id; a.patient_id == input.patient_id
+    a.decision == "approve"; a.consumed_at == null
+    time.parse_rfc3339_ns(a.granted_at) <= time.now_ns()
+    time.now_ns() < time.parse_rfc3339_ns(a.valid_until)
+}
+policy_review_override_valid if {
+    known_action; nonempty(input.intent); input.intent != "MedicalQuestion"
+    a := input.policy_review_override
+    approval_envelope(a); a.approval_type == "WorkflowDecision"
+    a.reviewer_role in {"clinical_staff", "admin_staff"}
+    a.escalation_kind == "PolicyReview"; a.escalated_from_state == "Planning"
+    a.plan_hash == input.plan.plan_hash; a.current_step == input.plan.current_step
+}
+automation_safety_ok if { input.safety_level in low_risk }
+else if {
+    input.safety_level in {"HighRisk", "CriticalRisk"}
+    policy_review_override_valid
+}
+require_human_review if {
+    input.safety_level in {"HighRisk", "CriticalRisk"}
+    not policy_review_override_valid
+}
+message_evaluated if {
+    input.outgoing_message.evaluated == true
+    is_boolean(input.outgoing_message.medical_content_flag)
+    nonempty(input.outgoing_message.content_hash)
+}
+human_authorized if {
+    a := input.approval; approval_envelope(a)
+    a.approval_type == "ContentApproval"; a.reviewer_role == "clinical_staff"
+    a.execution_id == input.execution_id; a.action == input.proposed_action.action
+    nonempty(a.content_hash); a.content_hash == input.outgoing_message.content_hash
+}
+minimized_for(target) := {f | some f in data.hospital_agent.minimized_fields[target]}
+target_known if {
+    is_array(data.hospital_agent.minimized_fields[input.proposed_action.target_system])
+}
+patient_fields_valid if {
+    fields := input.proposed_action.parameters.patient_fields
+    is_array(fields)
+    every field in fields { nonempty(field) }
+}
+instruction_source_record := object.get(
+    data.hospital_agent.approved_instruction_sources, input.instruction_source.source_id, null)
+instruction_source_approved if {
+    r := instruction_source_record; r != null; r.approved == true
+    nonempty(input.instruction_source.version); r.version == input.instruction_source.version
+    time.parse_rfc3339_ns(r.valid_from) <= time.now_ns()
+    time.now_ns() < time.parse_rfc3339_ns(r.valid_until)
+}
+allow if {
+    input.proposed_action.action in retrieval_actions
+    identity_verified; patient_context_present; automation_safety_ok; action_in_plan
+    count(deny) == 0
+}
+allow if {
+    input.proposed_action.action in patient_facing_actions
+    identity_verified; patient_context_present; automation_safety_ok; action_in_plan
+    message_evaluated; count(deny) == 0
+}
+deny contains "invalid_safety_level" if { not safety_valid }
+deny contains "identity_not_verified" if { not identity_verified }
+deny contains "patient_verification_failed" if { input.patient.verification_status == "failed" }
+deny contains "missing_patient_context" if { not patient_context_present }
+deny contains "action_not_in_plan" if { not action_in_plan }
+deny contains "action_not_supported" if { not known_action }
+deny contains "plan_modified" if { not plan_intact }
+deny contains "invalid_attempt_budget" if { not attempts_valid }
+deny contains "attempts_exhausted" if {
+    attempts_valid; input.execution.attempt_count >= input.execution.max_attempts
+}
+deny contains "message_not_evaluated" if {
+    input.proposed_action.action in patient_facing_actions; not message_evaluated
+}
+deny contains "medical_answer_attempt" if {
+    input.outgoing_message.medical_content_flag == true; not human_authorized
+}
+deny contains "approval_is_workflow_only" if {
+    input.outgoing_message.medical_content_flag == true
+    input.approval.approval_type == "WorkflowDecision"
+}
+deny contains "invalid_patient_fields" if { not patient_fields_valid }
+deny contains "field_not_minimized" if {
+    some field in input.proposed_action.parameters.patient_fields
+    not field in minimized_for(input.proposed_action.target_system)
+}
+deny contains "unknown_target_system" if { known_action; not target_known }
+deny contains "unapproved_instruction_source" if {
+    input.proposed_action.action == "LoadInstructions"; not instruction_source_approved
+}
+deny contains "instruction_source_expired" if {
+    input.proposed_action.action == "LoadInstructions"
+    time.now_ns() >= time.parse_rfc3339_ns(instruction_source_record.valid_until)
+}
+deny contains "instruction_source_not_yet_valid" if {
+    input.proposed_action.action == "LoadInstructions"
+    time.now_ns() < time.parse_rfc3339_ns(instruction_source_record.valid_from)
+}
+# Deny > RequireHumanReview > Allow > default Deny.
+decision := {"result": "Deny", "reasons": deny} if { count(deny) > 0 }
+else := {"result": "RequireHumanReview", "reasons": ["human_decision_required"]} if {
+    require_human_review
+} else := {"result": "Allow", "reasons": []} if { allow }
+else := {"result": "Deny", "reasons": ["no_matching_rule"]}
