@@ -11,7 +11,7 @@ from ..policy.service import InstructionSource
 TEMPLATE = (
     "התור שלך נקבע ל־{date} בשעה {time} (UTC). "
     "המסמכים הנדרשים: {documents} - כולם התקבלו. "
-    "הוראות ההכנה המאושרות ({source_id}, גרסה {version}) מצורפות להודעה זו."
+    "הוראות ההכנה המאושרות ({source_id}, גרסה {version}) זמינות לעיון באזור האישי."
 )
 
 

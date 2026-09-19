@@ -7,9 +7,11 @@ Manager, the Policy Service, the Readiness Check, the Temporal Monitor and the T
 Executor. Each event comes from the component that owns it (§13.2), and the Session
 Service keeps the request text and uploaded documents in the Data Log (§12.3). A document
 is recorded before DOCUMENT_UPLOADED is emitted (the Orchestrator may classify the instant
-it commits), but a rejected upload (DocumentValid fails, e.g. another patient's document,
-D25) is tombstoned right after - it must never sit in the Data Log readable, or be fed to
-the LLM on the next classification; the real Session Service must do the same.
+it commits) and its content_hash rides on the event, so the committed audit row names it:
+the Orchestrator classifies only uploads whose hash is on a DOCUMENT_UPLOADED row that
+moved the case to Classifying. A rejected upload (DocumentValid fails, e.g. another
+patient's document, D25) is also tombstoned right after, as defense in depth - it must
+never sit in the Data Log readable. The real Session Service must do all three.
 
 Used by `python -m obs.golden` and, through tests/driver.py, by the tests. Sub-project 5
 replaces it with the real Session Service and Human Review Service.
@@ -74,11 +76,12 @@ class ScriptedAgents:
 
     def upload(self, document_id: str, content: str = DOCUMENT_TEXT, **document) -> TransitionResult:
         entry = self._keep(data_log.DataKind.UPLOADED_DOCUMENT, content)
-        payload = {"document": {"document_id": document_id, "format": "pdf", "patient_id": self.patient_id, **document}}
+        payload = {"document": {"document_id": document_id, "format": "pdf", "patient_id": self.patient_id, **document},
+                   "content_hash": entry.content_hash}
         result = self._emit(Event.DOCUMENT_UPLOADED, payload, Component.SESSION_SERVICE)
         if not result.committed or result.state_after is not State.CLASSIFYING:
             # §12.3 privacy: a rejected upload (guard_failed self-loop, or Blocked) must not
-            # stay readable - _classify() already skips a tombstoned (content None) entry.
+            # stay readable. _classify() never reads it anyway (its hash is on no accepted row).
             with self.engine.begin() as conn:
                 data_log.tombstone(conn, entry.entry_id, self.sm.clock())
         return result

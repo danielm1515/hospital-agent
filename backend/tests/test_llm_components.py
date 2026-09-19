@@ -1,6 +1,7 @@
 """Classifier, Planner, Response Evaluator and the status template (LLM design §4, §5). No network."""
 import os
 import threading
+from concurrent.futures.process import BrokenProcessPool
 from datetime import UTC, datetime
 
 import pytest
@@ -140,6 +141,26 @@ def test_the_evaluator_fails_after_three_unusable_answers():
         evaluator.close()
 
 
+def test_the_evaluator_replaces_a_dead_worker():
+    evaluator = ResponseEvaluator(FakeProvider())
+    try:
+        dead_pid = evaluator._process().submit(os.getpid).result()
+        with pytest.raises(BrokenProcessPool):
+            evaluator._process().submit(os._exit, 1).result()  # the worker dies; the pool is broken
+        assert evaluator.evaluate("You should stop taking your medication") is True  # a fresh process answers
+        assert evaluator._process().submit(os.getpid).result() != dead_pid
+    finally:
+        evaluator.close()
+
+
+def test_the_evaluator_never_starts_a_process_after_close():
+    evaluator = ResponseEvaluator(FakeProvider())
+    evaluator.close()
+    with pytest.raises(LLMFailed, match="evaluator_closed"):
+        evaluator.evaluate("message")
+    assert evaluator._pool is None
+
+
 # --- the status template ------------------------------------------------------------------------
 
 def _case(**changes) -> CaseRecord:
@@ -154,7 +175,7 @@ def test_status_message_uses_only_state_facts():
     text = status_message(_case(), InstructionSource("INSTR-PREP-COLONOSCOPY", "3"))
     assert text == ("התור שלך נקבע ל־23/09/2026 בשעה 08:30 (UTC). "
                     "המסמכים הנדרשים: referral, blood_test - כולם התקבלו. "
-                    "הוראות ההכנה המאושרות (INSTR-PREP-COLONOSCOPY, גרסה 3) מצורפות להודעה זו.")
+                    "הוראות ההכנה המאושרות (INSTR-PREP-COLONOSCOPY, גרסה 3) זמינות לעיון באזור האישי.")
 
 
 def test_status_message_refuses_missing_facts():

@@ -4,7 +4,8 @@ Every request reads the cases/audit_log rows from Postgres - there is no in-memo
 State, so the answers are the same before and after a restart. When the app owns its
 engine (a real server, not a test), startup first recovers interrupted executions, then
 starts the SLA Worker (Execution design §5) and - when the Model Selector finds an OpenAI
-key - the Agent Orchestrator (LLM design §3, §5); /health then reports whether it runs.
+key - the Agent Orchestrator (LLM design §3, §5); /health then reports whether it runs,
+and app.state.orchestrator holds it (None when not started) so a submit can wake() it.
 """
 from __future__ import annotations
 
@@ -38,6 +39,7 @@ def create_app(engine: Engine | None = None) -> FastAPI:
         owned = engine is None
         app.state.engine = make_engine() if owned else engine
         app.state.orchestrator_status = None  # reported by /health only for a real server
+        app.state.orchestrator = None  # the running Orchestrator, for wake() (sub-project 5)
         stops, orchestrator = [], None
         if owned:
             provider = select_provider()
@@ -46,7 +48,7 @@ def create_app(engine: Engine | None = None) -> FastAPI:
             if provider is None:
                 app.state.orchestrator_status = "disabled: OPENAI_API_KEY is not set"
             else:  # the demo's external systems are mocks (spec §18)
-                orchestrator = Orchestrator(sm, provider, MockGateway())
+                orchestrator = app.state.orchestrator = Orchestrator(sm, provider, MockGateway())
                 stops.append(orchestrator.run_in_background(orchestrator_interval_seconds()))
                 app.state.orchestrator_status = "running"
         yield

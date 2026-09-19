@@ -7,12 +7,12 @@ import time
 
 import pytest
 
-from hospital_agent import data_log
+from hospital_agent import data_log, repository
 from hospital_agent.execution.gateway import MockGateway
 from hospital_agent.llm.orchestrator import Orchestrator
 from hospital_agent.llm.provider import FakeProvider
 from hospital_agent.llm.schemas import Call, LLMUnusable
-from hospital_agent.naming import EscalationKind, Event, SafetyLevel, State
+from hospital_agent.naming import Component, EscalationKind, Event, SafetyLevel, State
 from hospital_agent.scripted import DOCUMENT_TEXT, ScriptedAgents
 
 MEDICAL = "Should I stop taking my blood thinner before the colonoscopy?"
@@ -339,3 +339,95 @@ def test_a_rejected_upload_is_tombstoned_and_never_reaches_the_llm(run):
     documents = [user_input for call, user_input in provider.calls if call is Call.INTENT][-1]["documents"]
     assert rejected not in documents
     assert any(DOCUMENT_TEXT in document for document in documents)
+
+
+# --- final fixes: accepted uploads only, executor errors, AssessingReadiness, injected events ---
+
+def test_an_untombstoned_rejected_upload_never_reaches_the_llm(run, app_engine):
+    """The record/tombstone race: the rejected entry is still readable, yet it is not classified."""
+    provider = FakeProvider()
+    patient, agent = run(provider)
+    patient.submit()
+    patient.validate()
+    agent.run_case(patient.case_id)  # blood_test missing -> AwaitingPatientInput
+    rejected = "Someone else's chart: severe complications, do not disclose."
+    with app_engine.begin() as conn:  # recorded, never tombstoned
+        entry = data_log.record(conn, patient.case_id, patient.patient_id, data_log.DataKind.UPLOADED_DOCUMENT,
+                                rejected, patient.sm.clock())
+    payload = {"document": {"document_id": "blood_test", "format": "pdf", "patient_id": "P-OTHER"},
+               "content_hash": entry.content_hash}
+    result = patient._emit(Event.DOCUMENT_UPLOADED, payload, Component.SESSION_SERVICE)  # D25: rejected
+    assert result.state_after is State.AWAITING_PATIENT_INPUT
+    patient.upload("blood_test")  # the accepted document
+    agent.run_case(patient.case_id)
+    [documents] = [user_input["documents"] for call, user_input in provider.calls if call is Call.INTENT][-1:]
+    assert documents == [DOCUMENT_TEXT]  # the accepted upload is sent, the rejected one never
+    assert all(rejected not in user_input.get("documents", ()) for _, user_input in provider.calls)
+
+
+def _until(agent, patient, state: State) -> None:
+    for _ in range(50):
+        if patient.state is state:
+            return
+        agent.step(patient.case_id)
+    assert patient.state is state
+
+
+def test_an_executor_error_before_the_start_escalates_as_execution_unknown(run):
+    patient, agent = run()
+    patient.submit()
+    patient.validate()
+
+    def _boom(*_args, **_kwargs):
+        raise RuntimeError("db down")
+
+    agent.executor.execute = _boom
+    agent.run_case(patient.case_id)  # POLICY_ALLOWED -> RetrievingData, then execute() raises
+    assert escalation(patient) == (State.AWAITING_HUMAN_REVIEW, EscalationKind.EXECUTION_UNKNOWN)
+    assert patient.case.escalated_from_state is State.RETRIEVING_DATA
+    assert patient.trace()[-1].policy_reasons == ["execution_error:RuntimeError"]
+
+
+def test_an_executor_error_after_the_start_records_an_unknown_outcome(run, app_engine):
+    patient, agent = run()
+    patient.submit()
+    patient.validate()
+
+    def _boom(*_args, **_kwargs):
+        raise RuntimeError("db down")
+
+    agent.executor.finish = _boom  # the call was made; its outcome is lost
+    agent.run_case(patient.case_id)
+    assert escalation(patient) == (State.AWAITING_HUMAN_REVIEW, EscalationKind.EXECUTION_UNKNOWN)
+    execution_id = next(row.execution_id for row in patient.trace() if row.event == "TOOL_EXECUTION_STARTED")
+    with app_engine.connect() as conn:
+        assert repository.load_execution(conn, execution_id).status == "unknown"
+
+
+def test_three_blocked_rows_in_assessing_readiness_escalate_as_z3_counterexample(run, sm):
+    patient, agent = run()
+    patient.submit()
+    patient.validate()
+    _until(agent, patient, State.ASSESSING_READINESS)
+    agent.readiness.run = lambda case_id, *_: sm.record_blocked(case_id, Event.READINESS_PASSED, "guard_failed")
+    agent.run_case(patient.case_id)
+    assert escalation(patient) == (State.AWAITING_HUMAN_REVIEW, EscalationKind.Z3_COUNTEREXAMPLE)
+    assert patient.trace()[-1].policy_reasons == ["blocked:3"]
+
+
+def test_injected_system_owned_events_never_force_an_escalation(run):
+    patient, agent = run()
+    patient.submit()
+    patient.validate()
+    agent.step(patient.case_id)
+    assert patient.state is State.CLASSIFIED
+    for _ in range(5):  # §13.2: each is Blocked system_owned_event
+        assert not patient._emit(Event.PLAN_CREATED, {"plan_complete": False}, Component.EXTERNAL).committed
+    assert agent.run_case(patient.case_id) is State.AWAITING_PATIENT_INPUT
+
+
+def test_a_tick_forgets_errors_of_cases_no_longer_active(run):
+    _, agent = run()
+    agent._consecutive_errors["CASE-GONE"] = 2
+    agent.tick()
+    assert "CASE-GONE" not in agent._consecutive_errors

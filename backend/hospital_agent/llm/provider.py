@@ -147,7 +147,9 @@ def _rule(call: Call, user_input: Mapping[str, Any]) -> dict[str, Any]:
 
 class FakeProvider:
     """Deterministic answers from _rule(); `script` overrides them per call, in order - each
-    item is an answer dict or an exception to raise (e.g. LLMUnusable)."""
+    item is an answer dict or an exception to raise (e.g. LLMUnusable). A provider handed to
+    the Response Evaluator's process is pickled on every submit, so there its script does not
+    advance across calls (each call sees the original script) and `calls` stays empty here."""
 
     model = "fake"
 

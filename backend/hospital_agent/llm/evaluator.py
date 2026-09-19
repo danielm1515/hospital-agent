@@ -5,11 +5,17 @@
 only the message text - never the Planner's prompt, the request or the State (LLM design
 decision 6). evaluate() returns medical_content_flag; only this module's caller may then
 mark the message evaluated=True.
+
+A worker process that dies leaves its pool broken for good (BrokenProcessPool): that pool is
+dropped and the attempt counts as unusable, so the next attempt gets a fresh process and
+three in a row still fail closed as LLMFailed (§14). After close() no process is ever
+created again - a tick still running then gets LLMFailed("evaluator_closed").
 """
 from __future__ import annotations
 
 import multiprocessing
 from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures.process import BrokenProcessPool
 
 from .provider import MAX_ATTEMPTS, LLMFailed, LLMProvider
 from .schemas import EVALUATION_SCHEMA, Call, LLMUnusable
@@ -24,8 +30,11 @@ class ResponseEvaluator:
     def __init__(self, provider: LLMProvider) -> None:
         self.provider = provider
         self._pool: ProcessPoolExecutor | None = None
+        self._closed = False
 
     def _process(self) -> ProcessPoolExecutor:
+        if self._closed:  # never leak a new process after close()
+            raise LLMFailed("evaluator_closed")
         if self._pool is None:  # spawn: a clean interpreter, nothing inherited from the caller
             self._pool = ProcessPoolExecutor(max_workers=1, mp_context=multiprocessing.get_context("spawn"))
         return self._pool
@@ -37,9 +46,18 @@ class ResponseEvaluator:
                 return self._process().submit(_evaluate_once, self.provider, message).result()
             except LLMUnusable:
                 continue
+            except BrokenProcessPool:  # the worker died: replace it on the next attempt
+                self._discard_pool()
+                continue
         raise LLMFailed(Call.EVALUATOR.value)
 
+    def _discard_pool(self) -> None:
+        if self._pool is not None:
+            self._pool.shutdown(wait=False)
+            self._pool = None
+
     def close(self) -> None:
+        self._closed = True
         if self._pool is not None:
             self._pool.shutdown()
             self._pool = None

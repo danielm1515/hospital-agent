@@ -9,17 +9,25 @@ thing that State calls for, so a restart simply carries on (the State is in Post
     Planning            after DATA_RETRIEVED: STEP_ADVANCED; after ACTION_PROPOSED: the Policy
                         Service decides and the Tool Executor runs an allowed call; otherwise
                         the Planner proposes the next step (ACTION_PROPOSED)
-    AssessingReadiness  the Readiness Check (Z3)
+    AssessingReadiness  the Readiness Check (Z3); stuck there, it escalates as Z3Counterexample
+                        - the only non-temporal kind on that State's §3 allowlist
     Ready               DELIVERY_PLANNED, or DeliveryStepMissing
 
 Every other State waits for someone else (the patient, a reviewer, the SLA Worker) or is
 final. Failures fail closed (§14): three unusable LLM answers in a row, or three blocked
 events in a row in one State, escalate with that State's failure kind; three InPlan
-rejections of the same step are exactly the latter (§3.1 InPlan). tick() also fails
+rejections of the same step are exactly the latter (§3.1 InPlan). A Blocked row for an
+injected system-owned event (§13.2) never counts - outside input cannot force an
+escalation. An exception from the Tool Executor after POLICY_ALLOWED escalates at once as
+ExecutionUnknown, never leaving the case in RetrievingData / Delivering. tick() also fails
 closed on its own errors: a case whose step raises an unexpected exception three ticks
 in a row (counted in memory per case, reset on a tick that does not raise) escalates the
 same way, and neither that nor a failure listing the active cases is ever allowed to
 stop the other cases or kill the background thread.
+
+Only uploads the case accepted are classified: an uploaded document reaches the LLM only if
+its content_hash is on a committed DOCUMENT_UPLOADED row that moved the case to Classifying
+(D25, §12.3) - a rejected upload is never read, tombstoned or not.
 
 Only the Tool Executor calls an external system; LLM calls change nothing outside, so a
 step interrupted by a crash is simply done again.
@@ -38,7 +46,7 @@ from ..execution.verify import EXECUTING_STATES
 from ..naming import Action, Component, EscalationKind, Event, State
 from ..policy.readiness import ReadinessCheck
 from ..policy.service import InstructionSource, OutgoingMessage, PolicyRequest, PolicyService, ProposedAction
-from ..state_manager import StateManager, TransitionResult
+from ..state_manager import ExecutionOutcome, StateManager, TransitionResult
 from .classifier import Classifier, verdict
 from .evaluator import ResponseEvaluator
 from .message import status_message
@@ -59,6 +67,7 @@ FAILURE: dict[State, tuple[EscalationKind, Component]] = {
     State.CLASSIFYING: (EscalationKind.CLASSIFICATION_FAILED, Component.CLASSIFIER_SERVICE),
     State.CLASSIFIED: (EscalationKind.PLANNING_FAILED, Component.PLANNER_SERVICE),
     State.PLANNING: (EscalationKind.PLANNING_FAILED, Component.PLANNER_SERVICE),
+    State.ASSESSING_READINESS: (EscalationKind.Z3_COUNTEREXAMPLE, Component.READINESS_CHECK),
     State.READY: (EscalationKind.DELIVERY_STEP_MISSING, Component.AGENT_ORCHESTRATOR),
 }
 
@@ -130,6 +139,9 @@ class Orchestrator:
         except Exception as exc:
             logger.error("orchestrator tick failed: %s", type(exc).__name__)
             return
+        for case_id in list(self._consecutive_errors):  # a case no longer active starts afresh
+            if case_id not in case_ids:
+                self._consecutive_errors.pop(case_id, None)
         for case_id in case_ids:
             try:
                 self.run_case(case_id)
@@ -185,8 +197,9 @@ class Orchestrator:
         case = self.sm.load(case_id)
         with self.sm.engine.connect() as conn:
             requests = [e.content for e in data_log.entries(conn, case_id, data_log.DataKind.REQUEST_TEXT) if e.content]
+            accepted = _accepted_uploads(repository.load_trace(conn, case_id))
             documents = [e.content for e in data_log.entries(conn, case_id, data_log.DataKind.UPLOADED_DOCUMENT)
-                         if e.content]
+                         if e.content and e.content_hash in accepted]
         if not requests:
             return self._fail(case_id, case.state, "request_text_unavailable")
         classification = self.classifier.classify(requests[-1], documents)
@@ -226,8 +239,31 @@ class Orchestrator:
         )
         decided = self.policy.apply(self.sm, case_id, request)
         if decided.committed and decided.state_after in EXECUTING_STATES:
-            return self.executor.execute(case_id, request.execution_id)
+            try:
+                return self.executor.execute(case_id, request.execution_id)
+            except Exception as exc:  # §14: never leave the case in RetrievingData / Delivering
+                return self._fail_execution(case_id, request.execution_id, exc)
         return decided
+
+    def _fail_execution(self, case_id: str, execution_id: str, exc: Exception) -> TransitionResult | None:
+        """An infrastructure error inside the Tool Executor: escalate as ExecutionUnknown if the
+        case is still mid-call, with the execution's outcome 'unknown' if it had started (an
+        'intent' row never called anything). Guarded; logs the exception type only (§12.3)."""
+        logger.error("tool execution failed: %s", type(exc).__name__)
+        try:
+            case = self.sm.load(case_id)
+            if case.state not in EXECUTING_STATES:
+                return None
+            with self.sm.engine.connect() as conn:
+                execution = repository.load_execution(conn, execution_id)
+            outcome = (ExecutionOutcome(execution_id, "unknown", "orchestrator_error")
+                       if execution is not None and execution.status == "started" else None)
+            return self.sm.escalation.signal(case_id, EscalationKind.EXECUTION_UNKNOWN, case.state,
+                                             Component.TOOL_EXECUTOR, reasons=[f"execution_error:{type(exc).__name__}"],
+                                             execution_outcome=outcome)
+        except Exception as inner:
+            logger.error("tool execution escalation failed: %s", type(inner).__name__)
+            return None
 
     def _evaluated_message(self, case_id: str) -> OutgoingMessage:
         """The template message, kept in the Data Log and classified by the Response Evaluator."""
@@ -270,10 +306,19 @@ def _last_transition_event(trace: list[repository.AuditEntry]) -> str | None:
 
 
 def _blocked_since_last_transition(trace: list[repository.AuditEntry]) -> int:
+    """Blocked rows since the last transition, not counting injected system-owned events
+    (§13.2) - otherwise outside input could force an escalation."""
     count = 0
     for row in reversed(trace):
         if row.record_type == "Transition":
             break
-        if row.record_type == "Blocked":
+        if row.record_type == "Blocked" and "system_owned_event" not in row.policy_reasons:
             count += 1
     return count
+
+
+def _accepted_uploads(trace: list[repository.AuditEntry]) -> set[str]:
+    """content_hash of every upload the case accepted: a committed DOCUMENT_UPLOADED into Classifying."""
+    return {row.content_hash for row in trace
+            if row.record_type == "Transition" and row.event == Event.DOCUMENT_UPLOADED.value
+            and row.state_after == State.CLASSIFYING.value and row.content_hash}
