@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project status
 
-Sub-projects 1 (Core), 2 (Policy), 3 (Execution), 4 (LLM), 5 (Human Review + the authenticated API) and 6 (React UI) are implemented in `backend/` and `frontend/` (design and plan under `docs/superpowers/`). The authoritative input is the **binding demo spec** `Hospital_Agent_Clean.docx` (Hebrew, final-project scope). A Markdown copy lives in `docs/spec/`, one file per spec section: **spec §N → `docs/spec/NN-*.md`** (index: `docs/spec/README.md`). The docx is the source of truth. `docs/spec/` is generated, so don't hand-edit it. After the docx changes, regenerate it:
+Sub-projects 1–7 are implemented and merged into `main`: 1 (Core), 2 (Policy), 3 (Execution), 4 (LLM), 5 (Human Review + the authenticated API) and 7 (D33: the Response Evaluator's recall measurement, `backend/eval/`) in `backend/`; 6 (React UI, `frontend/`) served by the compose `frontend` service on `http://localhost:5173` (design and plan under `docs/superpowers/`). The authoritative input is the **binding demo spec** `Hospital_Agent_Clean.docx` (Hebrew, final-project scope). A Markdown copy lives in `docs/spec/`, one file per spec section: **spec §N → `docs/spec/NN-*.md`** (index: `docs/spec/README.md`). The docx is the source of truth. `docs/spec/` is generated, so don't hand-edit it. After the docx changes, regenerate it:
 
 ```bash
 python scripts/spec_to_md.py
@@ -24,8 +24,7 @@ The user wants the project finished without being asked questions. Until they sa
 - **Keep the process, drop the approval waits.** Each sub-project still gets a design doc, a prototype-validated plan, subagent-driven execution with task reviews and a final whole-branch review. The user's approval of each step is given in advance; merge a sub-project to `main` once its final review is clean and the full suite passes.
 - **Parallel agents are welcome** where tasks are independent (isolated worktrees, each with its own compose project and database: `docker compose -p <name> -f docker-compose.yml -f <override without host ports>`). Never disturb the user's running stack on 54322 / 8000 except to restart it after a merge.
 - **Never** read, print or commit the OpenAI key; never push to a remote; never delete user data.
-- Remaining work:
-  1. **Sub-project 7 — D33**: the Response Evaluator's labelled evaluation set and recall report (§6.5).
+- Remaining work: none within the demo's own scope (sub-projects 1-7 are all implemented and merged - see *Verification targets* and *What is left*). What is left is only what the spec itself defers: the companion document's (המסמך הנלווה) implementation conditions, not in the repo, and anything beyond the §0 demo scope, which the spec calls the vision document (אפיון מלא).
 
 ## Commands
 
@@ -83,6 +82,16 @@ The LLM needs `OPENAI_API_KEY` (and optionally `OPENAI_MODEL`, default `gpt-5.6-
 docker compose run --rm -e RUN_LIVE_LLM=1 backend pytest tests/test_live_llm.py -v
 ```
 
+D33 (§16, §6.5): the Response Evaluator's recall over the labelled set `backend/eval/messages.jsonl` (48 messages, 24 medical / 24 operational, mostly Hebrew). The default provider is `FakeProvider` (no network); `--live` needs `RUN_LIVE_LLM=1` and `OPENAI_API_KEY`, same gate as above. Both write `docs/d33-report.md` by default - the container's `WORKDIR` is `backend/`, so a relative `--out` resolves under `backend/`, not the repo root; leave `--out` unset unless passing an absolute path.
+
+```bash
+docker compose run --rm backend python -m eval.d33
+```
+
+```bash
+docker compose run --rm -e RUN_LIVE_LLM=1 backend python -m eval.d33 --live
+```
+
 ## Working in the backend (`backend/hospital_agent/`)
 
 - `fsm.py` is the §3 table as data. Each row keeps its Guard cell verbatim in `spec_guard`, and `tests/test_fsm.py` compares all 41 rows with `docs/spec/03-transitions-guards.md`. Change the spec first, then the row.
@@ -108,12 +117,14 @@ docker compose run --rm -e RUN_LIVE_LLM=1 backend pytest tests/test_live_llm.py 
 - **Components mirror `design/ramon-ui/components.html`:** same class names, same markup shape, same tokens (surfaces, lines, radii, `.state` mono) for the pieces the design doesn't show (table, StatusPill, timeline, top nav) - see design decision 6.
 - **Tests are Vitest + Testing Library and must not hit the network.** `src/test/setup.ts` resets `sessionStorage`/`localStorage` and mocks `matchMedia` before each test; every page/component test stubs `fetch` (or the API client) instead of calling the real backend, so `npm test` runs standalone, with no backend or database up.
 
-## Hand-off to sub-project 7 (D33)
+## What is left
 
-- **What D33 needs (§6.5, §16):** a labelled evaluation set of outgoing messages - some genuinely medical, some not - run through the Response Evaluator, plus a recall report measuring its false-negative rate against a declared threshold. This is empirical, not a proof: INV-11 says the classifier itself "is not formally verified" (§6.5), and D33 exists to bound that gap, not close it.
-- **Where the pieces live:** the Response Evaluator is `backend/hospital_agent/llm/evaluator.py` (`ResponseEvaluator.evaluate`) - one LLM call, its own process, the message text only, returning `medical_content_flag`. `FakeProvider` (`backend/hospital_agent/llm/provider.py`) is the deterministic stand-in used by the regular suite and `obs.golden`; it is not a classifier to evaluate, only a safe substitute for the real model in tests.
-- **The regular suite must stay offline.** No test in `backend/tests/` may call the real model; D33's evaluation run is a separate script/test, gated like `tests/test_live_llm.py`, so `docker compose run --rm backend pytest` keeps working with no `OPENAI_API_KEY` and no network.
-- **The live model is reachable only with `RUN_LIVE_LLM=1`**, the same gate `tests/test_live_llm.py` uses (see Commands above): `docker compose run --rm -e RUN_LIVE_LLM=1 backend pytest tests/test_live_llm.py -v`. D33's own run should follow the same pattern rather than adding a second, ungated path to the real model.
+Sub-project 7 (D33) closes the last item this repo's design docs tracked. Sub-projects 1-7, including the React UI, are implemented and merged into `main`; nothing here is pending integration:
+
+- **Sub-project 6 (React UI)** (`frontend/`: patient screen, staff screen, §1, D24) is merged into `main` and served by the compose `frontend` service on `http://localhost:5173`.
+- **The golden traces (§15)** are produced by the running system, not hand-derived: `python -m obs.golden` prints `35`, `4`, `54` audit rows for the three §0 scenarios, matching the spec's expected counts.
+- **The demo runs end to end**, on the same code and the same model, through exactly the three scenarios of §0 (normal flow with a missing document, medical escalation, technical failure with bounded retry) - only the patient's input and the mocked external responses change between them.
+- **Anything beyond §0 is the "full characterization" (אפיון מלא) vision document** (see *Project status* above), not this demo - it is out of scope, not a gap.
 
 ## What the system is
 
@@ -212,6 +223,7 @@ The declared event-name exceptions are `HUMAN_RESOLVED_CASE` and `TOOL_TRANSIENT
   - Prolog queries (§10);
   - Datalog queries (§11).
 - **Demo stubs:** the IdP is a fixed user list (§18.3). External systems (appointments, documents, instructions, patient channel) are mocks. All three scenarios run on the same code and model, and only patient input and mock responses change.
+- **D33 (§16, §6.5):** the Response Evaluator's recall over `backend/eval/messages.jsonl` (48 messages, 24 medical / 24 operational, mostly Hebrew), run with `python -m eval.d33` (`--live` for the real model). Declared threshold: `D33_RECALL_THRESHOLD = 0.95`. This is measured, never proven (§6.5): a false negative here is medical content that would have reached the patient without a `ContentApproval`. Measured: `FakeProvider` (offline, not compared to the threshold - its keyword rule is English-only against a mostly-Hebrew set) **0.1667 (4/24)**; live `gpt-5.6-luna` (`docs/d33-report.md`) **1.0000 (24/24), meets the threshold**, with 2 false positives among the 24 operational messages (a delay only, §6.5) and 0 unusable answers.
 
 ## Tech stack (decided by the user)
 
