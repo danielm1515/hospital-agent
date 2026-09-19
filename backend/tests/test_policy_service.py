@@ -126,6 +126,23 @@ def test_prolog_failure_fails_closed(app_engine, monkeypatch):
     assert (decision.result, decision.reasons) == ("Deny", ("prolog:policy_engine_unavailable",))
 
 
+def test_m2_opa_exception_fails_closed(app_engine):
+    def broken(_):
+        raise RuntimeError("opa crashed")
+
+    decision = PolicyService(app_engine, opa=broken).decide(planned(), request())
+    assert (decision.result, decision.reasons) == ("Deny", ("policy_engine_unavailable",))
+
+
+def test_m2_override_lookup_exception_fails_closed(app_engine, monkeypatch):
+    def broken(*args, **kwargs):
+        raise RuntimeError("db crashed")
+
+    monkeypatch.setattr("hospital_agent.policy.service.repository.open_policy_review_override", broken)
+    decision = PolicyService(app_engine).decide(planned(), request())
+    assert (decision.result, decision.reasons) == ("Deny", ("policy_engine_unavailable",))
+
+
 def test_real_engines_allow_the_spec_8_example(app_engine):
     decision = PolicyService(app_engine).decide(planned(), request(fields=("patient_id", "document_id")))
     assert (decision.result, decision.reasons) == ("Allow", ())

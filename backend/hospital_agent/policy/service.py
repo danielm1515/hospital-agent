@@ -189,22 +189,28 @@ class PolicyService:
 
     def decide(self, case: CaseRecord, request: PolicyRequest) -> PolicyDecision:
         now = self.clock()
-        with self.engine.connect() as conn:
-            override = repository.open_policy_review_override(conn, case.case_id, case.plan_hash, case.current_step)
-            # F2: the caller supplies only an id - the Policy Service loads the trusted record
-            # itself. An id that is not on the approvals table behaves exactly like no approval.
-            approval = repository.load_approval(conn, request.approval_id) if request.approval_id else None
         message = request.outgoing_message
-        approval_ok = message is not None and content_approval_valid(
-            approval,
-            case_id=case.case_id,
-            patient_id=case.patient_id,
-            execution_id=request.execution_id,
-            action=request.proposed_action.action,
-            content_hash=message.content_hash,
-            now=now,
-        )
-        opa = self.opa(build_opa_input(case, request, override, approval=approval))
+        try:
+            with self.engine.connect() as conn:
+                override = repository.open_policy_review_override(
+                    conn, case.case_id, case.plan_hash, case.current_step
+                )
+                # F2: the caller supplies only an id - the Policy Service loads the trusted
+                # record itself. An id that is not on the approvals table behaves exactly like
+                # no approval.
+                approval = repository.load_approval(conn, request.approval_id) if request.approval_id else None
+            approval_ok = message is not None and content_approval_valid(
+                approval,
+                case_id=case.case_id,
+                patient_id=case.patient_id,
+                execution_id=request.execution_id,
+                action=request.proposed_action.action,
+                content_hash=message.content_hash,
+                now=now,
+            )
+            opa = self.opa(build_opa_input(case, request, override, approval=approval))
+        except Exception:  # noqa: BLE001 - M2: any failure loading input for OPA fails closed (§14)
+            override, approval_ok, opa = None, False, opa_runner.UNAVAILABLE
         try:
             prolog_allowed, explanation = prolog_verdict(case, request, approval_ok)
         except Exception:  # noqa: BLE001 - any engine failure fails closed (§14)
