@@ -197,7 +197,7 @@ class Orchestrator:
         case = self.sm.load(case_id)
         with self.sm.engine.connect() as conn:
             requests = [e.content for e in data_log.entries(conn, case_id, data_log.DataKind.REQUEST_TEXT) if e.content]
-            accepted = _accepted_uploads(repository.load_trace(conn, case_id))
+            accepted = data_log.accepted_uploads(repository.load_trace(conn, case_id))
             documents = [e.content for e in data_log.entries(conn, case_id, data_log.DataKind.UPLOADED_DOCUMENT)
                          if e.content and e.content_hash in accepted]
         if not requests:
@@ -315,10 +315,3 @@ def _blocked_since_last_transition(trace: list[repository.AuditEntry]) -> int:
         if row.record_type == "Blocked" and "system_owned_event" not in row.policy_reasons:
             count += 1
     return count
-
-
-def _accepted_uploads(trace: list[repository.AuditEntry]) -> set[str]:
-    """content_hash of every upload the case accepted: a committed DOCUMENT_UPLOADED into Classifying."""
-    return {row.content_hash for row in trace
-            if row.record_type == "Transition" and row.event == Event.DOCUMENT_UPLOADED.value
-            and row.state_after == State.CLASSIFYING.value and row.content_hash}
