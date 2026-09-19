@@ -1,0 +1,208 @@
+import { act, render, screen, waitFor, within } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
+import { MemoryRouter, Route, Routes } from 'react-router-dom'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import * as api from '../../api/client'
+import { ApiError } from '../../api/client'
+import type { PatientView } from '../../api/types'
+import { RequestDetail } from './RequestDetail'
+import { patientView } from './fixtures'
+import { authValue, PATIENT_USER, TestAuthProvider } from '../../test/helpers'
+
+vi.mock('../../api/client', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../api/client')>()
+  return { ...actual, getRequest: vi.fn(), uploadDocument: vi.fn() }
+})
+
+const getRequest = vi.mocked(api.getRequest)
+const uploadDocument = vi.mocked(api.uploadDocument)
+
+function renderDetail(caseId = 'CASE-1') {
+  return render(
+    <MemoryRouter initialEntries={[`/patient/requests/${caseId}`]}>
+      <TestAuthProvider value={authValue({ user: PATIENT_USER })}>
+        <Routes>
+          <Route path="/patient" element={<h1>הפניות שלי</h1>} />
+          <Route path="/patient/requests/:caseId" element={<RequestDetail />} />
+        </Routes>
+      </TestAuthProvider>
+    </MemoryRouter>,
+  )
+}
+
+const needsDocument = (overrides: Partial<PatientView> = {}) =>
+  patientView({
+    case_id: 'CASE-1',
+    status: 'needs_document',
+    missing_document_ids: ['blood_test', 'referral'],
+    missing_document_request_template_id: 'missing-document-v1',
+    ...overrides,
+  })
+
+beforeEach(() => {
+  getRequest.mockReset()
+  uploadDocument.mockReset()
+})
+
+describe('RequestDetail: needs_document (D24)', () => {
+  it('renders the missing-document-v1 request and every missing id', async () => {
+    getRequest.mockResolvedValue(needsDocument())
+    renderDetail()
+
+    expect(await screen.findByText('כדי להשלים את ההכנה לתור חסרים המסמכים הבאים:')).toBeInTheDocument()
+    const alert = screen.getByRole('status')
+    expect(within(alert).getByText('blood_test')).toBeInTheDocument()
+    expect(within(alert).getByText('referral')).toBeInTheDocument()
+    expect(screen.getByRole('region', { name: 'העלאת מסמך blood_test' })).toBeInTheDocument()
+    expect(screen.getByRole('region', { name: 'העלאת מסמך referral' })).toBeInTheDocument()
+  })
+
+  it('uploads pasted content as {document_id, format, content} and shows the case as it now stands', async () => {
+    const user = userEvent.setup()
+    getRequest.mockResolvedValue(needsDocument())
+    uploadDocument.mockResolvedValue(patientView({ case_id: 'CASE-1', status: 'in_progress' }))
+    const { container } = renderDetail()
+
+    const form = await screen.findByRole('region', { name: 'העלאת מסמך blood_test' })
+    await user.type(within(form).getByLabelText('תוכן המסמך'), '  תוצאות בדיקת דם  ')
+    await user.selectOptions(within(form).getByLabelText('סוג הקובץ'), 'jpg')
+    await user.click(within(form).getByRole('button', { name: 'שליחת המסמך' }))
+
+    expect(uploadDocument).toHaveBeenCalledWith('CASE-1', {
+      document_id: 'blood_test',
+      format: 'jpg',
+      content: 'תוצאות בדיקת דם',
+    })
+    await waitFor(() =>
+      expect(screen.queryByText('כדי להשלים את ההכנה לתור חסרים המסמכים הבאים:')).not.toBeInTheDocument(),
+    )
+    expect(container.querySelector('.req-head .pill')).toHaveTextContent('בטיפול')
+  })
+
+  it('reads a chosen file as text and sends it', async () => {
+    const user = userEvent.setup()
+    getRequest.mockResolvedValue(needsDocument({ missing_document_ids: ['blood_test'] }))
+    uploadDocument.mockResolvedValue(needsDocument({ missing_document_ids: ['blood_test'] }))
+    renderDetail()
+
+    const form = await screen.findByRole('region', { name: 'העלאת מסמך blood_test' })
+    const file = new File(['תוצאות תקינות'], 'results.png', { type: 'image/png' })
+    await user.upload(within(form).getByLabelText('בחירת קובץ'), file)
+
+    await waitFor(() => expect(within(form).getByLabelText('תוכן המסמך')).toHaveValue('תוצאות תקינות'))
+    expect(within(form).getByLabelText('סוג הקובץ')).toHaveValue('png')
+
+    await user.click(within(form).getByRole('button', { name: 'שליחת המסמך' }))
+    expect(uploadDocument).toHaveBeenCalledWith('CASE-1', {
+      document_id: 'blood_test',
+      format: 'png',
+      content: 'תוצאות תקינות',
+    })
+  })
+
+  it('does not send an empty document', async () => {
+    const user = userEvent.setup()
+    getRequest.mockResolvedValue(needsDocument({ missing_document_ids: ['blood_test'] }))
+    renderDetail()
+
+    const form = await screen.findByRole('region', { name: 'העלאת מסמך blood_test' })
+    await user.click(within(form).getByRole('button', { name: 'שליחת המסמך' }))
+
+    expect(uploadDocument).not.toHaveBeenCalled()
+    expect(within(form).getByRole('alert')).toHaveTextContent('בחרו קובץ או הדביקו את תוכן המסמך.')
+  })
+
+  it('shows no request at all for an unknown template id (fails closed)', async () => {
+    getRequest.mockResolvedValue(needsDocument({ missing_document_request_template_id: 'other-v9' }))
+    renderDetail()
+
+    expect(await screen.findByText(/הפנייה ממתינה למסמך/)).toBeInTheDocument()
+    expect(screen.queryByRole('region', { name: 'העלאת מסמך blood_test' })).not.toBeInTheDocument()
+  })
+})
+
+describe('RequestDetail: the other statuses', () => {
+  it('completed shows the delivered message', async () => {
+    getRequest.mockResolvedValue(
+      patientView({ status: 'completed', message: 'התור שלך ביום ראשון ב-09:00. יש להביא הפניה.' }),
+    )
+    const { container } = renderDetail()
+
+    expect(await screen.findByText('ההודעה שנשלחה אליך')).toBeInTheDocument()
+    expect(screen.getByText('התור שלך ביום ראשון ב-09:00. יש להביא הפניה.')).toBeInTheDocument()
+    expect(container.querySelector('.req-head .pill')).toHaveTextContent('הושלמה')
+  })
+
+  it('in_review shows the notice and nothing internal', async () => {
+    const withInternals = {
+      ...patientView({ status: 'in_review' }),
+      escalation_kind: 'MedicalQuestion',
+      escalated_from_state: 'Classifying',
+      reasons: ['medical_answer_attempt'],
+    } as unknown as PatientView
+    getRequest.mockResolvedValue(withInternals)
+    renderDetail()
+
+    expect(
+      await screen.findByText('הפנייה הועברה לבדיקת צוות. מידע רפואי אינו נמסר באופן אוטומטי.'),
+    ).toBeInTheDocument()
+    expect(screen.queryByText(/MedicalQuestion/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/Classifying/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/medical_answer_attempt/)).not.toBeInTheDocument()
+  })
+
+  it('closed shows the closing line', async () => {
+    getRequest.mockResolvedValue(patientView({ status: 'closed' }))
+    renderDetail()
+    expect(await screen.findByText('הפנייה נסגרה.')).toBeInTheDocument()
+  })
+
+  it('marks the timeline step of the current status', async () => {
+    getRequest.mockResolvedValue(patientView({ status: 'in_progress' }))
+    const { container } = renderDetail()
+    await screen.findByText('הפנייה שלכם')
+    const current = container.querySelector('.tl-step.current')
+    expect(current).toHaveTextContent('בטיפול')
+    expect(current).toHaveAttribute('aria-current', 'step')
+  })
+
+  it('shows a Hebrew message for a case that is not the patient’s', async () => {
+    getRequest.mockRejectedValue(new ApiError(404, 'case_not_found'))
+    renderDetail()
+    expect(await screen.findByRole('alert')).toHaveTextContent('הפנייה לא נמצאה.')
+    expect(screen.queryByText(/case_not_found/)).not.toBeInTheDocument()
+  })
+})
+
+describe('RequestDetail polling', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('refreshes every 3 s while the case is in progress, and stops when it is not', async () => {
+    getRequest.mockResolvedValue(patientView({ status: 'in_progress' }))
+    renderDetail()
+    await act(async () => {})
+    expect(getRequest).toHaveBeenCalledTimes(1)
+
+    await act(async () => {
+      vi.advanceTimersByTime(3000)
+    })
+    expect(getRequest).toHaveBeenCalledTimes(2)
+
+    getRequest.mockResolvedValue(patientView({ status: 'in_review' }))
+    await act(async () => {
+      vi.advanceTimersByTime(3000)
+    })
+    expect(getRequest).toHaveBeenCalledTimes(3)
+
+    await act(async () => {
+      vi.advanceTimersByTime(9000)
+    })
+    expect(getRequest).toHaveBeenCalledTimes(3)
+  })
+})
