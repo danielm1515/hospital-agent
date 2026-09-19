@@ -12,12 +12,17 @@ escalation keeps the counterexample in its audit row's policy_reasons.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import timedelta
 from math import isfinite
 
 from z3 import And, Ints, Or, Solver, Z3Exception, sat, unsat
 
+from ..naming import Component, EscalationKind, Event, State
+from ..state_manager import StateManager, TransitionResult
 
 Z3_TIMEOUT_MS = 5000
+# Policy design decision 3: the longest legal upload window in the §9.1 model.
+PATIENT_UPLOAD_WINDOW = timedelta(hours=24)
 
 
 @dataclass(frozen=True)
@@ -47,3 +52,22 @@ def ask_patient_is_safe(hours_until: object) -> Z3Verdict:
         return Z3Verdict(False, "unknown", s.reason_unknown())
     except Z3Exception as exc:
         return Z3Verdict(False, "error", str(exc))
+
+
+class ReadinessCheck:
+    """Runs in AssessingReadiness and emits the §3 outcome (Readiness Check, inside the Policy Service)."""
+
+    def __init__(self, state_manager: StateManager, *, z3=ask_patient_is_safe) -> None:
+        self.state_manager, self.z3 = state_manager, z3
+
+    def run(self, case_id: str, hours_until: object) -> TransitionResult:
+        sm = self.state_manager
+        if sm.load(case_id).readiness_complete:
+            return sm.apply(case_id, Event.READINESS_PASSED, {}, Component.READINESS_CHECK)
+        verdict = self.z3(hours_until)
+        if verdict.safe:
+            payload = {"z3_result": verdict.result, "patient_deadline": sm.clock() + PATIENT_UPLOAD_WINDOW}
+            return sm.apply(case_id, Event.MISSING_INFORMATION_DETECTED, payload, Component.READINESS_CHECK)
+        reasons = [f"z3:{verdict.result}"] + ([f"z3_detail:{verdict.detail}"] if verdict.detail else [])
+        return sm.escalation.signal(case_id, EscalationKind.Z3_COUNTEREXAMPLE, State.ASSESSING_READINESS,
+                                    Component.READINESS_CHECK, reasons=reasons)

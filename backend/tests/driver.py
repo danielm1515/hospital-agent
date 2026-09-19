@@ -14,7 +14,15 @@ from sqlalchemy.engine import Engine
 
 from hospital_agent import repository
 from hospital_agent.case import ApprovalRecord, CaseRecord, ExecutionRecord
-from hospital_agent.naming import Component, Event, State
+from hospital_agent.naming import Action, Component, Event, State
+from hospital_agent.policy.readiness import ReadinessCheck
+from hospital_agent.policy.service import (
+    InstructionSource,
+    OutgoingMessage,
+    PolicyRequest,
+    PolicyService,
+    ProposedAction,
+)
 from hospital_agent.state_manager import StateManager, TransitionResult
 
 PLAN = [
@@ -24,11 +32,22 @@ PLAN = [
     {"step": 4, "action": "SendStatusUpdate"},
 ]
 
+# What the Planner would send out for each action (spec §11 minimized fields).
+TARGETS = {
+    Action.CHECK_APPOINTMENT: ("appointment_system", ("patient_id",)),
+    Action.CHECK_DOCUMENTS: ("document_system", ("patient_id",)),
+    Action.LOAD_INSTRUCTIONS: ("instruction_system", ()),
+    Action.SEND_STATUS_UPDATE: ("patient_channel", ("patient_id",)),
+}
+APPROVED_SOURCE = InstructionSource("INSTR-PREP-COLONOSCOPY", "3")
+STATUS_MESSAGE = OutgoingMessage(evaluated=True, medical_content_flag=False, content_hash="HASH-STATUS-1")
+
 
 class Driver:
     def __init__(self, sm: StateManager, engine: Engine, patient_id: str = "P-10041") -> None:
         self.sm, self.engine, self.patient_id = sm, engine, patient_id
         self.case_id: str | None = None
+        self.policy = PolicyService(engine)
 
     # --- reading ---------------------------------------------------------------------
 
@@ -91,9 +110,22 @@ class Driver:
 
     # --- Policy Service / Tool Executor -------------------------------------------------------
 
-    def allow(self) -> TransitionResult:
-        payload = {"action": self.case.current_action.value, "policy_result": "Allow", "policy_reasons": []}
-        return self._emit(Event.POLICY_ALLOWED, payload, Component.POLICY_SERVICE)
+    def request(self, **overrides) -> PolicyRequest:
+        """A well-formed PolicyRequest for the current plan step; overrides replace fields."""
+        case = self.case
+        action = case.current_action
+        target, fields = TARGETS[action]
+        request = PolicyRequest(
+            execution_id=f"EXEC-{uuid.uuid4().hex[:8]}",
+            proposed_action=ProposedAction(action.value, case.current_step, target, fields),
+            outgoing_message=STATUS_MESSAGE if action is Action.SEND_STATUS_UPDATE else None,
+            instruction_source=APPROVED_SOURCE if action is Action.LOAD_INSTRUCTIONS else None,
+        )
+        return replace(request, **overrides)
+
+    def allow(self, **overrides) -> TransitionResult:
+        """The real Policy Service decides the current step (Allow for a well-formed request)."""
+        return self.policy.apply(self.sm, self.case_id, self.request(**overrides))
 
     def retrieved(self, **result) -> TransitionResult:
         return self._emit(Event.DATA_RETRIEVED, result, Component.TOOL_EXECUTOR)
@@ -130,6 +162,10 @@ class Driver:
 
     def readiness_passed(self) -> TransitionResult:
         return self._emit(Event.READINESS_PASSED, {}, Component.READINESS_CHECK)
+
+    def assess(self, hours_until: object = 96) -> TransitionResult:
+        """The real Readiness Check with Z3 (spec §9.1)."""
+        return ReadinessCheck(self.sm).run(self.case_id, hours_until)
 
     # --- human reviewers -----------------------------------------------------------------
 

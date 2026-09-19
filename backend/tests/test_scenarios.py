@@ -1,5 +1,8 @@
 """The three scenarios of §0, checked against the golden traces of §15.
 
+Policy decisions (OPA + Prolog), the Readiness Check (Z3) and the Temporal Monitor
+are the real ones; tests/driver.py plays only the components not built yet.
+
 The Core has no Tool Executor yet, so TOOL_EXECUTION_STARTED / AUDIT_RECORDED rows
 are filtered out of the golden trace; the audit row totals (35, 4, 54) are checked
 in sub-project 3. Every other (state after, event) pair must match exactly.
@@ -27,10 +30,10 @@ def test_scenario_1_normal_flow(sm, app_engine):
     d.retrieve_step(required_documents=["referral", "blood_test"], held_documents=["referral"])
     d.advance()
     d.retrieve_step()                                   # LoadInstructions -> AssessingReadiness
-    d.missing_information(z3_result="unsat")            # blood_test missing, Z3 says safe to ask
+    d.assess(96)                                        # blood_test missing, Z3 unsat: safe to ask
     d.upload("blood_test")
     d.classify()                                        # re-classified, readiness in progress
-    d.readiness_passed()
+    d.assess(96)                                        # everything held -> READINESS_PASSED
     d.plan_delivery()
     d.propose()
     d.allow()
@@ -79,10 +82,10 @@ def test_scenario_3_technical_failure(sm, app_engine):
     d.retrieve_step(required_documents=["referral", "blood_test"], held_documents=["referral"])
     d.advance()
     d.retrieve_step()
-    d.missing_information(z3_result="unsat")
+    d.assess(96)
     d.upload("blood_test")
     d.classify()
-    d.readiness_passed()
+    d.assess(96)
     d.plan_delivery()
     d.propose()
     d.allow()
