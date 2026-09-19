@@ -3,7 +3,7 @@ import pytest
 
 from hospital_agent import repository
 from hospital_agent.db import executions
-from hospital_agent.execution.gateway import MockGateway
+from hospital_agent.execution.gateway import OK, MockGateway, ToolResult
 from hospital_agent.execution.verify import REVERIFICATION_FAILED
 from hospital_agent.naming import EscalationKind, Event, State
 from tests.driver import Driver
@@ -73,6 +73,41 @@ def test_a_decision_that_drifted_before_the_call_escalates(sm, app_engine):
     d.execute()
     assert gw.calls == []
     assert (d.state, d.case.escalation_kind) == (State.AWAITING_HUMAN_REVIEW, EscalationKind.EXECUTION_UNKNOWN)
+
+
+def test_a_result_rejected_by_its_own_guard_escalates(sm, app_engine):
+    """valid_tool_result rejects a non-datetime appointment_at (Execution design §5) - fail closed (§14)."""
+    class BadAppointmentGateway(MockGateway):
+        def call(self, action, parameters, idempotency_key):
+            if action == "CheckAppointment":
+                self.calls.append((action, dict(parameters), idempotency_key))
+                return ToolResult(OK, {"appointment_at": "not-a-datetime"})
+            return super().call(action, parameters, idempotency_key)
+
+    gw = BadAppointmentGateway()
+    d = Driver(sm, app_engine, gateway=gw)
+    d.to_classified()
+    d.plan()
+    d.run_step()
+    assert (d.state, d.case.escalation_kind) == (State.AWAITING_HUMAN_REVIEW, EscalationKind.EXECUTION_UNKNOWN)
+    assert len(gw.calls) == 1
+    assert execution(d, d.last_execution_id).status != "started"
+
+
+def test_a_call_that_raises_escalates_without_retry(sm, app_engine):
+    class RaisingGateway(MockGateway):
+        def call(self, action, parameters, idempotency_key):
+            self.calls.append((action, dict(parameters), idempotency_key))
+            raise RuntimeError("boom")
+
+    gw = RaisingGateway()
+    d = Driver(sm, app_engine, gateway=gw)
+    d.to_classified()
+    d.plan()
+    d.run_step()
+    assert (d.state, d.case.escalation_kind) == (State.AWAITING_HUMAN_REVIEW, EscalationKind.EXECUTION_UNKNOWN)
+    assert execution(d, d.last_execution_id).status == "unknown"
+    assert len(gw.calls) == 1
 
 
 # --- retry (§12.1) ---------------------------------------------------------------------------

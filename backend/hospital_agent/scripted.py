@@ -22,6 +22,7 @@ from . import repository
 from .case import ApprovalRecord, CaseRecord
 from .execution.executor import ToolExecutor
 from .execution.gateway import ACTION_TARGETS, ToolGateway
+from .execution.verify import EXECUTING_STATES
 from .naming import Action, Component, Event, State
 from .policy.readiness import ReadinessCheck
 from .policy.service import InstructionSource, OutgoingMessage, PolicyRequest, PolicyService, ProposedAction
@@ -35,7 +36,6 @@ PLAN = [
 ]
 APPROVED_SOURCE = InstructionSource("INSTR-PREP-COLONOSCOPY", "3")
 STATUS_MESSAGE = OutgoingMessage(evaluated=True, medical_content_flag=False, content_hash="HASH-STATUS-1")
-EXECUTING_STATES = frozenset({State.RETRIEVING_DATA, State.DELIVERING})
 
 
 class ScriptedAgents:
