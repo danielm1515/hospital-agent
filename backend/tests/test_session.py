@@ -8,7 +8,7 @@ from hospital_agent.case import CaseRecord
 from hospital_agent.execution.gateway import MockGateway
 from hospital_agent.llm.orchestrator import Orchestrator
 from hospital_agent.llm.provider import FakeProvider
-from hospital_agent.naming import EscalationKind, State
+from hospital_agent.naming import Component, EscalationKind, Event, State
 from hospital_agent.session import (
     MISSING_DOCUMENT_TEMPLATE_ID,
     CaseNotFound,
@@ -75,9 +75,23 @@ def test_an_unverified_patient_goes_to_review_and_the_text_is_kept(session, sm, 
     assert request_texts(app_engine, case_id) == [REQUEST]
 
 
-def test_a_blocked_submission_raises_event_rejected(session, sm, wake):
+@pytest.mark.parametrize("text", ["", "   "])
+def test_an_empty_submission_opens_no_case(session, sm, wake, text):
     with pytest.raises(EventRejected) as rejected:
-        session.submit_request(PATIENT, "", identity_verified=True)  # RequestValid: empty text
+        session.submit_request(PATIENT, text, identity_verified=True)  # RequestValid would block it
+    assert rejected.value.reason == "request_text_required"
+    assert session_cases(sm) == []  # no orphan case, and no empty Data Log row
+    assert wake.calls == 0
+
+
+def test_a_blocked_step_raises_event_rejected(session, sm, wake, monkeypatch):
+    """A step the State Manager blocks: here REQUEST_VALIDATED without the request text."""
+    monkeypatch.setattr(SessionService, "_validated",
+                        lambda self, case_id, text, verified: self.sm.apply(
+                            case_id, Event.REQUEST_VALIDATED, {"identity_verified": verified},
+                            Component.SESSION_SERVICE))
+    with pytest.raises(EventRejected) as rejected:
+        session.submit_request(PATIENT, REQUEST, identity_verified=True)
     assert rejected.value.reason == "guard_failed"
     assert [case.state for case in session_cases(sm)] == [State.RECEIVED]
     assert wake.calls == 0
@@ -222,10 +236,13 @@ def test_d25_a_rejected_upload_is_tombstoned_and_changes_nothing(session, sm, ap
     [entry] = uploads(app_engine, d.case_id)
     assert entry.content is None and entry.deleted_at is not None
     assert wake.calls == 1
-    assert d.case.state_version in (version, version + 1)  # a guard_failed self-loop or a Blocked row
+    assert d.case.state_version == version + 1  # the §3 "DocumentValid does not hold" self-loop
     with app_engine.connect() as conn:
         row = [r for r in repository.load_trace(conn, d.case_id) if r.event == "DOCUMENT_UPLOADED"][-1]
-    assert row.state_after == State.AWAITING_PATIENT_INPUT.value
+    assert (row.record_type, row.state_before, row.state_after) == (
+        "Transition", State.AWAITING_PATIENT_INPUT.value, State.AWAITING_PATIENT_INPUT.value)
+    assert row.guards == {"!DocumentValid": True}  # rejected by the guard, not silently dropped
+    assert row.content_hash == entry.content_hash
 
 
 def test_an_accepted_upload_is_kept_and_its_hash_is_on_the_audit_row(session, sm, app_engine):

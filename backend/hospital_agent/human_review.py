@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -23,9 +24,11 @@ from typing import Any
 from . import data_log, repository
 from .case import ApprovalRecord, CaseRecord
 from .naming import Component, EscalationKind, Event, State
-from .session import CaseNotFound, SessionService
+from .session import CaseNotFound, EventRejected, SessionService
 from .state_manager import CaseNotFound as _UnknownCase
 from .state_manager import StateManager, TransitionResult
+
+logger = logging.getLogger(__name__)
 
 # §3 HUMAN_APPROVED rows, with the fields the REVIEWER must supply. (naming.RESUMABLE also
 # lists PolicyReview's plan_hash + current_step; those are taken from the case, not asked for.)
@@ -158,6 +161,13 @@ class HumanReviewService:
     def decide(self, *, reviewer_id: str, reviewer_role: str, case_id: str, decision: str, reason: str,
                shown_context_ref: str, verified_identity_ref: str | None = None,
                patient_deadline: datetime | None = None) -> TransitionResult:
+        """Record the reviewer's decision and apply its human event (§3, §12.5).
+
+        Refuses before anything is written: an unknown or not-escalated case, invalid input,
+        a context that has changed, or a blocked event (no approval row is left behind in
+        the first three). Once the event commits the decision is never reported as an error -
+        a case that cannot then be revalidated simply stays in Received for the staff.
+        """
         case = self._load(case_id)
         if case.state is not State.AWAITING_HUMAN_REVIEW:
             raise NotInReview(case_id)
@@ -188,8 +198,12 @@ class HumanReviewService:
                 and result.state_after is State.RECEIVED):
             # Design decision 7: identity is now established - the request goes on from the
             # text the patient already submitted. If it cannot (the text was deleted, or the
-            # event is blocked), EventRejected propagates: the case stays in Received, visibly.
-            self.session.revalidate(case_id)
+            # event is blocked), the committed decision still stands: the case stays in
+            # Received and the staff see it in the monitor.
+            try:
+                self.session.revalidate(case_id)
+            except EventRejected as rejected:
+                logger.info("case not revalidated after an identity approval: %s", rejected.reason)
         self.wake()
         return result
 

@@ -31,6 +31,7 @@ from .state_manager import StateManager, TransitionResult
 MISSING_DOCUMENT_TEMPLATE_ID = "missing-document-v1"  # D24: a UI template, not an external call
 
 REQUEST_TEXT_UNAVAILABLE = "request_text_unavailable"
+REQUEST_TEXT_REQUIRED = "request_text_required"
 
 
 class CaseNotFound(Exception):
@@ -93,6 +94,11 @@ class SessionService:
         return self.sm.apply(case_id, Event.PATIENT_VERIFICATION_FAILED, {}, Component.SESSION_SERVICE)
 
     def submit_request(self, patient_id: str, text: str, *, identity_verified: bool) -> str:
+        """Open a case for the patient's request. An empty request is refused before anything
+        is written: RequestValid (§3.1) would block it anyway, and an orphan case with an empty
+        Data Log entry must not be left behind."""
+        if not (text or "").strip():
+            raise EventRejected(REQUEST_TEXT_REQUIRED)
         opened = _committed(self.open_case(patient_id))
         case_id = opened.case_id
         if identity_verified:
