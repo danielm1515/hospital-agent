@@ -73,6 +73,7 @@ docker compose run --rm backend python -m obs.golden
 - `hospital_agent/scripted.py` plays the Session Service, Classifier, Planner, Agent Orchestrator and reviewers with fixed demo answers; everything it drives is real. Sub-project 4 replaces the Classifier, Planner and Orchestrator parts: the LLM-backed ones must emit the same events from the same components (`naming.EVENT_OWNER`), and `python -m obs.golden` must still print 35 / 4 / 54 audit rows.
 - A Policy request's `outgoing_message` is where the Response Evaluator's verdict enters (`evaluated`, `medical_content_flag`, `content_hash`). Only the Evaluator sets `evaluated`.
 - The Tool Executor needs nothing from the LLM: `ToolExecutor.execute(case_id, execution_id)` runs a decision the Policy Service accepted, and the Retry Manager decides what follows a failure. A retry goes back to `Planning` and needs a fresh `ACTION_PROPOSED`.
+- The Orchestrator runs `ToolExecutor.execute()` right after `POLICY_ALLOWED` commits. On restart, `recover()` escalates both a `started` execution and an `intent` the case is still waiting on as `ExecutionUnknown`; neither is replayed.
 
 ## What the system is
 
