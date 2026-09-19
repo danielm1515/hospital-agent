@@ -105,6 +105,13 @@ def list_cases(conn: Connection, state: State | None = None) -> list[CaseRecord]
     return [_case_from_row(row) for row in conn.execute(query).mappings()]
 
 
+def list_patient_cases(conn: Connection, patient_id: str) -> list[CaseRecord]:
+    """One patient's cases, newest first."""
+    query = (select(cases).where(cases.c.patient_id == patient_id)
+             .order_by(cases.c.created_at.desc(), cases.c.case_id.desc()))
+    return [_case_from_row(row) for row in conn.execute(query).mappings()]
+
+
 def insert_case(conn: Connection, case: CaseRecord) -> None:
     conn.execute(insert(cases).values(case_id=case.case_id, created_at=case.created_at, **_case_values(case)))
 
