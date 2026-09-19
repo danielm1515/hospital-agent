@@ -146,6 +146,16 @@ def insert_approval(conn: Connection, approval: ApprovalRecord) -> None:
     conn.execute(insert(approvals).values(**asdict(approval)))
 
 
+def approval_used(conn: Connection, approval_id: str) -> bool:
+    """True if approval_id already appears on a committed Transition audit row (F1: replay guard)."""
+    row = conn.execute(
+        select(audit_log.c.audit_id)
+        .where(audit_log.c.approval_id == approval_id, audit_log.c.record_type == "Transition")
+        .limit(1)
+    ).first()
+    return row is not None
+
+
 def consume_approval(conn: Connection, approval_id: str, now: datetime) -> int:
     """Single use (§18.2): returns 0 if the approval was already consumed."""
     result = conn.execute(

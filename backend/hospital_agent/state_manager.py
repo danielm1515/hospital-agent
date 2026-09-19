@@ -158,6 +158,9 @@ class StateManager:
                 ports=self.ports,
                 approval=repository.load_approval(conn, payload["approval_id"]) if payload.get("approval_id") else None,
                 execution=repository.load_execution(conn, payload["execution_id"]) if payload.get("execution_id") else None,
+                approval_already_used=repository.approval_used(conn, payload["approval_id"])
+                if payload.get("approval_id")
+                else False,
             )
             resolution = resolve(state, event, ctx)
             if resolution.transition is None:

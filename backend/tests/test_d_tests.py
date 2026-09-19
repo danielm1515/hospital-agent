@@ -162,3 +162,26 @@ def test_policy_review_approval_stays_open_for_the_next_policy_decision(sm, app_
         consumed = conn.execute(text("SELECT consumed_at FROM approvals WHERE approval_id = :id"),
                                 {"id": approval_id}).scalar_one()
     assert consumed is None  # design §12.1: consumed by the next Policy decision (sub-project 2)
+
+
+def test_policy_review_approval_cannot_approve_a_later_escalation_at_the_same_step(sm, app_engine):
+    """F1: the approval is not consumed (design §12.1), but its id must not be replayable."""
+    d = Driver(sm, app_engine)
+    d.to_classified()
+    d.plan()
+    d.propose()
+    sm.apply(d.case_id, Event.POLICY_HUMAN_REVIEW_REQUIRED, {"policy_result": "RequireHumanReview"},
+             Component.POLICY_SERVICE)
+    case = d.case
+    approval_id = d.approval("approve", plan_hash=case.plan_hash, current_step=case.current_step)
+    assert d.human(Event.HUMAN_APPROVED, approval_id).committed
+    assert d.state is State.PLANNING
+
+    d.propose()
+    escalated_again = sm.apply(d.case_id, Event.POLICY_HUMAN_REVIEW_REQUIRED, {"policy_result": "RequireHumanReview"},
+                               Component.POLICY_SERVICE)
+    assert escalated_again.committed
+    assert d.state is State.AWAITING_HUMAN_REVIEW
+
+    replay = d.human(Event.HUMAN_APPROVED, approval_id)
+    assert (replay.committed, replay.reason) == (False, "workflow_decision_invalid")

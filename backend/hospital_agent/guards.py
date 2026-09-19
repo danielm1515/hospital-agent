@@ -54,6 +54,7 @@ class GuardContext:
     approval: ApprovalRecord | None = None  # loaded from approvals by payload["approval_id"]
     execution: ExecutionRecord | None = None  # loaded from executions by payload["execution_id"]
     escalation_kinds: frozenset[EscalationKind] = frozenset()  # allowlist of the row being evaluated
+    approval_already_used: bool = False  # payload["approval_id"] already appears on a committed Transition row
 
 
 Guard = Callable[[GuardContext], str | None]
@@ -216,6 +217,7 @@ def workflow_decision_valid(ctx: GuardContext) -> str | None:
         or not approval.granted_at <= ctx.now < approval.valid_until
         or approval.consumed_at is not None
         or approval.escalation_kind != case.escalation_kind
+        or ctx.approval_already_used
     ):
         return WORKFLOW_DECISION_INVALID
     if approval.decision != DECISION_FOR_EVENT.get(ctx.event):

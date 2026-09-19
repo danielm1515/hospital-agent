@@ -237,6 +237,14 @@ def test_resume_requires_the_field_of_its_escalation_kind():
     assert wdv(review, Event.HUMAN_APPROVED, replace(appr, current_step=3)) == "workflow_decision_invalid"
 
 
+def test_workflow_decision_rejects_an_approval_already_used_on_a_committed_transition():
+    case = escalated(EscalationKind.RETRY_EXHAUSTED)
+    result = GUARDS["WorkflowDecisionValid"](
+        ctx(case, Event.HUMAN_APPROVED, approval=approval(), approval_already_used=True)
+    )
+    assert result == "workflow_decision_invalid"
+
+
 def test_reject_and_resolve_need_no_resume_field():
     pvf = escalated(EscalationKind.PATIENT_VERIFICATION_FAILED)
     appr = approval(escalation_kind="PatientVerificationFailed", decision="reject")
