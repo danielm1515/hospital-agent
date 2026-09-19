@@ -13,6 +13,9 @@ from alembic.config import Config
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Engine
 
+from hospital_agent.state_manager import StateManager
+from tests.fakes import AllowAllMonitor, fake_ports
+
 BACKEND_DIR = Path(__file__).resolve().parents[1]
 
 
@@ -49,3 +52,8 @@ def app_engine(migrated: None, owner_engine: Engine) -> Engine:
     engine = create_engine(_env("TEST_DATABASE_URL"))
     yield engine
     engine.dispose()
+
+
+@pytest.fixture
+def sm(app_engine: Engine) -> StateManager:
+    return StateManager(app_engine, AllowAllMonitor(), fake_ports())
