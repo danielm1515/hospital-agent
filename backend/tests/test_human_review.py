@@ -3,7 +3,10 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
+from sqlalchemy import func, select
+
 from hospital_agent import data_log, repository
+from hospital_agent.db import approvals
 from hospital_agent.human_review import (
     RESUMABLE,
     ContextChanged,
@@ -75,6 +78,13 @@ def decide(review, case_id, decision, **fields):
     ref = review.context(case_id).shown_context_ref
     arguments = {**NURSE, "reason": "reviewed by staff", "shown_context_ref": ref, **fields}
     return review.decide(case_id=case_id, decision=decision, **arguments)
+
+
+def approvals_of(app_engine, case_id) -> int:
+    """How many approval rows the case has - nothing may be written before the checks pass."""
+    with app_engine.connect() as conn:
+        return conn.execute(select(func.count()).select_from(approvals)
+                            .where(approvals.c.case_id == case_id)).scalar_one()
 
 
 def approval_of(app_engine, result):
@@ -198,6 +208,7 @@ def test_approving_a_z3_counterexample_sets_the_new_deadline(review, sm, app_eng
     with pytest.raises(DecisionRejected) as rejected:
         decide(review, d.case_id, "approve")
     assert rejected.value.reason == "patient_deadline_required"
+    assert approvals_of(app_engine, d.case_id) == 0
     assert decide(review, d.case_id, "approve", patient_deadline=deadline).committed
     assert (d.state, d.case.patient_deadline) == (State.AWAITING_PATIENT_INPUT, deadline)
 
@@ -214,13 +225,28 @@ def test_approving_identity_revalidates_the_case(review, session, sm, app_engine
     assert wake.calls == 1
 
 
-def test_approving_identity_needs_the_verified_identity_ref(review, session, sm):
+def test_a_committed_decision_is_never_reported_as_an_error(review, session, sm, app_engine, wake):
+    """The request text was deleted, so the case cannot be revalidated - the approve still stands."""
+    case_id = session.submit_request("P-30000", REQUEST, identity_verified=False)
+    with app_engine.connect() as conn:
+        [entry] = data_log.entries(conn, case_id, data_log.DataKind.REQUEST_TEXT)
+    assert review.tombstone(case_id, entry.entry_id)
+
+    result = decide(review, case_id, "approve", verified_identity_ref="ID-DESK-17")
+    assert result.committed and result.state_after is State.RECEIVED
+    assert sm.load(case_id).state is State.RECEIVED  # it waits for the staff, visibly
+    assert approval_of(app_engine, result).consumed_at is not None
+    assert wake.calls == 1
+
+
+def test_approving_identity_needs_the_verified_identity_ref(review, session, sm, app_engine):
     case_id = session.submit_request("P-30000", REQUEST, identity_verified=False)
     for missing in (None, ""):
         with pytest.raises(DecisionRejected) as rejected:
             decide(review, case_id, "approve", verified_identity_ref=missing)
         assert rejected.value.reason == "verified_identity_ref_required"
     assert sm.load(case_id).state is State.AWAITING_HUMAN_REVIEW
+    assert approvals_of(app_engine, case_id) == 0  # a missing field is refused before any write
 
 
 def test_approving_a_medical_question_is_not_allowed(review, sm, app_engine):
@@ -229,6 +255,7 @@ def test_approving_a_medical_question_is_not_allowed(review, sm, app_engine):
         decide(review, d.case_id, "approve")
     assert rejected.value.reason == "decision_not_allowed"
     assert d.state is State.AWAITING_HUMAN_REVIEW
+    assert approvals_of(app_engine, d.case_id) == 0
 
 
 @pytest.mark.parametrize(("decision", "reason", "code"), [
@@ -241,6 +268,7 @@ def test_invalid_input_is_rejected(review, sm, app_engine, decision, reason, cod
     with pytest.raises(DecisionRejected) as rejected:
         decide(review, d.case_id, decision, reason=reason)
     assert rejected.value.reason == code
+    assert approvals_of(app_engine, d.case_id) == 0  # invalid input is refused before any write
 
 
 def test_a_stale_context_ref_is_rejected(review, sm, app_engine):
@@ -248,6 +276,7 @@ def test_a_stale_context_ref_is_rejected(review, sm, app_engine):
     with pytest.raises(ContextChanged):
         decide(review, d.case_id, "resolve", shown_context_ref="ctx-stale")
     assert d.state is State.AWAITING_HUMAN_REVIEW
+    assert approvals_of(app_engine, d.case_id) == 0  # the context is checked before any write
     with app_engine.connect() as conn:
         assert all(row.approval_id is None for row in repository.load_trace(conn, d.case_id))
 
