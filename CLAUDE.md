@@ -99,6 +99,7 @@ docker compose run --rm -e RUN_LIVE_LLM=1 backend pytest tests/test_live_llm.py 
 - **CORS** already allows `http://localhost:5173` and `http://127.0.0.1:5173`; any other origin goes in `CORS_ORIGINS`.
 - **The patient sees only the abstract status** (`received`, `in_progress`, `needs_document`, `in_review`, `completed`, `closed`) - never an escalation kind, a reason or an audit row (§12.3). The case advances in the background, so poll the case after a submit or an upload.
 - **A staff decision is two steps:** GET the context, show it, then POST the decision with that `shown_context_ref`. Render exactly the queue item's `allowed_decisions` and `required_fields`; a 409 means re-fetch and decide again on what is now true.
+- **There is no ContentApproval screen.** A message the Response Evaluator marks medical is denied outright (D8), not queued for a clinical_staff sign-off; the staff's only lever on it is `resolve` from the ordinary review queue, same as any other escalation. Don't build a message-approval UI - it has no route to call.
 - Nothing in the UI is authoritative: every state it shows comes from a response, and it may never send `patient_id`, `reviewer_id` or `reviewer_role`.
 
 ## What the system is

@@ -114,6 +114,9 @@ class HumanReviewService:
             ReviewItem(
                 case_id=case.case_id,
                 patient_id=case.patient_id,
+                # A case in AwaitingHumanReview always carries a kind (EscalationCoordinator.
+                # signal() sets it in the same transition that enters this state), so the ""
+                # fallback here is defensive only, never actually taken.
                 escalation_kind=case.escalation_kind.value if case.escalation_kind else "",
                 escalated_from_state=case.escalated_from_state.value if case.escalated_from_state else None,
                 reasons=_escalation_reasons(traces[case.case_id]),
@@ -220,7 +223,16 @@ class HumanReviewService:
     def _grant(self, case: CaseRecord, reviewer_id: str, reviewer_role: str, decision: str, reason: str,
                shown_context_ref: str, verified_identity_ref: str | None,
                patient_deadline: datetime | None) -> str:
-        """Insert the WorkflowDecision (§12.5). Whether it is valid is the guard's to judge."""
+        """Insert the WorkflowDecision (§12.5). Whether it is valid is the guard's to judge.
+
+        This insert is its own transaction, separate from the one that applies the human
+        event below. If that later transaction is blocked (or never runs), the row is left
+        behind unconsumed until it expires at `valid_until`. That is safe: no API path
+        accepts a raw `approval_id` from a caller, so an orphaned row can only be reached
+        again through `decide()`, which re-derives it from a fresh `context()` call and the
+        guard re-checks everything (`shown_context_ref`, the escalation kind, the required
+        fields) before it could ever be consumed.
+        """
         granted_at = self.sm.clock()
         policy_review = case.escalation_kind is EscalationKind.POLICY_REVIEW
         approval = ApprovalRecord(

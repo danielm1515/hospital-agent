@@ -83,7 +83,7 @@ PROTECTED = [
 ]
 
 
-def test_the_public_surface_is_health_and_login_only(client):
+def test_every_api_route_requires_a_token(client):
     assert client.get("/health").status_code == 200
     for method, path, body in PROTECTED:
         response = client.request(method, path, json=body)

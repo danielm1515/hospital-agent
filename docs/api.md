@@ -2,7 +2,9 @@
 
 The backend's complete public interface. Sub-project 6 (the React UI) is built from this
 file alone: every route, every request body, every response body and every error code is
-here, and the JSON below is real output of the running system.
+here, and the JSON below is real output of the running system. (FastAPI's own
+`/openapi.json`, `/docs` and `/redoc` are also reachable without a token in this demo
+build - see the note under the route table.)
 
 - **Base URL (demo):** `http://localhost:8000`
 - **Content type:** `application/json`, UTF-8. Text may be Hebrew.
@@ -78,6 +80,11 @@ Codes used everywhere: `401 not_authenticated` (no token, a malformed token, an 
 forged one), `403 patients_only` / `403 staff_only` (the wrong role), `404 case_not_found`
 (unknown, or not this patient's case), `422 invalid_body` (the body, a query parameter or a
 path parameter failed validation).
+
+**Not shown in the table above:** FastAPI's own `/openapi.json`, `/docs` (Swagger UI) and
+`/redoc` are also public - they carry no patient data, only the route/schema shapes already
+in this document, so leaving them enabled is fine for the demo. A non-demo build would pass
+`docs_url=None, redoc_url=None, openapi_url=None` to `FastAPI(...)` to turn them off.
 
 ## 3. Public
 
@@ -209,10 +216,13 @@ Request:
 | `format` | `pdf`, `jpg` or `png` |
 | `content` | 1-20000 characters. The demo has no binary upload: send the document's text (or a base64 string within that limit). |
 
-`200`: the patient view **as it now stands**, also when the upload was refused - a document
-the case was not waiting for is dropped and deleted again (D25), and the patient simply
-sees an unchanged view. The UI should compare `status` / `updated_at` rather than assume
-success.
+`200`: the patient view **as it now stands**. The only signal is `status`: an accepted
+document moves the case out of `needs_document`. Two other things can happen behind the same
+`200`, and neither is success: a document the case was still waiting for but that fails
+validation is a committed self-loop - it bumps `state_version` / `updated_at` but leaves
+`status` at `needs_document` - and a document the case was not waiting for at all (D25)
+changes nothing, not even `updated_at`. Either way the UI must keep polling and must not
+show a confirmation from this response alone.
 
 - `404 case_not_found`, `403 patients_only`, `422 invalid_body` for a bad body (the
   document's content never comes back in the error).
@@ -473,4 +483,5 @@ previous `shown_context_ref` is no longer valid.
   the queue; the reviewer closes it with `resolve` (design decision 6).
 - **Error handling:** `401` → back to login; `403` → the wrong screen for this role;
   `404` → the case is gone or not the user's; `409` → show `detail`, re-fetch, try again;
-  `422` → a form error; `503` on `/health` → the database is down.
+  `422` → the form is invalid - validate locally against the rules listed above, since the
+  body carries no field list; `503` on `/health` → the database is down.

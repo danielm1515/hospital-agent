@@ -34,7 +34,7 @@ def submit_request(body: NewRequest, principal: Principal = Depends(require_pati
     except EventRejected as rejected:
         # The patient gets one code: a guard's reason (§3.1) is internal, and §12.3 keeps it
         # out of an answer a patient sees. The reason stays on the server - in the Blocked
-        # audit row, and here in the application log (a code and a case id, nothing more).
+        # audit row, and here in the application log (just the code, nothing more).
         logger.info("request rejected: %s", rejected.reason)
         raise HTTPException(status_code=409, detail="request_rejected") from None
     return PatientCaseView.model_validate(session.patient_view(case_id))
