@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project status
 
-Sub-projects 1 (Core) and 2 (Policy) are implemented in `backend/` (design and plan under `docs/superpowers/`). The authoritative input is the **binding demo spec** `Hospital_Agent_Clean.docx` (Hebrew, final-project scope). A Markdown copy lives in `docs/spec/`, one file per spec section: **spec §N → `docs/spec/NN-*.md`** (index: `docs/spec/README.md`). The docx is the source of truth. `docs/spec/` is generated, so don't hand-edit it. After the docx changes, regenerate it:
+Sub-projects 1 (Core), 2 (Policy) and 3 (Execution) are implemented in `backend/` (design and plan under `docs/superpowers/`). The authoritative input is the **binding demo spec** `Hospital_Agent_Clean.docx` (Hebrew, final-project scope). A Markdown copy lives in `docs/spec/`, one file per spec section: **spec §N → `docs/spec/NN-*.md`** (index: `docs/spec/README.md`). The docx is the source of truth. `docs/spec/` is generated, so don't hand-edit it. After the docx changes, regenerate it:
 
 ```bash
 python scripts/spec_to_md.py
@@ -50,25 +50,29 @@ After changing `policy/flows.dl`, regenerate the OPA data file (a test fails if 
 docker compose run --rm backend python -m hospital_agent.policy.build_minimized
 ```
 
+The §15 golden traces, from the running system (on the test database; prints `final: Completed   audit rows: 35`, `4`, `54`):
+
+```bash
+docker compose run --rm backend python -m obs.golden
+```
+
 ## Working in the backend (`backend/hospital_agent/`)
 
 - `fsm.py` is the §3 table as data. Each row keeps its Guard cell verbatim in `spec_guard`, and `tests/test_fsm.py` compares all 41 rows with `docs/spec/03-transitions-guards.md`. Change the spec first, then the row.
 - A guard (`guards.py`) returns `None` when it holds, or a reason code. A fact that another component determines is trusted only from its owning component: for a system-owned event, because `StateManager` has already checked that the event came from its owner (`naming.EVENT_OWNER`); for an external event (e.g. `DOCUMENT_UPLOADED`, which has no owner), the guard itself checks `GuardContext.source` (e.g. `DocumentValid` requires `Component.SESSION_SERVICE`).
 - Only `StateManager.apply()` writes State. `HUMAN_REVIEW_REQUIRED` enters only through `EscalationCoordinator.signal()` - routing every internal escalation through it, instead of letting a component emit `HUMAN_REVIEW_REQUIRED` directly, is a convention inside the trusted computing base (§6.5): the code enforces it, but §6.4's safety proofs assume every component that could call `signal()` keeps to it.
-- Guards evaluated by components that don't exist yet are ports (`GuardPorts`: `ExecutorReverified` until sub-project 3). Test doubles - including the permissive monitors some State Manager unit tests use - live only in `tests/fakes.py`; application code has no permissive defaults.
+- Guards evaluated outside the State Manager are ports (`GuardPorts`); `wiring` plugs in the real `ExecutorReverified` (`execution/verify.py`). Test doubles - including the permissive monitors some State Manager unit tests use - live only in `tests/fakes.py`; application code has no permissive defaults.
 - Application code builds a State Manager only through `wiring.build_state_manager()`: the real Temporal Monitor, and the policy files' hash in `rule_version`. Policy decisions go through `PolicyService.apply()`, readiness through `ReadinessCheck.run()`.
 - `policy/policy.rego` is spec §8 verbatim; `policy/rules.pl` is spec §10 without its CASE-482 example facts (those live in `tests/fixtures/case_482.pl`); `policy/flows.dl` is spec §11. Tests compare all three with `docs/spec/`. `tests/opa_reference.py` must agree with the real OPA on every input in `tests/policy_inputs.py` - change them together.
 - The Temporal Monitor (`policy/temporal.py`) reads guard results and evidence from the audit rows' `guards` JSON. A new rule needs its evidence recorded there by whoever emits the event; only Policy decision events may carry `evidence`.
 - `db.py` mirrors the Alembic migrations, and `tests/test_schema.py` fails if they drift. A schema change is a new migration, never an edit to `0001`. Every new migration must `GRANT` the new tables to `hospital_app` (§18.2) - `SELECT, INSERT, UPDATE` for an ordinary table, but `SELECT, INSERT` only for an audit-style append-only table (as `0001` does for `audit_log`), so the DB itself, not just the app, enforces that Audit can't be changed or deleted.
-- `tests/driver.py` plays the components that don't exist yet (Classifier, Planner, Policy Service, Tool Executor, reviewers). The scenario and D-tests drive cases through it.
+- `hospital_agent/scripted.py` plays the components that don't exist yet (Classifier, Planner, Orchestrator, reviewers) around the real Policy Service, Readiness Check and Tool Executor; `tests/driver.py` adds test-only shortcuts that emit one event directly. The Tool Executor is the only code that calls an external system (`execution/gateway.py`); `POLICY_ALLOWED` writes the `executions` intent row, and `StateManager.start_execution()` writes the STARTED / AUDIT_RECORDED pair.
 
-## Hand-off to sub-project 3 (Tool Executor)
+## Hand-off to sub-project 4 (LLM)
 
-- The `TOOL_EXECUTION_STARTED` row must carry, in its `guards` JSON, the §6.1 evidence verified against stored State by `ExecutorReverified`: `InPlan`, `IdentityVerified`, `PatientContextPresent`, `AttemptsAvailable` (evaluated on the attempt count **before** the increment that happens in the same transaction), `medical_content_flag` and, for medical output, `ContentApprovalValid`; plus `execution_id` and `content_hash`. T1–T4, T6, T9 and T12 have so far run only on hand-built traces. T6 relies on `medical_content_flag` being present: a missing flag makes T6 pass trivially (fails open), so it is a hard requirement.
-- `TOOL_EXECUTION_STARTED` and `AUDIT_RECORDED` must be committed together, in one transaction; a committed STARTED without AUDIT_RECORDED makes T9 block every later event of the case, including the TemporalViolation escalation.
-- `decision_token` from the Policy decision is not persisted yet: write it to `executions.decision_token` with the `state_version`, `plan_hash` and step it was issued for, and have `ExecutorReverified` compare them.
-- `ReadinessCheck.run(case_id, hours_until)` takes `hours_until` from its caller: derive it from the appointment time that `CheckAppointment` retrieved and stored, never from request input.
-- A ContentApproval is consumed in the same transaction as the execution row that uses it (§12.4).
+- `hospital_agent/scripted.py` plays the Session Service, Classifier, Planner, Agent Orchestrator and reviewers with fixed demo answers; everything it drives is real. Sub-project 4 replaces the Classifier, Planner and Orchestrator parts: the LLM-backed ones must emit the same events from the same components (`naming.EVENT_OWNER`), and `python -m obs.golden` must still print 35 / 4 / 54 audit rows.
+- A Policy request's `outgoing_message` is where the Response Evaluator's verdict enters (`evaluated`, `medical_content_flag`, `content_hash`). Only the Evaluator sets `evaluated`.
+- The Tool Executor needs nothing from the LLM: `ToolExecutor.execute(case_id, execution_id)` runs a decision the Policy Service accepted, and the Retry Manager decides what follows a failure. A retry goes back to `Planning` and needs a fresh `ACTION_PROPOSED`.
 
 ## What the system is
 
