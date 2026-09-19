@@ -9,6 +9,7 @@ dependencies = [
     "sqlalchemy>=2.0.36",
     "psycopg[binary]>=3.2",
     "alembic>=1.14",
+    "z3-solver==4.15.4.0",
 ]
 
 [dependency-groups]
