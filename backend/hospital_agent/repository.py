@@ -218,6 +218,15 @@ def open_policy_review_override(
     return approval
 
 
+def content_approvals_for(conn: Connection, case_id: str, action: str | None) -> list[ApprovalRecord]:
+    """This case's approvals, newest last; `action` narrows to one Action Registry entry."""
+    query = select(approvals).where(approvals.c.case_id == case_id)
+    if action is not None:
+        query = query.where(approvals.c.action == action)
+    rows = conn.execute(query.order_by(approvals.c.granted_at, approvals.c.approval_id)).mappings()
+    return [ApprovalRecord(**dict(row)) for row in rows]
+
+
 def consume_approval(conn: Connection, approval_id: str, now: datetime) -> int:
     """Single use (§18.2): returns 0 if the approval was already consumed."""
     result = conn.execute(
@@ -255,6 +264,14 @@ def set_execution_status(
         .values(status=to_status, **stamp)
     )
     return result.rowcount
+
+
+def executions_of_case(conn: Connection, case_id: str) -> list[ExecutionRecord]:
+    """This case's executions, oldest first."""
+    rows = conn.execute(
+        select(executions).where(executions.c.case_id == case_id).order_by(executions.c.execution_id)
+    ).mappings()
+    return [ExecutionRecord(**dict(row)) for row in rows]
 
 
 def executions_with_status(conn: Connection, status: str) -> list[ExecutionRecord]:

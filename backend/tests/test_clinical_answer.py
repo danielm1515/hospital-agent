@@ -190,3 +190,113 @@ def test_content_approval_id_is_ignored_on_any_other_event(sm, app_engine):
     assert d.trace()[-1].content_hash is None
     with app_engine.connect() as conn:
         assert repository.load_approval(conn, content_id).consumed_at is None
+
+
+# --- the service ---------------------------------------------------------------------------
+
+from hospital_agent import data_log                                    # noqa: E402
+from hospital_agent.human_review import AnswerRejected, ContextChanged, HumanReviewService, NotInReview  # noqa: E402
+from hospital_agent.session import SessionService                      # noqa: E402
+
+NURSE = ("coordinator_nurse", "clinical_staff")
+ADMIN = ("admin_coordinator", "admin_staff")
+
+
+@pytest.fixture
+def session(sm):
+    return SessionService(sm)
+
+
+@pytest.fixture
+def review(sm, session):
+    """The same two-line fixture `tests/test_human_review.py` uses."""
+    return HumanReviewService(sm, session)
+
+
+def answer_it(review, d, *, who=NURSE, answer=ANSWER, reason="נענתה בטלפון על ידי האחות"):
+    return review.answer(reviewer_id=who[0], reviewer_role=who[1], case_id=d.case_id,
+                         answer=answer, reason=reason,
+                         shown_context_ref=review.context(d.case_id).shown_context_ref)
+
+
+def approvals_of(app_engine, case_id):
+    with app_engine.connect() as conn:
+        return {a.approval_type: a for a in repository.content_approvals_for(conn, case_id, None)}
+
+
+def test_a_nurse_answers_and_the_case_completes(review, sm, app_engine):
+    d = escalated(sm, app_engine)
+
+    result = answer_it(review, d)
+
+    assert result.committed and result.state_after is State.COMPLETED
+    row = d.trace()[-1]
+    assert row.action == Action.ANSWER_CLINICAL_QUESTION.value
+    with app_engine.connect() as conn:
+        [message] = [e for e in data_log.entries(conn, d.case_id, data_log.DataKind.OUTGOING_MESSAGE)]
+    assert message.content == ANSWER and row.content_hash == message.content_hash
+    both = approvals_of(app_engine, d.case_id)
+    assert both["ContentApproval"].consumed_at is not None
+    assert both["WorkflowDecision"].consumed_at is not None
+    assert both["ContentApproval"].reviewer_role == "clinical_staff"
+
+
+def test_the_execution_row_is_final_so_restart_recovery_ignores_it(review, sm, app_engine):
+    """Decision 4: a row left in 'started' would escalate as ExecutionUnknown after a restart."""
+    d = escalated(sm, app_engine)
+    answer_it(review, d)
+    with app_engine.connect() as conn:
+        executions = repository.executions_of_case(conn, d.case_id)
+    assert [e.status for e in executions] == ["succeeded"]
+    assert executions[0].medical_content_flag is True
+
+
+def test_admin_staff_may_not_answer_and_nothing_is_written(review, sm, app_engine):
+    d = escalated(sm, app_engine)
+    with pytest.raises(AnswerRejected) as rejected:
+        answer_it(review, d, who=ADMIN)
+    assert rejected.value.reason == "clinical_staff_only"
+    assert d.state is State.AWAITING_HUMAN_REVIEW
+    with app_engine.connect() as conn:
+        assert data_log.entries(conn, d.case_id, data_log.DataKind.OUTGOING_MESSAGE) == []
+    assert approvals_of(app_engine, d.case_id) == {}
+
+
+def test_an_escalation_that_is_not_a_medical_question_is_refused(review, sm, app_engine):
+    """A RetryExhausted case is in review too - but it is not a question to answer."""
+    d = Driver(sm, app_engine)
+    d.to_classified()
+    d.plan()
+    d.propose()
+    d.allow()
+    d.retry_exhausted()
+    assert d.case.escalation_kind is EscalationKind.RETRY_EXHAUSTED
+    with pytest.raises(AnswerRejected) as rejected:
+        answer_it(review, d)
+    assert rejected.value.reason == "decision_not_allowed"
+
+
+@pytest.mark.parametrize("field, value, expected", [
+    ("answer", "   ", "answer_required"),
+    ("reason", "   ", "reason_required"),
+])
+def test_empty_input_is_refused(review, sm, app_engine, field, value, expected):
+    d = escalated(sm, app_engine)
+    with pytest.raises(AnswerRejected) as rejected:
+        answer_it(review, d, **{field: value})
+    assert rejected.value.reason == expected
+
+
+def test_a_stale_shown_context_ref_is_refused(review, sm, app_engine):
+    d = escalated(sm, app_engine)
+    with pytest.raises(ContextChanged):
+        review.answer(reviewer_id=NURSE[0], reviewer_role=NURSE[1], case_id=d.case_id,
+                       answer=ANSWER, reason="סיבה", shown_context_ref="ctx-stale")
+    assert d.state is State.AWAITING_HUMAN_REVIEW
+
+
+def test_a_case_that_is_not_in_review_is_refused(review, sm, app_engine):
+    d = Driver(sm, app_engine)
+    d.submit()
+    with pytest.raises(NotInReview):
+        answer_it(review, d)

@@ -22,8 +22,9 @@ from datetime import datetime, timedelta
 from typing import Any
 
 from . import data_log, repository
-from .case import ApprovalRecord, CaseRecord
-from .naming import Component, EscalationKind, Event, State
+from .auth import CLINICAL_STAFF
+from .case import ApprovalRecord, CaseRecord, ExecutionRecord
+from .naming import Action, Component, EscalationKind, Event, State
 from .session import CaseNotFound, EventRejected, SessionService
 from .state_manager import CaseNotFound as _UnknownCase
 from .state_manager import StateManager, TransitionResult
@@ -61,6 +62,10 @@ class DecisionRejected(Exception):
     def __init__(self, reason: str) -> None:
         super().__init__(reason)
         self.reason = reason
+
+
+class AnswerRejected(DecisionRejected):
+    """A clinical answer that cannot be given (API 409/403 {"detail": reason})."""
 
 
 @dataclass(frozen=True)
@@ -209,6 +214,91 @@ class HumanReviewService:
                 logger.info("case not revalidated after an identity approval: %s", rejected.reason)
         self.wake()
         return result
+
+    def answer(self, *, reviewer_id: str, reviewer_role: str, case_id: str, answer: str,
+               reason: str, shown_context_ref: str) -> TransitionResult:
+        """§5 AnswerClinicalQuestion: record a clinical answer, authorise it and close the case.
+
+        The Human Review Service is this action's actor (§5), not the Tool Executor: there is
+        no external call, so there is no TOOL_EXECUTION_STARTED row and T6 does not apply. What
+        makes the answer deliverable is the ContentApproval, which the State Manager re-checks
+        and consumes inside the transition's own transaction (§6.3).
+        """
+        case = self._load(case_id)
+        if case.state is not State.AWAITING_HUMAN_REVIEW:
+            raise NotInReview(case_id)
+        if reviewer_role != CLINICAL_STAFF:
+            raise AnswerRejected("clinical_staff_only")          # §12.4
+        if case.escalation_kind is not EscalationKind.MEDICAL_QUESTION:
+            raise AnswerRejected("decision_not_allowed")
+        text = (answer or "").strip()
+        if not text:
+            raise AnswerRejected("answer_required")
+        if not (reason or "").strip():
+            raise AnswerRejected("reason_required")
+        if shown_context_ref != self.context(case_id).shown_context_ref:
+            raise ContextChanged(case_id)
+
+        now = self.sm.clock()
+        with self.engine.begin() as conn:
+            entry = data_log.record(conn, case.case_id, case.patient_id,
+                                    data_log.DataKind.OUTGOING_MESSAGE, text, now)
+            execution_id = f"EXEC-{uuid.uuid4().hex[:12]}"
+            repository.insert_execution(conn, ExecutionRecord(
+                execution_id=execution_id,
+                case_id=case.case_id,
+                patient_id=case.patient_id,
+                action=Action.ANSWER_CLINICAL_QUESTION.value,
+                step=case.current_step or 0,
+                retry_cycle=case.retry_cycle,
+                attempt_number=0,
+                idempotency_key=f"{case.case_id}:answer:{execution_id}",
+                # Decision 4: final at once. There is no external call to wait for, and restart
+                # recovery escalates any execution left in 'started' as ExecutionUnknown.
+                status="succeeded",
+                state_version=case.state_version,
+                content_hash=entry.content_hash,
+                medical_content_flag=True,
+            ))
+        content_id = self._grant_content_approval(case, reviewer_id, reviewer_role, reason,
+                                                  shown_context_ref, execution_id, entry.content_hash)
+        workflow_id = self._grant(case, reviewer_id, reviewer_role, "resolve", reason,
+                                  shown_context_ref, None, None)
+        result = self.sm.apply(case_id, Event.HUMAN_RESOLVED_CASE,
+                               {"approval_id": workflow_id, "content_approval_id": content_id},
+                               Component.EXTERNAL)
+        if not result.committed:
+            # Fail closed: the text is medical content that was never authorised to be shown.
+            with self.engine.begin() as conn:
+                data_log.tombstone(conn, entry.entry_id, self.sm.clock())
+            raise AnswerRejected(result.reason or "blocked")
+        self.wake()
+        return result
+
+    def _grant_content_approval(self, case: CaseRecord, reviewer_id: str, reviewer_role: str,
+                                reason: str, shown_context_ref: str, execution_id: str,
+                                content_hash: str) -> str:
+        """The §12.4 ContentApproval: bound to execution_id + action + content_hash."""
+        granted_at = self.sm.clock()
+        approval = ApprovalRecord(
+            approval_id=f"APPR-{uuid.uuid4().hex[:12]}",
+            approval_type="ContentApproval",
+            case_id=case.case_id,
+            patient_id=case.patient_id,
+            reviewer_id=reviewer_id,
+            reviewer_role=reviewer_role,
+            decision="approve",
+            reason=reason,
+            shown_context_ref=shown_context_ref,
+            granted_at=granted_at,
+            valid_until=granted_at + self.approval_ttl,
+            execution_id=execution_id,
+            action=Action.ANSWER_CLINICAL_QUESTION.value,
+            content_hash=content_hash,
+        )
+        with self.engine.begin() as conn:
+            repository.insert_approval(conn, approval)
+        return approval.approval_id
 
     def tombstone(self, case_id: str, entry_id: str) -> bool:
         """§18.4: clear one of this case's Data Log entries. Audit is never changed."""
