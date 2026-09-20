@@ -142,6 +142,15 @@ def _clinical_answer_approval(
         return None
     if approval.consumed_at is not None or approval.valid_until <= now:
         return None
+    # Design decision 2 is "only clinical_staff, and only MedicalQuestion" - the role half is
+    # checked above; these two close the rest of the list here, in the trusted computing base,
+    # even though human_review.answer() already enforces both before it ever grants the row
+    # (§12.4: only an "approve" decision authorises content; a case that is not currently a
+    # MedicalQuestion has no legitimate clinical answer to authorise).
+    if case.escalation_kind is not EscalationKind.MEDICAL_QUESTION:
+        return None
+    if approval.decision != "approve":
+        return None
     execution = repository.load_execution(conn, approval.execution_id)
     if execution is None or execution.case_id != case.case_id:
         return None

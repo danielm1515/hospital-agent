@@ -60,7 +60,11 @@ def write_approvals(
     content = replace(
         workflow, approval_id=f"APPR-C-{d.case_id[-6:]}", approval_type="ContentApproval",
         execution_id=base_execution_id, action=Action.ANSWER_CLINICAL_QUESTION.value,
-        content_hash=ANSWER_HASH, escalation_kind=None)
+        content_hash=ANSWER_HASH, escalation_kind=None,
+        # §12.4: production always grants a ContentApproval with decision="approve"
+        # (`human_review._grant_content_approval`), independent of the WorkflowDecision's
+        # own decision - keep the two decoupled here too.
+        decision="approve")
     content = replace(content, **changes)
     with app_engine.begin() as conn:
         repository.insert_approval(conn, workflow)
@@ -117,6 +121,7 @@ def test_a_resolve_without_an_answer_is_unchanged(sm, app_engine):
     {"execution_id": None},                                       # §12.4 requires it
     {"consumed_at": datetime(2026, 1, 1, tzinfo=UTC)},            # single use
     {"valid_until": datetime(2020, 1, 1, tzinfo=UTC)},            # expired
+    {"decision": "reject"},                                       # §12.4: only an approve decision authorises content
 ])
 def test_an_unusable_content_approval_blocks_the_transition(sm, app_engine, changes):
     d = escalated(sm, app_engine)
@@ -173,6 +178,28 @@ def test_an_execution_whose_hash_differs_from_the_approval_is_refused(sm, app_en
     result = resolve_with(sm, d, workflow_id, content_id)
 
     assert not result.committed and result.reason == "content_approval_invalid"
+
+
+def test_a_content_approval_is_refused_once_the_case_is_no_longer_a_medical_question(sm, app_engine):
+    """Design decision 2's other half: `_clinical_answer_approval` also checks that the case
+    is *currently* escalated as MedicalQuestion, not just that the approval looks well-formed -
+    defence in depth alongside human_review.answer()'s own check of the same thing."""
+    d = Driver(sm, app_engine)
+    d.to_classified()
+    d.plan()
+    d.propose()
+    d.allow()
+    d.retry_exhausted()
+    assert d.case.escalation_kind is EscalationKind.RETRY_EXHAUSTED
+    execution_id = write_execution(app_engine, d)
+    workflow_id, content_id = write_approvals(app_engine, d, execution_id)
+
+    result = resolve_with(sm, d, workflow_id, content_id)
+
+    assert not result.committed and result.reason == "content_approval_invalid"
+    assert d.state is State.AWAITING_HUMAN_REVIEW
+    with app_engine.connect() as conn:
+        assert repository.load_approval(conn, content_id).consumed_at is None
 
 
 def test_content_approval_id_is_ignored_on_any_other_event(sm, app_engine):
