@@ -63,6 +63,7 @@
   - `status` הוא אחד מ: `received`, `in_progress`, `needs_document`, `in_review`, `completed`, `closed`.
   - ב־`needs_document`: ‏`missing_document_ids` ו־`missing_document_request_template_id="missing-document-v1"` (D24).
   - ב־`completed`: טקסט ההודעה שנמסרה, מה־Data Log.
+  - `history` (נוסף 2026-09-20 לבקשת המשתמש, אחרי שציר הזמן במסך לא איפשר להבין מה קרה ומתי): כל שינוי סטטוס לפי הסדר, עם הזמן שבו הפנייה נכנסה אליו. נגזר משורות ה־Transition של ה־Audit דרך אותה פונקציית מיפוי של `status`, ולכן מכיל אך ורק את אותם שישה ערכים מופשטים — לא State, לא אירוע ולא סיבה.
   - המטופל לא רואה אף פעם סוג הסלמה, סיבות או Audit.
 
 ## 5. Human Review Service (§12.4–§12.5)

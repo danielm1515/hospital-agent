@@ -2,13 +2,24 @@ import { useCallback, useEffect, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import * as api from '../../api/client'
 import { DOCUMENT_FORMATS } from '../../api/types'
-import type { DocumentFormat, PatientStatus, PatientView } from '../../api/types'
+import type { DocumentFormat, PatientView, StatusChange } from '../../api/types'
 import { Alert } from '../../components/Alert'
 import { Button } from '../../components/Button'
 import { StatusPill } from '../../components/StatusPill'
 import { TextField } from '../../components/TextField'
 import { MY_REQUESTS } from './paths'
-import { documentLabel, errorMessage, formatDateTime, isMoving, usePolling } from './helpers'
+import {
+  documentLabel,
+  elapsedBetween,
+  errorMessage,
+  formatClock,
+  formatDate,
+  formatDateTime,
+  isMoving,
+  sameDay,
+  statusText,
+  usePolling,
+} from './helpers'
 
 /**
  * One request (design §4). Everything on the screen comes from the patient view
@@ -77,7 +88,7 @@ export function RequestDetail() {
             </time>
           </div>
 
-          <Timeline status={view.status} />
+          <Timeline history={view.history} />
 
           <section className="req-body">
             <h2 className="section-h">הפנייה שלכם</h2>
@@ -93,41 +104,41 @@ export function RequestDetail() {
 
 // ---- Timeline --------------------------------------------------------------
 
-type StepState = 'done' | 'current' | 'todo'
-
-const FINAL_LABELS: Partial<Record<PatientStatus, string>> = {
-  needs_document: 'ממתינה למסמך',
-  in_review: 'אצל צוות',
-  completed: 'הושלמה',
-  closed: 'נסגרה',
-}
-
-function timelineFor(status: PatientStatus): Array<{ label: string; state: StepState }> {
-  const final = FINAL_LABELS[status]
-  return [
-    { label: 'התקבלה', state: status === 'received' ? 'current' : 'done' },
-    {
-      label: 'בטיפול',
-      state: status === 'in_progress' ? 'current' : status === 'received' ? 'todo' : 'done',
-    },
-    { label: final ?? 'סיום', state: final ? 'current' : 'todo' },
-  ]
-}
-
-function Timeline({ status }: { status: PatientStatus }) {
+function Timeline({ history }: { history: StatusChange[] }) {
+  if (history.length === 0) return null
   return (
-    <ol className="timeline" aria-label="מצב הפנייה">
-      {timelineFor(status).map((step) => (
-        <li
-          key={step.label}
-          className={`tl-step ${step.state}`}
-          aria-current={step.state === 'current' ? 'step' : undefined}
-        >
-          <span className="tl-dot" aria-hidden="true" />
-          {step.label}
-        </li>
-      ))}
-    </ol>
+    <section className="tl-block" aria-label="מהלך הפנייה">
+      <h2 className="section-h">מהלך הפנייה</h2>
+      <ol className="timeline">
+        {history.map((step, index) => {
+          const previous = index > 0 ? history[index - 1] : null
+          const isCurrent = index === history.length - 1
+          const gap = previous ? elapsedBetween(previous.at, step.at) : null
+          const showDate = previous === null || !sameDay(previous.at, step.at)
+          const text = statusText(step.status)
+          return (
+            <li
+              key={`${step.status}-${step.at}`}
+              className={`tl-step ${isCurrent ? 'current' : 'done'}`}
+              aria-current={isCurrent ? 'step' : undefined}
+            >
+              <span className="tl-dot" aria-hidden="true" />
+              <div className="tl-text">
+                <p className="tl-title">{text.title}</p>
+                <p className="tl-note">{text.note}</p>
+              </div>
+              <div className="tl-when">
+                <time className="tl-time" dateTime={step.at}>
+                  {formatClock(step.at)}
+                </time>
+                {showDate && <span className="tl-date">{formatDate(step.at)}</span>}
+                {gap && <span className="tl-gap">{gap}</span>}
+              </div>
+            </li>
+          )
+        })}
+      </ol>
+    </section>
   )
 }
 

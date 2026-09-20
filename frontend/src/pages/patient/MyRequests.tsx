@@ -6,11 +6,12 @@ import { Alert } from '../../components/Alert'
 import { Button } from '../../components/Button'
 import { StatusPill } from '../../components/StatusPill'
 import { NEW_REQUEST, requestPath } from './paths'
-import { errorMessage, formatDateTime, isMoving, truncate, usePolling } from './helpers'
+import { errorMessage, formatDateTime, isMoving, statusText, truncate, usePolling } from './helpers'
 
 /**
  * "הפניות שלי" (design §4): one card per request - the shortened text, a
- * StatusPill and the date - and a button for a new one. While any case is still
+ * StatusPill, one line on what the status means and the date - and a button for
+ * a new one. While any case is still
  * moving the list refreshes every 3 s, because the agent advances it in the
  * background (`docs/api.md` §4).
  */
@@ -71,8 +72,9 @@ export function MyRequests() {
                 </span>
                 <span className="req-meta">
                   <StatusPill status={request.status} />
+                  <span className="req-note">{statusText(request.status).note}</span>
                   <time className="req-date" dateTime={request.created_at}>
-                    {formatDateTime(request.created_at)}
+                    נפתחה ב־{formatDateTime(request.created_at)}
                   </time>
                 </span>
               </Link>

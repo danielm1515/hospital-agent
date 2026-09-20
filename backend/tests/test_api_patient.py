@@ -96,7 +96,10 @@ def test_a_patient_submits_a_request_and_lists_it(client):
     assert view["request_text"] == REQUEST
     assert view["missing_document_ids"] == [] and view["missing_document_request_template_id"] is None
     assert set(view) == {"case_id", "status", "created_at", "updated_at", "request_text",
-                         "missing_document_ids", "missing_document_request_template_id", "message"}
+                         "missing_document_ids", "missing_document_request_template_id", "message",
+                         "history"}
+    assert [step["status"] for step in view["history"]] == ["received", "in_progress"]
+    assert all(set(step) == {"status", "at"} for step in view["history"])
 
     listed = client.get("/api/patient/requests", headers=auth(client, PATIENT))
     assert listed.status_code == 200

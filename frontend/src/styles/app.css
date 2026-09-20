@@ -1299,12 +1299,13 @@ img {
   border-color: var(--line-300);
 }
 
+/* Two rows: the request itself, then what is happening with it and when it was opened.
+   One row put the status, its line and the date beside the text, which squeezed the text. */
 .req-link {
   display: flex;
+  flex-direction: column;
   align-items: flex-start;
-  justify-content: space-between;
-  gap: var(--space-4);
-  flex-wrap: wrap;
+  gap: var(--space-2);
   padding: var(--space-4);
   color: inherit;
   text-decoration: none;
@@ -1317,7 +1318,7 @@ img {
 }
 
 .req-text {
-  flex: 1 1 320px;
+  inline-size: 100%;
   min-inline-size: 0;
   font-size: 15px;
   line-height: 24px;
@@ -1336,6 +1337,12 @@ img {
   line-height: 20px;
   color: var(--ink-500);
   font-variant-numeric: tabular-nums;
+}
+
+.req-note {
+  font-size: 13px;
+  line-height: 20px;
+  color: var(--ink-500);
 }
 
 /* ---- One request -------------------------------------------------------- */
@@ -1361,49 +1368,110 @@ img {
   white-space: pre-wrap;
 }
 
+/* The patient's timeline: one row per status change, with the time it happened. */
+
+.tl-block {
+  margin-block-end: var(--space-5);
+  padding: var(--space-4);
+  border: 1px solid var(--line-200);
+  border-radius: var(--radius-md);
+  background: var(--surface-100);
+}
+
+.tl-block .section-h {
+  margin-block-end: var(--space-3);
+}
+
 .timeline {
-  margin: 0 0 var(--space-5);
+  margin: 0;
   padding: 0;
   list-style: none;
-  display: flex;
-  align-items: center;
-  gap: var(--space-5);
-  flex-wrap: wrap;
 }
 
 .tl-step {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  font-size: 13px;
-  line-height: 20px;
-  font-weight: 600;
-  color: var(--ink-500);
+  position: relative;
+  display: grid;
+  grid-template-columns: 12px minmax(0, 1fr) auto;
+  align-items: start;
+  column-gap: var(--space-3);
+  padding-block-end: var(--space-4);
+}
+
+.tl-step:last-child {
+  padding-block-end: 0;
+}
+
+/* The line that joins a step to the next one, under the dot. */
+.tl-step::before {
+  content: '';
+  position: absolute;
+  inset-block: 18px 0;
+  inset-inline-start: 5px;
+  inline-size: 2px;
+  background: var(--line-200);
+}
+
+.tl-step:last-child::before {
+  display: none;
 }
 
 .tl-step .tl-dot {
-  inline-size: 10px;
-  block-size: 10px;
+  margin-block-start: 5px;
+  inline-size: 12px;
+  block-size: 12px;
   border-radius: var(--radius-pill);
-  background: var(--surface-300);
+  background: var(--brand-500);
   flex: none;
 }
 
-.tl-step.done {
+.tl-title {
+  margin: 0;
+  font-size: 14px;
+  line-height: 22px;
+  font-weight: 600;
+  color: var(--ink-900);
+}
+
+.tl-note {
+  margin: 2px 0 0;
+  font-size: 13px;
+  line-height: 20px;
+  color: var(--ink-500);
+}
+
+.tl-when {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+  text-align: end;
+}
+
+.tl-time {
+  font-size: 14px;
+  line-height: 22px;
+  font-weight: 600;
   color: var(--ink-700);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
-.tl-step.done .tl-dot {
-  background: var(--brand-500);
-}
-
-.tl-step.current {
-  color: var(--brand-700);
+.tl-date,
+.tl-gap {
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--ink-500);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
 .tl-step.current .tl-dot {
   background: var(--brand-700);
   box-shadow: 0 0 0 4px var(--brand-100);
+}
+
+.tl-step.current .tl-title {
+  color: var(--brand-700);
 }
 
 /* ---- The missing document (D24) ----------------------------------------- */
@@ -1653,7 +1721,6 @@ img {
   display: flex;
   flex-wrap: wrap;
   align-items: baseline;
-  justify-content: space-between;
   gap: var(--space-2);
 }
 
@@ -1675,11 +1742,35 @@ img {
   color: var(--success-500);
 }
 
-.audit-timeline-time {
+.audit-timeline-day {
+  margin: 0 0 var(--space-2);
   font-size: 12px;
   line-height: 18px;
   color: var(--ink-500);
+  font-variant-numeric: tabular-nums;
+}
+
+.audit-timeline-index {
+  font-size: 11px;
+  line-height: 16px;
+  color: var(--ink-500);
+  font-variant-numeric: tabular-nums;
+}
+
+.audit-timeline-time {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  margin-inline-start: auto;
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--ink-700);
+  font-variant-numeric: tabular-nums;
   white-space: nowrap;
+}
+
+.audit-timeline-gap {
+  color: var(--ink-500);
 }
 
 .audit-timeline-event {

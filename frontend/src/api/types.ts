@@ -79,6 +79,12 @@ export type PatientStatus =
   | 'completed'
   | 'closed'
 
+/** One step of a case's history: an abstract status, and when the case entered it. */
+export interface StatusChange {
+  status: PatientStatus
+  at: IsoDateTime
+}
+
 /** `PatientView`: all a patient may see of a case (§12.3: no escalation or Audit data). */
 export interface PatientView {
   case_id: string
@@ -92,6 +98,11 @@ export interface PatientView {
   missing_document_request_template_id: string | null
   /** The delivered outgoing message iff `status === 'completed'`. */
   message: string | null
+  /**
+   * Every status change, oldest first, with the time the case entered it. The last
+   * entry's `status` is always `status`; a status the case entered twice is listed twice.
+   */
+  history: StatusChange[]
 }
 
 export interface CreateRequestBody {

@@ -37,6 +37,81 @@ export function formatDateTime(iso: string): string {
   return Number.isNaN(date.getTime()) ? iso : DATE_TIME.format(date)
 }
 
+const DATE = new Intl.DateTimeFormat('he-IL', { day: '2-digit', month: '2-digit', year: 'numeric' })
+
+/** The calendar date alone, for a timeline that prints it only when the day changes. */
+export function formatDate(iso: string): string {
+  const date = new Date(iso)
+  return Number.isNaN(date.getTime()) ? iso : DATE.format(date)
+}
+
+const CLOCK = new Intl.DateTimeFormat('he-IL', {
+  hour: '2-digit',
+  minute: '2-digit',
+  second: '2-digit',
+})
+
+/**
+ * The time of day, to the second. The agent moves a case in seconds, so a timeline
+ * without seconds would stamp every step with the same minute.
+ */
+export function formatClock(iso: string): string {
+  const date = new Date(iso)
+  return Number.isNaN(date.getTime()) ? iso : CLOCK.format(date)
+}
+
+/** The same calendar day, so a timeline can print the date only when it changes. */
+export function sameDay(iso: string, other: string): boolean {
+  const [a, b] = [new Date(iso), new Date(other)]
+  if (Number.isNaN(a.getTime()) || Number.isNaN(b.getTime())) return false
+  return a.toDateString() === b.toDateString()
+}
+
+const UNITS: Array<{ ms: number; one: string; two: string; many: string }> = [
+  { ms: 86_400_000, one: 'יום', two: 'יומיים', many: 'ימים' },
+  { ms: 3_600_000, one: 'שעה', two: 'שעתיים', many: 'שעות' },
+  { ms: 60_000, one: 'דקה', two: 'שתי דקות', many: 'דקות' },
+  { ms: 1000, one: 'שנייה', two: 'שתי שניות', many: 'שניות' },
+]
+
+/**
+ * How long passed between two steps, in Hebrew ("כעבור 4 שניות"). `null` when the two
+ * are in the same second, or either timestamp is unusable - there is nothing to say then.
+ */
+export function elapsedBetween(from: string, to: string): string | null {
+  // Both ends are floored to the second first, so the gap always agrees with the two
+  // times printed beside it: 01:58:12.9 to 01:58:47.4 reads as 35 seconds, not 34.
+  const second = (iso: string) => Math.floor(new Date(iso).getTime() / 1000) * 1000
+  const gap = second(to) - second(from)
+  if (!Number.isFinite(gap) || gap < 1000) return null
+  const unit = UNITS.find((candidate) => gap >= candidate.ms) ?? UNITS[UNITS.length - 1]
+  const count = Math.floor(gap / unit.ms)
+  if (count === 1) return `כעבור ${unit.one}`
+  if (count === 2) return `כעבור ${unit.two}`
+  return `כעבור ${count} ${unit.many}`
+}
+
+/**
+ * What each status means, in the patient's own words: a title for the timeline step,
+ * and one line saying what it means for them. The patient sees only these six abstract
+ * statuses, so nothing here names a State, an event or a reason (§12.3).
+ */
+const STATUS_TEXT: Record<PatientStatus, { title: string; note: string }> = {
+  received: { title: 'הפנייה נקלטה', note: 'הפנייה התקבלה במערכת וממתינה לטיפול.' },
+  in_progress: { title: 'הפנייה בטיפול', note: 'בדיקת התור, המסמכים הנדרשים והוראות ההכנה.' },
+  needs_document: { title: 'ממתינה למסמך', note: 'כדי להמשיך נדרש מסמך שעדיין לא הועלה.' },
+  in_review: { title: 'הועברה לצוות', note: 'איש צוות בודק את הפנייה. מידע רפואי אינו נמסר אוטומטית.' },
+  completed: { title: 'הפנייה הושלמה', note: 'נשלחה אליכם הודעת סטטוס.' },
+  closed: { title: 'הפנייה נסגרה', note: 'הטיפול הסתיים בלי הודעה אוטומטית.' },
+}
+
+/** A status this version does not know is still shown, without inventing a meaning for it. */
+const UNKNOWN_STATUS = { title: 'עדכון בפנייה', note: 'מצב הפנייה השתנה.' }
+
+export function statusText(status: PatientStatus): { title: string; note: string } {
+  return STATUS_TEXT[status] ?? UNKNOWN_STATUS
+}
+
 /**
  * The demo's document ids, for a readable line next to the id itself. An id the
  * demo does not know is shown as the id alone - the UI never invents a name.

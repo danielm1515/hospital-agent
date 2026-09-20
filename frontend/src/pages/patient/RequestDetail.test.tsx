@@ -199,8 +199,42 @@ describe('RequestDetail: the other statuses', () => {
     const { container } = renderDetail()
     await screen.findByText('הפנייה שלכם')
     const current = container.querySelector('.tl-step.current')
-    expect(current).toHaveTextContent('בטיפול')
+    expect(current).toHaveTextContent('הפנייה בטיפול')
     expect(current).toHaveAttribute('aria-current', 'step')
+  })
+
+  it('the timeline is one step per status change, in order, each with its time', async () => {
+    getRequest.mockResolvedValue(
+      patientView({
+        status: 'completed',
+        message: 'התור שלך קבוע ל-23/09/2026 בשעה 08:30.',
+        history: [
+          { status: 'received', at: '2026-09-19T22:12:47Z' },
+          { status: 'in_progress', at: '2026-09-19T22:12:49Z' },
+          { status: 'needs_document', at: '2026-09-19T22:12:53Z' },
+          { status: 'in_progress', at: '2026-09-19T22:20:53Z' },
+          { status: 'completed', at: '2026-09-19T22:21:01Z' },
+        ],
+      }),
+    )
+    const { container } = renderDetail()
+    await screen.findByText('הפנייה שלכם')
+
+    const steps = [...container.querySelectorAll('.tl-step')]
+    expect(steps.map((step) => step.querySelector('.tl-title')?.textContent)).toEqual([
+      'הפנייה נקלטה',
+      'הפנייה בטיפול',
+      'ממתינה למסמך',
+      'הפנייה בטיפול',
+      'הפנייה הושלמה',
+    ])
+    // Every step says when it happened, to the second - the agent moves a case in seconds.
+    expect(steps.every((step) => /\d{2}:\d{2}:\d{2}/.test(step.textContent ?? ''))).toBe(true)
+    // And how long the step before it took.
+    expect(steps[1]).toHaveTextContent('כעבור שתי שניות')
+    expect(steps[3]).toHaveTextContent('כעבור 8 דקות')
+    // The date is printed once, on the first step, since all five are the same day.
+    expect(container.querySelectorAll('.tl-date')).toHaveLength(1)
   })
 
   it('shows a Hebrew message for a case that is not the patient’s', async () => {

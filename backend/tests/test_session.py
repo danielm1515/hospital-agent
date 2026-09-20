@@ -4,6 +4,7 @@ from datetime import UTC, datetime
 import pytest
 
 from hospital_agent import data_log, repository
+from hospital_agent import session as session_module
 from hospital_agent.case import CaseRecord
 from hospital_agent.execution.gateway import MockGateway
 from hospital_agent.llm.orchestrator import Orchestrator
@@ -183,6 +184,60 @@ def test_a_completed_case_shows_the_delivered_message(session, sm, app_engine, o
         [message] = data_log.entries(conn, case_id, data_log.DataKind.OUTGOING_MESSAGE)
     assert (view.status, view.message) == ("completed", message.content)
     assert view.missing_document_ids == [] and view.missing_document_request_template_id is None
+
+
+def test_the_history_is_every_status_change_with_its_time(session, sm, app_engine, orchestrator):
+    """The patient screen's timeline: what happened, and when (docs/api.md §4)."""
+    case_id = session.submit_request(PATIENT, REQUEST, identity_verified=True)
+    assert orchestrator.run_case(case_id) is State.AWAITING_PATIENT_INPUT
+    session.upload_document(PATIENT, case_id, "blood_test", "Blood test results: normal.")
+    assert orchestrator.run_case(case_id) is State.COMPLETED
+
+    view = session.patient_view(case_id)
+    assert [change.status for change in view.history] == [
+        "received", "in_progress", "needs_document", "in_progress", "completed"]
+    assert view.history[-1].status == view.status
+    times = [change.at for change in view.history]
+    assert times == sorted(times)
+
+
+def test_the_history_holds_only_abstract_statuses_and_times(session):
+    case_id = session.submit_request(PATIENT, REQUEST, identity_verified=True)
+    view = session.patient_view(case_id)
+    assert [change.status for change in view.history] == ["received", "in_progress"]
+    assert all(change.status in set(STATUS.values()) for change in view.history)
+    assert all(vars(change).keys() == {"status", "at"} for change in view.history)
+
+
+def test_the_history_skips_blocked_rows_and_unchanged_statuses():
+    """Only committed transitions carry a state, and a transition the patient could not have
+    noticed - Planning to Executing, both `in_progress` - adds no entry."""
+    now = datetime.now(UTC)
+    def row(record_type, state_after, seconds):
+        return repository.AuditEntry(
+            case_id="CASE-X", patient_id=PATIENT, record_type=record_type, event="E",
+            state_before=None, state_after=state_after, rule_version="v",
+            recorded_at=now.replace(microsecond=seconds))
+    trace = [
+        row("Transition", State.RECEIVED.value, 1),
+        row("Transition", State.CLASSIFYING.value, 2),
+        row("Blocked", State.AWAITING_HUMAN_REVIEW.value, 3),  # nothing changed: not a step
+        row("Transition", State.PLANNING.value, 4),            # still in_progress
+        row("ExecutionStarted", None, 5),
+        row("Transition", State.AWAITING_HUMAN_REVIEW.value, 6),
+    ]
+    history = session_module.status_history(trace, delivered=False)
+    assert [(c.status, c.at.microsecond) for c in history] == [
+        ("received", 1), ("in_progress", 2), ("in_review", 6)]
+
+
+def test_a_completed_history_without_a_delivery_reads_closed():
+    now = datetime.now(UTC)
+    trace = [repository.AuditEntry(
+        case_id="CASE-X", patient_id=PATIENT, record_type="Transition", event="E",
+        state_before=None, state_after=State.COMPLETED.value, rule_version="v", recorded_at=now)]
+    assert [c.status for c in session_module.status_history(trace, delivered=False)] == ["closed"]
+    assert [c.status for c in session_module.status_history(trace, delivered=True)] == ["completed"]
 
 
 def test_a_view_never_shows_a_tombstoned_request_text(session, sm, app_engine):

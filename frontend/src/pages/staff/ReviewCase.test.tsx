@@ -109,6 +109,49 @@ describe('ReviewCase', () => {
     expect(screen.getByText('medical_answer_attempt')).toBeInTheDocument()
   })
 
+  it('numbers the audit rows and times them to the millisecond, with the gap between them', async () => {
+    vi.mocked(api.getContext).mockResolvedValue(
+      context({
+        trace: [
+          {
+            audit_id: 36,
+            record_type: 'Transition',
+            event: 'REQUEST_SUBMITTED',
+            state_before: null,
+            state_after: 'Received',
+            action: null,
+            policy_result: null,
+            policy_reasons: [],
+            recorded_at: '2026-09-19T22:12:39.678380Z',
+          },
+          {
+            audit_id: 37,
+            record_type: 'Transition',
+            event: 'REQUEST_VALIDATED',
+            state_before: 'Received',
+            state_after: 'Classifying',
+            action: null,
+            policy_result: null,
+            policy_reasons: [],
+            recorded_at: '2026-09-19T22:12:39.890380Z',
+          },
+        ],
+      }),
+    )
+    const { container } = renderCase()
+    await screen.findByText('REQUEST_VALIDATED')
+
+    const items = [...container.querySelectorAll('.audit-timeline-item')]
+    expect(items.map((item) => item.querySelector('.audit-timeline-index')?.textContent)).toEqual(['1.', '2.'])
+    // Both rows land in the same minute, so the time has to carry seconds and milliseconds
+    // (the hour is the reader's local one, whatever the machine's time zone is).
+    expect(items[0]).toHaveTextContent(/\d{2}:12:39[.,]678/)
+    expect(items[1]).toHaveTextContent(/\d{2}:12:39[.,]890/)
+    expect(items[1]).toHaveTextContent('+0.212 שנ׳')
+    expect(items[0].querySelector('.audit-timeline-gap')).toBeNull()
+    expect(screen.getByText(/2 רשומות/)).toBeInTheDocument()
+  })
+
   it('renders buttons only for allowed_decisions', async () => {
     renderCase()
 

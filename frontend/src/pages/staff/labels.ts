@@ -95,6 +95,47 @@ export function formatDateTime(value: string | null | undefined): string {
   return Number.isNaN(date.getTime()) ? value : DATE_TIME.format(date)
 }
 
+const AUDIT_CLOCK = new Intl.DateTimeFormat('he-IL', {
+  hour: '2-digit',
+  minute: '2-digit',
+  second: '2-digit',
+  fractionalSecondDigits: 3,
+})
+
+/**
+ * An audit row's time, to the millisecond. A whole case's rows are written within a
+ * second or two, so minutes alone would stamp the entire trace with one time.
+ */
+export function formatAuditTime(value: string | null | undefined): string {
+  if (!value) return '—'
+  const date = new Date(value)
+  return Number.isNaN(date.getTime()) ? value : AUDIT_CLOCK.format(date)
+}
+
+const DATE_ONLY = new Intl.DateTimeFormat('he-IL', {
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
+})
+
+export function formatDate(value: string | null | undefined): string {
+  if (!value) return '—'
+  const date = new Date(value)
+  return Number.isNaN(date.getTime()) ? value : DATE_ONLY.format(date)
+}
+
+/**
+ * How long after the previous row this one was written ("+0.412 שנ׳"), so the trace
+ * reads as a sequence and not as a list of near-identical timestamps. `null` when
+ * there is no previous row or either time is unusable.
+ */
+export function gapAfter(previous: string | null | undefined, value: string): string | null {
+  if (!previous) return null
+  const gap = new Date(value).getTime() - new Date(previous).getTime()
+  if (!Number.isFinite(gap) || gap < 0) return null
+  return `+${(gap / 1000).toFixed(3)} שנ׳`
+}
+
 const pad = (value: number) => String(value).padStart(2, '0')
 
 /**

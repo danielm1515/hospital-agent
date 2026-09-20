@@ -150,7 +150,12 @@ Every patient route answers with this object, and nothing else:
   "request_text": "When is my appointment and which documents do I need?",
   "missing_document_ids": ["blood_test"],
   "missing_document_request_template_id": "missing-document-v1",
-  "message": null
+  "message": null,
+  "history": [
+    {"status": "received", "at": "2026-09-19T22:12:47.693947Z"},
+    {"status": "in_progress", "at": "2026-09-19T22:12:47.812004Z"},
+    {"status": "needs_document", "at": "2026-09-19T22:12:47.898132Z"}
+  ]
 }
 ```
 
@@ -169,6 +174,12 @@ Every patient route answers with this object, and nothing else:
   `missing_document_request_template_id` is then `"missing-document-v1"` (D24) - the UI
   renders the request for the document itself, the system never sends one.
 - `message` is non-null only in `completed`: the exact text that was delivered.
+- `history` is the case's abstract status over time, oldest first: one entry each time the
+  status actually changed, with the time the case entered it. It holds the same six values
+  as `status` and nothing else - never a State, an event, an escalation kind or a reason
+  (§12.3) - and a status the case entered twice appears twice. The last entry's `status`
+  always equals `status`, and the first is the submission. It is `[]` only for a case with
+  no committed transition, which the patient routes never return.
 
 **Polling.** The case advances in the background, so after a submit or an upload the UI
 polls `GET /api/patient/requests/{case_id}` (every ~2 s is plenty) until `status` stops

@@ -48,7 +48,23 @@ describe('MyRequests', () => {
     expect(screen.getByText('הושלמה')).toBeInTheDocument()
     expect(container.querySelectorAll('.req-card')).toHaveLength(2)
     expect(container.querySelector('time')).toHaveAttribute('datetime', '2026-09-19T22:12:47.693947Z')
+    expect(container.querySelector('time')).toHaveTextContent('נפתחה ב־')
     expect(screen.getAllByRole('link')[0]).toHaveAttribute('href', '/patient/requests/CASE-1')
+  })
+
+  it('says in one line what each status means for the patient', async () => {
+    listRequests.mockResolvedValue([
+      patientView({ case_id: 'CASE-1', status: 'needs_document', missing_document_ids: ['blood_test'] }),
+      patientView({ case_id: 'CASE-2', status: 'in_review' }),
+    ])
+    const { container } = renderList()
+    await screen.findByText('ממתינה למסמך')
+    expect([...container.querySelectorAll('.req-note')].map((note) => note.textContent)).toEqual([
+      'כדי להמשיך נדרש מסמך שעדיין לא הועלה.',
+      'איש צוות בודק את הפנייה. מידע רפואי אינו נמסר אוטומטית.',
+    ])
+    // §12.3: the line is about the abstract status alone - never a kind or a reason.
+    expect(screen.queryByText(/MedicalQuestion|AwaitingHumanReview/)).not.toBeInTheDocument()
   })
 
   it('shows an empty state when there are no requests', async () => {

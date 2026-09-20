@@ -47,6 +47,14 @@ class EventRejected(Exception):
 
 
 @dataclass(frozen=True)
+class StatusChange:
+    """One entry of the case's history: the abstract status, and when the case entered it."""
+
+    status: str
+    at: datetime
+
+
+@dataclass(frozen=True)
 class PatientView:
     case_id: str
     status: str
@@ -56,6 +64,7 @@ class PatientView:
     missing_document_ids: list[str]
     missing_document_request_template_id: str | None
     message: str | None
+    history: list[StatusChange]
 
 
 _STATUS: dict[State, str] = {
@@ -66,12 +75,40 @@ _STATUS: dict[State, str] = {
 }
 
 
-def patient_status(case: CaseRecord, delivered: bool) -> str:
-    """The abstract status a patient sees. `delivered`: the case has a committed CASE_RESOLVED
-    row - a Completed case without one was closed by a reviewer, and nothing was sent."""
-    if case.state is State.COMPLETED:
+def abstract_status(state: State, delivered: bool) -> str:
+    """The abstract status a patient sees for a state. `delivered`: the case has a committed
+    CASE_RESOLVED row - a Completed case without one was closed by a reviewer, and nothing
+    was sent."""
+    if state is State.COMPLETED:
         return "completed" if delivered else "closed"
-    return _STATUS.get(case.state, "in_progress")
+    return _STATUS.get(state, "in_progress")
+
+
+def patient_status(case: CaseRecord, delivered: bool) -> str:
+    return abstract_status(case.state, delivered)
+
+
+def status_history(trace: list[repository.AuditEntry], delivered: bool) -> list[StatusChange]:
+    """The case's abstract status over time, so the patient can see what happened and when.
+
+    Only committed transitions carry a new state, and only the abstract status is exposed -
+    the same six values `patient_status` returns, never a State, an event or a reason (§12.3).
+    A transition that leaves the abstract status unchanged (Planning to Executing, say) adds
+    nothing, so what is left is exactly the changes the patient could have noticed.
+    """
+    changes: list[StatusChange] = []
+    for row in trace:
+        if row.record_type != "Transition" or row.state_after is None:
+            continue
+        try:
+            state = State(row.state_after)
+        except ValueError:  # a state this version does not know: not the patient's problem
+            continue
+        status = abstract_status(state, delivered)
+        if changes and changes[-1].status == status:
+            continue
+        changes.append(StatusChange(status=status, at=row.recorded_at))
+    return changes
 
 
 class SessionService:
@@ -156,6 +193,7 @@ class SessionService:
             resolved = [row for row in trace if row.record_type == "Transition"
                         and row.event == Event.CASE_RESOLVED.value]
             status = patient_status(case, delivered=bool(resolved))
+            history = status_history(trace, delivered=bool(resolved))
             message = self._delivered_message(conn, case.case_id, resolved[-1]) if status == "completed" else None
         needs_document = status == "needs_document"
         missing = sorted(set(case.required_documents or []) - set(case.held_documents)) if needs_document else []
@@ -168,6 +206,7 @@ class SessionService:
             missing_document_ids=missing,
             missing_document_request_template_id=MISSING_DOCUMENT_TEMPLATE_ID if needs_document else None,
             message=message,
+            history=history,
         )
 
     @staticmethod

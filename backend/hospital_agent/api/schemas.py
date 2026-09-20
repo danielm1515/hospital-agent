@@ -91,6 +91,15 @@ class DocumentUpload(BaseModel):
     content: Annotated[str, StringConstraints(min_length=1, max_length=20000)]
 
 
+class PatientStatusChange(BaseModel):
+    """One step of the case's history: an abstract status, and when the case entered it."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    status: str
+    at: datetime
+
+
 class PatientCaseView(BaseModel):
     """What a patient may see (design decision 8): never an escalation kind, a reason or Audit."""
 
@@ -104,6 +113,7 @@ class PatientCaseView(BaseModel):
     missing_document_ids: list[str]
     missing_document_request_template_id: str | None
     message: str | None
+    history: list[PatientStatusChange]
 
 
 # --- the staff's side -----------------------------------------------------------------------
