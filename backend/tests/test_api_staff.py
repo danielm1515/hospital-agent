@@ -268,6 +268,9 @@ def test_admin_staff_gets_403_from_the_answer_route(client, sm, app_engine):
 
     assert refused.status_code == 403 and refused.json()["detail"] == "clinical_staff_only"
     assert sm.load(d.case_id).state is State.AWAITING_HUMAN_REVIEW
+    with app_engine.connect() as conn:
+        assert data_log.entries(conn, d.case_id, data_log.DataKind.OUTGOING_MESSAGE) == []
+        assert repository.content_approvals_for(conn, d.case_id, None) == []
 
 
 def test_an_escalation_that_is_not_a_medical_question_is_409(client, staff, sm, app_engine):
@@ -276,6 +279,24 @@ def test_an_escalation_that_is_not_a_medical_question_is_409(client, staff, sm, 
     refused = answer(client, staff, d.case_id)
 
     assert refused.status_code == 409 and refused.json()["detail"] == "decision_not_allowed"
+
+
+def test_a_whitespace_only_answer_is_409_answer_required(client, staff, sm, app_engine):
+    """The schema's min_length=1 lets a whitespace-only string through; the service's own
+    trim check is what actually rejects it - so this input path needs its own coverage."""
+    d = medical_question(sm, app_engine)
+
+    refused = answer(client, staff, d.case_id, answer="   ")
+
+    assert refused.status_code == 409 and refused.json()["detail"] == "answer_required"
+
+
+def test_a_whitespace_only_reason_is_409_reason_required(client, staff, sm, app_engine):
+    d = medical_question(sm, app_engine)
+
+    refused = answer(client, staff, d.case_id, reason="   ")
+
+    assert refused.status_code == 409 and refused.json()["detail"] == "reason_required"
 
 
 def test_the_answer_route_refuses_an_empty_body_without_echoing_it(client, staff, sm, app_engine):

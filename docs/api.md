@@ -488,10 +488,19 @@ the case closes. Request:
 
 `200`: `{"case_id": "...", "state": "Completed"}`.
 
-- `403 clinical_staff_only` - only `clinical_staff` may grant a ContentApproval (§12.4). This is
-  a role rule, not an authentication one: an `admin_staff` token reaches the route and is refused.
-- `409 decision_not_allowed` - the escalation is not a `MedicalQuestion`.
-- `409 not_in_review`, `409 context_changed`, `404 case_not_found`, `422 invalid_body`.
+Errors - all of them leave the case exactly as it was:
+
+| Status | `detail` | When |
+|---|---|---|
+| 404 | `case_not_found` | Unknown case |
+| 409 | `not_in_review` | The case is not in `AwaitingHumanReview` (someone else decided first - refresh the queue) |
+| 409 | `context_changed` | `shown_context_ref` is not the current one |
+| 403 | `clinical_staff_only` | Only `clinical_staff` may grant a ContentApproval (§12.4). This is a role rule, not an authentication one: an `admin_staff` token reaches the route and is refused |
+| 409 | `decision_not_allowed` | The escalation is not a `MedicalQuestion` |
+| 409 | `answer_required` | `answer` is empty or blank - reachable even past the schema's `min_length=1`, because a whitespace-only string passes it and then fails the trim check |
+| 409 | `reason_required` | `reason` is empty or blank, same as above |
+| 409 | other codes | Any other guard that refused the `HUMAN_RESOLVED_CASE` transition; show `detail` and re-fetch the case |
+| 422 | `invalid_body` | A field is over its length limit |
 
 ### DELETE /api/staff/cases/{case_id}/data/{entry_id}
 
