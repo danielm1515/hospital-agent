@@ -264,16 +264,28 @@ class HumanReviewService:
                                                   shown_context_ref, execution_id, entry.content_hash)
         workflow_id = self._grant(case, reviewer_id, reviewer_role, "resolve", reason,
                                   shown_context_ref, None, None)
-        result = self.sm.apply(case_id, Event.HUMAN_RESOLVED_CASE,
-                               {"approval_id": workflow_id, "content_approval_id": content_id},
-                               Component.EXTERNAL)
+        try:
+            result = self.sm.apply(case_id, Event.HUMAN_RESOLVED_CASE,
+                                   {"approval_id": workflow_id, "content_approval_id": content_id},
+                                   Component.EXTERNAL)
+        except Exception:
+            # Fail closed, the raising exit: sm.apply() can also raise instead of returning
+            # a not-committed result - ReprocessLimitExceeded, or the Temporal Monitor being
+            # unavailable, which by design lets its exception through uncaught (see CLAUDE.md,
+            # "If the Monitor is unavailable, nothing commits"). Either way the text just
+            # recorded above was never authorised to be shown, so it must not stay readable.
+            self._tombstone_unauthorised(entry.entry_id)
+            raise
         if not result.committed:
             # Fail closed: the text is medical content that was never authorised to be shown.
-            with self.engine.begin() as conn:
-                data_log.tombstone(conn, entry.entry_id, self.sm.clock())
+            self._tombstone_unauthorised(entry.entry_id)
             raise AnswerRejected(result.reason or "blocked")
         self.wake()
         return result
+
+    def _tombstone_unauthorised(self, entry_id: str) -> None:
+        with self.engine.begin() as conn:
+            data_log.tombstone(conn, entry_id, self.sm.clock())
 
     def _grant_content_approval(self, case: CaseRecord, reviewer_id: str, reviewer_role: str,
                                 reason: str, shown_context_ref: str, execution_id: str,

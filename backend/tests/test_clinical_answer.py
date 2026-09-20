@@ -356,6 +356,33 @@ def test_a_blocked_transition_tombstones_the_recorded_answer(review, sm, app_eng
     assert message.deleted_at is not None
 
 
+def test_a_raising_transition_tombstones_the_recorded_answer_too(review, sm, app_engine, monkeypatch):
+    """The other fail-closed exit (§12.3): sm.apply() can raise instead of returning a
+    not-committed result - ReprocessLimitExceeded, or the Temporal Monitor being unavailable,
+    which by design lets its exception through. The text must not stay readable then either."""
+    d = escalated(sm, app_engine)
+    real_apply = sm.apply
+
+    class _MonitorUnavailable(RuntimeError):
+        pass
+
+    def raising_resolve(case_id, event, payload=None, source=Component.EXTERNAL, **kwargs):
+        if event is Event.HUMAN_RESOLVED_CASE and (payload or {}).get("content_approval_id"):
+            raise _MonitorUnavailable("temporal monitor unavailable")
+        return real_apply(case_id, event, payload, source, **kwargs)
+
+    monkeypatch.setattr(sm, "apply", raising_resolve)
+
+    with pytest.raises(_MonitorUnavailable):
+        answer_it(review, d)
+
+    assert d.state is State.AWAITING_HUMAN_REVIEW
+    with app_engine.connect() as conn:
+        [message] = data_log.entries(conn, d.case_id, data_log.DataKind.OUTGOING_MESSAGE)
+    assert message.content is None
+    assert message.deleted_at is not None
+
+
 # --- what the patient sees -----------------------------------------------------------------
 
 def test_the_patient_sees_the_answer_as_a_delivered_message(review, session, sm, app_engine):
