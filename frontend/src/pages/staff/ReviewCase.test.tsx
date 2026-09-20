@@ -152,6 +152,16 @@ describe('ReviewCase', () => {
     expect(screen.getByText(/2 רשומות/)).toBeInTheDocument()
   })
 
+  it('says in words which state a row came from and which it went to', async () => {
+    renderCase()
+    await screen.findByText('REQUEST_SUBMITTED')
+
+    // An arrow between two Latin names is ambiguous on an RTL line; the words are not.
+    const states = document.querySelector('.audit-timeline-states')
+    expect(states?.textContent).toBe('נפתח במצב Received')
+    expect(document.querySelector('.audit-timeline-arrow')).toBeNull()
+  })
+
   it('renders buttons only for allowed_decisions', async () => {
     renderCase()
 

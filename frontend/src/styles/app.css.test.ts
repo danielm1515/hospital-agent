@@ -94,6 +94,15 @@ describe('app.css structural integrity', () => {
     expect(depth).toBe(0)
   })
 
+  it('isolates Latin runs instead of letting them pick their own direction', () => {
+    // Regression test: `unicode-bidi: plaintext` gives a Latin-only line its own LTR
+    // direction, so on this RTL page every code (an event name, a State, a document id)
+    // jumped to the opposite edge from the Hebrew label next to it. `isolate` keeps the
+    // line's RTL direction and only stops the Latin run from reordering what surrounds it.
+    expect(stripComments(css)).not.toContain('unicode-bidi: plaintext')
+    expect(stripComments(css)).toContain('unicode-bidi: isolate')
+  })
+
   it('never declares the same top-level selector in two separate rule blocks', () => {
     // Regression test: a merge has repeatedly left a selector declared twice at the
     // top level (`.timeline`, `.control .select`, `.plan-steps li`, `.page-head`), so

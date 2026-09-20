@@ -1111,8 +1111,11 @@ img {
   font-family: var(--font-mono);
   font-size: 12px;
   letter-spacing: 0.04em;
-  /* Ids and hashes are Latin: let the browser lay each one out on its own. */
-  unicode-bidi: plaintext;
+  /* Ids, states and event names are Latin inside Hebrew text. `isolate` lays each one
+     out left-to-right on its own without letting it reorder the line around it, and -
+     unlike `plaintext` - it keeps the line's own RTL direction, so a Latin value still
+     starts where its Hebrew label does instead of jumping to the opposite edge. */
+  unicode-bidi: isolate;
 }
 
 .demo-users {
@@ -1527,11 +1530,15 @@ img {
 
 /* ---- Case detail (monitor) --------------------------------------------- */
 
+/* The expanded row spans every column of the table, which can be far wider than the
+   screen. Capping it keeps a fact's value next to its label and the audit row's time
+   next to the row, instead of flinging them to opposite edges of a very wide cell. */
 .case-detail {
   display: flex;
   flex-direction: column;
   gap: var(--space-4);
   padding-block: var(--space-2);
+  max-inline-size: 960px;
 }
 
 /* The expanded case: four labelled groups of facts, each fact "label: value" on
@@ -1539,8 +1546,8 @@ img {
 
 .fact-groups {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-  gap: var(--space-4);
+  grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
+  gap: var(--space-3);
 }
 
 .fact-group {
@@ -1592,7 +1599,9 @@ img {
   font-size: 14px;
   line-height: 22px;
   color: var(--ink-900);
-  overflow-wrap: anywhere;
+  /* `break-word`, not `anywhere`: a value breaks at its spaces first, so a document
+     id or an action name stays in one piece unless it alone is wider than the cell. */
+  overflow-wrap: break-word;
 }
 
 .cell-sub {
@@ -1828,7 +1837,6 @@ img {
   display: flex;
   align-items: baseline;
   gap: var(--space-2);
-  margin-inline-start: auto;
   font-size: 12px;
   line-height: 18px;
   color: var(--ink-700);
@@ -1845,16 +1853,25 @@ img {
   color: var(--ink-900);
 }
 
+.audit-timeline-event .mono {
+  font-size: 13px;
+  font-weight: 600;
+}
+
 .audit-timeline-states {
   margin: 0;
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
+  font-size: 12px;
+  line-height: 18px;
   color: var(--ink-500);
 }
 
-.audit-timeline-arrow {
-  color: var(--ink-500);
+.audit-timeline-states .state {
+  margin-inline: 2px;
+  color: var(--ink-700);
+}
+
+.audit-timeline-same {
+  font-style: italic;
 }
 
 .audit-timeline-meta {
