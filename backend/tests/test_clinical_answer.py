@@ -197,6 +197,7 @@ def test_content_approval_id_is_ignored_on_any_other_event(sm, app_engine):
 from hospital_agent import data_log                                    # noqa: E402
 from hospital_agent.human_review import AnswerRejected, ContextChanged, HumanReviewService, NotInReview  # noqa: E402
 from hospital_agent.session import SessionService                      # noqa: E402
+from hospital_agent.state_manager import TransitionResult               # noqa: E402
 
 NURSE = ("coordinator_nurse", "clinical_staff")
 ADMIN = ("admin_coordinator", "admin_staff")
@@ -300,3 +301,29 @@ def test_a_case_that_is_not_in_review_is_refused(review, sm, app_engine):
     d.submit()
     with pytest.raises(NotInReview):
         answer_it(review, d)
+
+
+def test_a_blocked_transition_tombstones_the_recorded_answer(review, sm, app_engine, monkeypatch):
+    """Fail closed (§14): if HUMAN_RESOLVED_CASE does not commit, the text just recorded in
+    the Data Log must not stay readable - it was never authorised to be shown."""
+    d = escalated(sm, app_engine)
+    real_apply = sm.apply
+
+    def blocked_resolve(case_id, event, payload=None, source=Component.EXTERNAL, **kwargs):
+        if event is Event.HUMAN_RESOLVED_CASE and (payload or {}).get("content_approval_id"):
+            case = sm.load(case_id)
+            return TransitionResult(case_id=case_id, committed=False, state_before=case.state,
+                                     state_after=case.state, reason="content_approval_invalid")
+        return real_apply(case_id, event, payload, source, **kwargs)
+
+    monkeypatch.setattr(sm, "apply", blocked_resolve)
+
+    with pytest.raises(AnswerRejected) as rejected:
+        answer_it(review, d)
+
+    assert rejected.value.reason == "content_approval_invalid"
+    assert d.state is State.AWAITING_HUMAN_REVIEW
+    with app_engine.connect() as conn:
+        [message] = data_log.entries(conn, d.case_id, data_log.DataKind.OUTGOING_MESSAGE)
+    assert message.content is None
+    assert message.deleted_at is not None
