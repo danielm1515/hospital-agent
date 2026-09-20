@@ -24,7 +24,7 @@ The user wants the project finished without being asked questions. Until they sa
 - **Keep the process, drop the approval waits.** Each sub-project still gets a design doc, a prototype-validated plan, subagent-driven execution with task reviews and a final whole-branch review. The user's approval of each step is given in advance; merge a sub-project to `main` once its final review is clean and the full suite passes.
 - **Parallel agents are welcome** where tasks are independent (isolated worktrees, each with its own compose project and database: `docker compose -p <name> -f docker-compose.yml -f <override without host ports>`). Never disturb the user's running stack on 54322 / 8000 except to restart it after a merge.
 - **Never** read, print or commit the OpenAI key; never push to a remote; never delete user data.
-- Remaining work: none within the demo's own scope (sub-projects 1-7 are all implemented and merged - see *Verification targets* and *What is left*). What is left is only what the spec itself defers: the companion document's (המסמך הנלווה) implementation conditions, not in the repo, and anything beyond the §0 demo scope, which the spec calls the vision document (אפיון מלא).
+- Remaining work: none within the demo's own scope (sub-projects 1-8 are all implemented and merged - see *Verification targets* and *What is left*). What is left is only what the spec itself defers: the companion document's (המסמך הנלווה) implementation conditions, not in the repo, and anything beyond the §0 demo scope, which the spec calls the vision document (אפיון מלא).
 
 ## Commands
 
