@@ -27,7 +27,7 @@ from typing import Any, Protocol
 from sqlalchemy.engine import Connection, Engine
 
 from . import repository
-from .case import MAX_ATTEMPTS, CaseRecord, ExecutionRecord, new_case
+from .case import MAX_ATTEMPTS, ApprovalRecord, CaseRecord, ExecutionRecord, new_case
 from .escalation import EscalationCoordinator
 from .execution.verify import verify_start
 from .fsm import Effect, Resolution, apply_effects, resolve
@@ -36,6 +36,7 @@ from .naming import (
     EVENT_OWNER,
     NON_TRANSITION_EVENTS,
     POLICY_DECISION_EVENTS,
+    Action,
     Component,
     EscalationKind,
     Event,
@@ -112,6 +113,41 @@ def _policy_evidence(event: Event, payload: Mapping[str, Any]) -> dict[str, bool
         return {}
     evidence = payload.get("evidence") or {}
     return {str(k): v for k, v in evidence.items() if k in POLICY_EVIDENCE_KEYS and isinstance(v, bool)}
+
+
+CONTENT_APPROVAL_INVALID = "content_approval_invalid"
+
+
+def _clinical_answer_approval(
+    conn: Connection, case: CaseRecord, approval_id: str, now: datetime
+) -> ApprovalRecord | None:
+    """The ContentApproval that authorises a clinical answer, or None if it cannot be used.
+
+    §12.4: a ContentApproval is granted by clinical_staff only and is bound to one exact
+    message by execution_id + action + content_hash. Everything is re-checked here, inside
+    the transaction that consumes it (§6.3), because this is the only place that can hold
+    the check and the consumption together. Anything unexpected returns None and the caller
+    blocks the transition (§14).
+    """
+    approval = repository.load_approval(conn, approval_id)
+    if approval is None or approval.approval_type != "ContentApproval":
+        return None
+    if (approval.case_id, approval.patient_id) != (case.case_id, case.patient_id):
+        return None
+    if approval.reviewer_role != "clinical_staff":
+        return None
+    if approval.action != Action.ANSWER_CLINICAL_QUESTION.value:
+        return None
+    if not approval.content_hash or not approval.execution_id:
+        return None
+    if approval.consumed_at is not None or approval.valid_until <= now:
+        return None
+    execution = repository.load_execution(conn, approval.execution_id)
+    if execution is None or execution.case_id != case.case_id:
+        return None
+    if execution.content_hash != approval.content_hash or not execution.medical_content_flag:
+        return None
+    return approval
 
 
 @dataclass(frozen=True)
@@ -234,6 +270,19 @@ class StateManager:
                 # Before the guards run: DeliveryConfirmed reads the finished execution row.
                 self._record_outcome(conn, case, event, outcome, now)
 
+            content_approval = None
+            if event is Event.HUMAN_RESOLVED_CASE and payload.get("content_approval_id"):
+                if case is None:
+                    return self._block(conn, None, event, CONTENT_APPROVAL_INVALID, now, payload=payload)
+                content_approval = _clinical_answer_approval(
+                    conn, case, payload["content_approval_id"], now)
+                if content_approval is None:
+                    return self._block(conn, case, event, CONTENT_APPROVAL_INVALID, now, payload=payload)
+                # The audit row describes what was verified, never what the caller claimed.
+                payload = {**payload, "action": content_approval.action,
+                           "content_hash": content_approval.content_hash,
+                           "execution_id": content_approval.execution_id}
+
             ctx = GuardContext(
                 case=case,
                 event=event,
@@ -279,6 +328,9 @@ class StateManager:
                 # Policy design decision 4: a PolicyReview override is consumed by the next
                 # Policy decision, whatever it is, in the same transaction.
                 if repository.consume_approval(conn, override_id, now) == 0:
+                    raise _StaleVersion(case.case_id)
+            if content_approval is not None:
+                if repository.consume_approval(conn, content_approval.approval_id, now) == 0:
                     raise _StaleVersion(case.case_id)
             return TransitionResult(after.case_id, True, state, row.target, audit_id=audit_id)
 
