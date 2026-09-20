@@ -112,6 +112,11 @@ docker compose run --rm -e RUN_LIVE_LLM=1 backend python -m eval.d33 --live
 - **Layout:** `src/api/` (the one `/api` client, `client.ts`, plus `types.ts`); `src/auth/` (`AuthContext`, the token and `role`); `src/components/` (`Logo`, `Button`, `TextField`, `Alert`, `StatusPill`, `AuthLayout`, `AppShell`, `ThemeToggle`); `src/pages/patient/*` and `src/pages/staff/*` (one route file per screen, plus each area's `*Routes.tsx`); `src/styles/` (`tokens.css`, `app.css`). Screens and components each have a co-located `*.test.tsx`; a few files don't (`AuthContext`, `AuditTimeline`, the two `*Routes.tsx` files, `icons`, `main`, `src/test/helpers`) because they are exercised through the tests of what renders or uses them, wire up routing only, or are icon/bootstrap code with no logic of their own.
 - **`src/styles/tokens.css` is a byte-identical copy of `design/ramon-ui/tokens.css`.** `src/styles/tokens.test.ts` diffs the two files and fails on any drift; edit the design copy and re-copy it, never hand-edit `tokens.css` in place.
 - **Every shape the UI renders or sends comes from `docs/api.md`, and nothing else.** No field, status value, `escalation_kind` or route is invented client-side; if the UI needs something `docs/api.md` doesn't have, that is a sub-project 5 gap to fix there, not to paper over here.
+- **The Case Monitor's expanded row reads `GET /api/staff/cases/{id}/context`**, which answers for a case in any
+  State and carries the Data Log and the audit trace together: the correspondence with the patient (what they
+  wrote, what they uploaded, the instructions that were loaded, the message that was sent) and the trace, in one
+  request. It never sends `shown_context_ref` back - that binds a decision, and deciding and §18.4 deletion stay
+  on the review screen.
 - **A Latin run inside Hebrew text is isolated, never left to pick its own direction.** `.mono` uses
   `unicode-bidi: isolate` (a guard test in `src/styles/app.css.test.ts` fails on `plaintext`): the line keeps its
   RTL direction, so a code sits where its Hebrew label is instead of jumping to the opposite edge, and the code

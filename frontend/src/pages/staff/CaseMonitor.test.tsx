@@ -3,14 +3,14 @@ import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import * as api from '../../api/client'
-import type { AuditRecord, CaseDetail, CaseSummary } from '../../api/types'
+import type { CaseDetail, CaseSummary, ReviewContext } from '../../api/types'
 import { CaseMonitor } from './CaseMonitor'
 
 vi.mock('../../api/client', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../api/client')>()),
   listCases: vi.fn(),
   getCase: vi.fn(),
-  getAudit: vi.fn(),
+  getContext: vi.fn(),
 }))
 
 const DONE: CaseSummary = {
@@ -49,25 +49,44 @@ const DETAIL: CaseDetail = {
   created_at: '2026-09-19T22:12:38.560531Z',
 }
 
-const AUDIT: AuditRecord[] = [
-  {
-    audit_id: 1,
-    record_type: 'Transition',
-    event: 'REQUEST_SUBMITTED',
-    state_before: null,
-    state_after: 'Received',
-    action: null,
-    guards: { PatientIdentified: true },
-    policy_result: null,
-    policy_reasons: [],
-    execution_id: null,
-    attempt_number: 0,
-    retry_cycle: 0,
-    approval_id: null,
-    rule_version: 'transitions-v1+policy-979c3594ccc2',
-    recorded_at: '2026-09-19T22:12:38.560531Z',
-  },
-]
+const CONTEXT: ReviewContext = {
+  case_id: DONE.case_id,
+  patient_id: 'P-10041',
+  state: 'Completed',
+  escalation_kind: null,
+  escalated_from_state: null,
+  reasons: [],
+  data: [
+    {
+      entry_id: 'DATA-0080b88ca384',
+      kind: 'request_text',
+      content: 'מתי התור שלי ואילו מסמכים צריך להביא?',
+      content_hash: '39d813fac47b85aba91577cb8ff34c584f018d92cf083d724a3a6c366a193bf3',
+      created_at: '2026-09-19T22:12:39.681696Z',
+    },
+    {
+      entry_id: 'DATA-11b0f2c7e401',
+      kind: 'outgoing_message',
+      content: 'התור שלך קבוע ל-23/09/2026 בשעה 08:30.',
+      content_hash: '5f2b1c0a9d8e7f6a5b4c3d2e1f0a9b8c7d6e5f4a3b2c1d0e9f8a7b6c5d4e3f2a',
+      created_at: '2026-09-19T22:12:48.986200Z',
+    },
+  ],
+  trace: [
+    {
+      audit_id: 1,
+      record_type: 'Transition',
+      event: 'REQUEST_SUBMITTED',
+      state_before: null,
+      state_after: 'Received',
+      action: null,
+      policy_result: null,
+      policy_reasons: [],
+      recorded_at: '2026-09-19T22:12:38.560531Z',
+    },
+  ],
+  shown_context_ref: 'ctx-ba3e0652b0ea',
+}
 
 function renderMonitor() {
   return render(
@@ -80,7 +99,7 @@ function renderMonitor() {
 beforeEach(() => {
   vi.mocked(api.listCases).mockResolvedValue([DONE, IN_REVIEW])
   vi.mocked(api.getCase).mockImplementation(async (caseId: string) => ({ ...DETAIL, case_id: caseId }))
-  vi.mocked(api.getAudit).mockResolvedValue(AUDIT)
+  vi.mocked(api.getContext).mockImplementation(async (caseId: string) => ({ ...CONTEXT, case_id: caseId }))
 })
 
 describe('CaseMonitor', () => {
@@ -123,7 +142,7 @@ describe('CaseMonitor', () => {
 
     expect(await screen.findByText('REQUEST_SUBMITTED')).toBeInTheDocument()
     expect(screen.getByText('CheckAppointment')).toBeInTheDocument()
-    expect(api.getAudit).toHaveBeenCalledWith('CASE-23FE645294B7')
+    expect(api.getContext).toHaveBeenCalledWith('CASE-23FE645294B7')
   })
 
   it('reads in Hebrew and still shows every code the API returned', async () => {
@@ -165,6 +184,34 @@ describe('CaseMonitor', () => {
     // And the plan shows which step is the current one.
     expect(container.querySelector('.plan-steps .step-current')).toHaveTextContent('CheckDocuments')
     expect(container.querySelector('.plan-steps .step-done')).toHaveTextContent('CheckAppointment')
+  })
+
+  it('shows the correspondence with the patient, and which way each message went', async () => {
+    const { container } = renderMonitor()
+
+    await userEvent.click(await screen.findByRole('button', { name: 'CASE-23FE645294B7' }))
+    await screen.findByText('REQUEST_SUBMITTED')
+
+    expect(screen.getByText('מתי התור שלי ואילו מסמכים צריך להביא?')).toBeInTheDocument()
+    expect(screen.getByText('התור שלך קבוע ל-23/09/2026 בשעה 08:30.')).toBeInTheDocument()
+    const items = [...container.querySelectorAll('.thread-item')]
+    expect(items.map((item) => item.className)).toEqual([
+      'thread-item from-patient',
+      'thread-item to-patient',
+    ])
+    expect(items[0]).toHaveTextContent('המטופל כתב')
+    expect(items[1]).toHaveTextContent('נשלח למטופל')
+    // The start of the hash is what ties a message to its audit row.
+    expect(items[0]).toHaveTextContent('39d813fac47b…')
+  })
+
+  it('says so plainly when a case has no content left to show', async () => {
+    vi.mocked(api.getContext).mockResolvedValue({ ...CONTEXT, data: [] })
+    renderMonitor()
+
+    await userEvent.click(await screen.findByRole('button', { name: 'CASE-23FE645294B7' }))
+
+    expect(await screen.findByText(/לא נשמר תוכן לפנייה הזו/)).toBeInTheDocument()
   })
 
   it('shows an empty state when no case matches', async () => {

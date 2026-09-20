@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react'
 import * as api from '../../api/client'
-import type { AuditRecord, CaseDetail, CaseSummary, State } from '../../api/types'
+import type { CaseDetail, CaseSummary, ReviewContext, State } from '../../api/types'
 import { STATES } from '../../api/types'
 import { Alert } from '../../components/Alert'
 import { StatusPill } from '../../components/StatusPill'
 import { AuditTimeline } from './AuditTimeline'
+import { PatientThread } from './PatientThread'
 import {
   detailOf,
   escalationLabel,
@@ -16,10 +17,15 @@ import {
 
 /**
  * The Case Monitor (§1), behind staff authentication: every case from
- * `GET /api/staff/cases`, filtered by State, with the case detail and the Audit
- * trace of a row that is expanded. The list route carries only id, State,
+ * `GET /api/staff/cases`, filtered by State, with the case detail, the correspondence
+ * and the Audit trace of a row that is expanded. The list route carries only id, State,
  * escalation kind and time, so patient, intent and safety come from
  * `GET /api/staff/cases/{id}` per row.
+ *
+ * An expanded row reads `GET /api/staff/cases/{id}/context`, which answers for a case in
+ * any State (`docs/api.md` §5) and carries the Data Log and the trace together. Nothing
+ * here decides anything, so its `shown_context_ref` is not used - that binds a decision,
+ * and decisions are made on the review screen.
  */
 export function CaseMonitor() {
   const [filter, setFilter] = useState<State | ''>('')
@@ -28,8 +34,8 @@ export function CaseMonitor() {
   const [error, setError] = useState<string | null>(null)
 
   const [expanded, setExpanded] = useState<string | null>(null)
-  const [audits, setAudits] = useState<Record<string, AuditRecord[]>>({})
-  const [auditErrors, setAuditErrors] = useState<Record<string, string>>({})
+  const [contexts, setContexts] = useState<Record<string, ReviewContext>>({})
+  const [contextErrors, setContextErrors] = useState<Record<string, string>>({})
 
   useEffect(() => {
     let cancelled = false
@@ -71,12 +77,12 @@ export function CaseMonitor() {
       return
     }
     setExpanded(caseId)
-    if (audits[caseId]) return
+    if (contexts[caseId]) return
     try {
-      const trace = await api.getAudit(caseId)
-      setAudits((previous) => ({ ...previous, [caseId]: trace }))
+      const context = await api.getContext(caseId)
+      setContexts((previous) => ({ ...previous, [caseId]: context }))
     } catch (caught) {
-      setAuditErrors((previous) => ({ ...previous, [caseId]: detailOf(caught) }))
+      setContextErrors((previous) => ({ ...previous, [caseId]: detailOf(caught) }))
     }
   }
 
@@ -147,8 +153,8 @@ export function CaseMonitor() {
                     row={row}
                     detail={detail}
                     open={open}
-                    trace={audits[row.case_id]}
-                    traceError={auditErrors[row.case_id]}
+                    context={contexts[row.case_id]}
+                    contextError={contextErrors[row.case_id]}
                     onToggle={() => void toggle(row.case_id)}
                   />
                 )
@@ -165,12 +171,12 @@ interface RowProps {
   row: CaseSummary
   detail?: CaseDetail
   open: boolean
-  trace?: AuditRecord[]
-  traceError?: string
+  context?: ReviewContext
+  contextError?: string
   onToggle: () => void
 }
 
-function ExpandableRow({ row, detail, open, trace, traceError, onToggle }: RowProps) {
+function ExpandableRow({ row, detail, open, context, contextError, onToggle }: RowProps) {
   return (
     <>
       <tr className="row-link" onClick={onToggle}>
@@ -224,13 +230,20 @@ function ExpandableRow({ row, detail, open, trace, traceError, onToggle }: RowPr
                 </section>
               )}
 
-              <h3 className="fact-group-h">יומן הביקורת (Audit)</h3>
-              {traceError ? (
-                <Alert variant="error" title="טעינת יומן הביקורת נכשלה">
-                  <span className="mono">{traceError}</span>
+              {contextError ? (
+                <Alert variant="error" title="טעינת תוכן הפנייה נכשלה">
+                  <span className="mono">{contextError}</span>
                 </Alert>
-              ) : trace ? (
-                <AuditTimeline rows={trace} label={`יומן הביקורת של ${row.case_id}`} />
+              ) : context ? (
+                <>
+                  <section className="fact-group">
+                    <h3 className="fact-group-h">התכתובת עם המטופל</h3>
+                    <PatientThread entries={context.data} />
+                  </section>
+
+                  <h3 className="fact-group-h">יומן הביקורת (Audit)</h3>
+                  <AuditTimeline rows={context.trace} label={`יומן הביקורת של ${row.case_id}`} />
+                </>
               ) : (
                 <p className="page-loading" role="status">
                   טוען…
