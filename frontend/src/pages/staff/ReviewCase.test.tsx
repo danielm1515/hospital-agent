@@ -173,6 +173,28 @@ describe('ReviewCase', () => {
     expect(screen.queryByRole('button', { name: 'אישור והמשך' })).not.toBeInTheDocument()
   })
 
+  it('mounts the clinical answer block for a MedicalQuestion escalation', async () => {
+    renderCase()
+
+    expect(await screen.findByLabelText('התשובה למטופל')).toBeInTheDocument()
+  })
+
+  it('does not mount the clinical answer block for a non-MedicalQuestion escalation', async () => {
+    vi.mocked(api.listReviews).mockResolvedValue([Z3_ITEM])
+    renderCase()
+
+    await screen.findByRole('button', { name: 'אישור והמשך' })
+    expect(screen.queryByLabelText('התשובה למטופל')).not.toBeInTheDocument()
+    expect(screen.queryByText('תשובה למטופל')).not.toBeInTheDocument()
+  })
+
+  it('locks the clinical answer block for a reviewer who is not clinical_staff', async () => {
+    renderCase('admin_staff')
+
+    expect(await screen.findByText('אישור תוכן רפואי הוא של צוות קליני בלבד (§12.4). אפשר לסגור או לדחות את הפנייה.')).toBeInTheDocument()
+    expect(screen.queryByLabelText('התשובה למטופל')).not.toBeInTheDocument()
+  })
+
   it('renders the required field of a Z3Counterexample approval', async () => {
     vi.mocked(api.listReviews).mockResolvedValue([Z3_ITEM])
     renderCase()
