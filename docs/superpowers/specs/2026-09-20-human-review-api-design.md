@@ -68,6 +68,8 @@
 
 ## 5. Human Review Service (§12.4–§12.5)
 
+> **עדכון 2026-09-20 (תת־פרויקט 8):** לשירות נוסף `answer()` — תשובה קלינית ל־`MedicalQuestion`, ל־`clinical_staff` בלבד, שמייצרת `ContentApproval` כבול לטקסט וסוגרת את הפנייה ב־`HUMAN_RESOLVED_CASE`. הפירוט ב־`docs/superpowers/specs/2026-09-20-clinical-answer-design.md`.
+
 - **`queue()`:** הפניות ב־AwaitingHumanReview. לכל אחת: `escalation_kind`, ‏`escalated_from_state`, הסיבות (`policy_reasons` של שורת ההסלמה), ו־`allowed_decisions`.
   - `approve` מופיע רק ב־5 הסוגים שאפשר לחדש (טבלת §3).
   - `resolve` ו־`reject` מופיעים תמיד.

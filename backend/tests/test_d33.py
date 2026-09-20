@@ -224,6 +224,16 @@ def test_render_explains_the_number_and_quotes_the_fake_providers_recall():
     assert "not the product's number" in text
 
 
+def test_render_says_which_delivery_path_the_number_bounds():
+    """Sub-project 8 gave the patient a second way to receive medical content - a clinical
+    answer, authorised by a ContentApproval instead of classified by the Evaluator. A recall
+    number that does not say which path it covers reads as if it bounded both."""
+    text = render(_demo_report())
+    assert "SendStatusUpdate" in text
+    assert "AnswerClinicalQuestion" in text
+    assert "never reaches the Evaluator" in text
+
+
 def test_render_escapes_a_pipe_so_the_tables_stay_tables():
     report = score([Outcome(message("M1", True, "a | b"), False)],
                    model="fake", prompts_version="v", now=NOW)

@@ -12,6 +12,16 @@ says its quality is measured empirically and never proven). A single run on a fi
 48-message set does not certify every future message, and a passing number here does not
 make a false negative in production impossible - only less likely than an unmeasured one.
 
+**Which path this bounds.** Two kinds of message can reach a patient, and the Evaluator
+guards one of them. The agent's own outgoing message (`SendStatusUpdate`) is evaluated,
+and a medical one is denied unless a `ContentApproval` covers it - that is the path
+measured here. Since sub-project 8 a `clinical_staff` reviewer can also answer a
+`MedicalQuestion` directly (§5 `AnswerClinicalQuestion`): that text is medical by
+assumption, it never reaches the Evaluator, and it is authorised by a ContentApproval
+bound to its exact `content_hash` before the patient can read it. So a number below does
+not bound the clinical-answer path - nothing there is classified, so there is nothing to
+misclassify; its control is the approval, exercised by `tests/test_clinical_answer.py`.
+
 **FakeProvider's number is not the product's number.** The deterministic test double used
 by the regular offline suite scores 0.1667 (4/24)
 recall on this same set: its keyword rule (`provider.MEDICAL_WORDS`) is English-only, and
@@ -23,7 +33,7 @@ not confused. The number that D33 is about is the one measured with `--live`.
 |---|---|
 | Model | `gpt-5.6-luna` |
 | Prompts version | `533af826693b` |
-| Measured at | 2026-09-19T23:22:08.743468+00:00 |
+| Measured at | 2026-09-20T14:54:32.808527+00:00 |
 | Messages | 48 (24 medical, 24 operational) |
 | Declared threshold | recall >= 0.95 |
 | **Recall** | **1.0000** |
