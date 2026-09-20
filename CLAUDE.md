@@ -133,7 +133,7 @@ docker compose run --rm -e RUN_LIVE_LLM=1 backend python -m eval.d33 --live
 
 ## What is left
 
-Sub-project 7 (D33) closes the last item this repo's design docs tracked. Sub-projects 1-7, including the React UI, are implemented and merged into `main`; nothing here is pending integration:
+Sub-project 8 (the clinical answer) closes the last item this repo's design docs tracked. Sub-projects 1-8, including the React UI, are implemented and merged into `main`; nothing here is pending integration:
 
 - **Sub-project 6 (React UI)** (`frontend/`: patient screen, staff screen, §1, D24) is merged into `main` and served by the compose `frontend` service on `http://localhost:5273`.
 - **The golden traces (§15)** are produced by the running system, not hand-derived: `python -m obs.golden` prints `35`, `4`, `54` audit rows for the three §0 scenarios, matching the spec's expected counts.
@@ -184,7 +184,7 @@ After a restart, an execution with no outcome escalates as `ExecutionUnknown` an
 | `Z3Counterexample` | new `patient_deadline` |
 | `PatientSlaExpired` | new `patient_deadline` |
 
-Every other escalation (MedicalQuestion, SafetyEscalation, TemporalViolation, PolicyDenied, …) can only be **resolved or rejected**.
+Every other escalation (SafetyEscalation, TemporalViolation, PolicyDenied, …) can only be **resolved or rejected**. `MedicalQuestion` can be resolved or rejected too, or a `clinical_staff` reviewer can answer it instead (below).
 
 A `MedicalQuestion` never resumes, but a `clinical_staff` reviewer can answer it: `HumanReviewService.answer()` records the text in the Data Log, binds a `ContentApproval` (§12.4) to its `content_hash`, and closes the case with `HUMAN_RESOLVED_CASE`. The State Manager verifies and consumes that approval in the same transaction, and the patient screen shows the text only when such a consumed approval exists - the read-side counterpart of T6.
 
