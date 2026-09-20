@@ -7,6 +7,7 @@ import { Button } from '../../components/Button'
 import { TextField } from '../../components/TextField'
 import { useAuth } from '../../auth/AuthContext'
 import { PATIENT_HOME } from '../../routes'
+import { DEMO_PASSWORD } from '../../auth/demo'
 
 /**
  * The patient sign-in screen, built from `design/ramon-ui/patient-login.html`:
@@ -16,7 +17,7 @@ import { PATIENT_HOME } from '../../routes'
  * list (§18.3, design §3 / decision 2).
  */
 
-/** The §18.3 patient users; the buttons only fill the id field in (design §3). */
+/** The §18.3 patient users. A button fills both fields, so one click is enough to sign in. */
 const DEMO_PATIENTS = ['P-10041', 'P-20000', 'P-30000'] as const
 
 export function PatientLogin() {
@@ -26,6 +27,13 @@ export function PatientLogin() {
   const [password, setPassword] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+
+  /** A demo chip fills the id and the shared demo password, so the form is ready to send. */
+  function fillDemoUser(demoId: string) {
+    setUserId(demoId)
+    setPassword(DEMO_PASSWORD)
+    setError(null)
+  }
 
   async function submit(event: React.FormEvent) {
     event.preventDefault()
@@ -91,7 +99,7 @@ export function PatientLogin() {
           </p>
           <div className="demo-users-row" role="group" aria-labelledby="demo-users-label">
             {DEMO_PATIENTS.map((demoId) => (
-              <Button key={demoId} variant="quiet" onClick={() => setUserId(demoId)}>
+              <Button key={demoId} variant="quiet" onClick={() => fillDemoUser(demoId)}>
                 <span dir="ltr">{demoId}</span>
               </Button>
             ))}

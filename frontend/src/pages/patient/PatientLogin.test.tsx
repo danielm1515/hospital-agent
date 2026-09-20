@@ -38,14 +38,14 @@ describe('PatientLogin', () => {
     expect(container.querySelector('.step .steps')).toBeInTheDocument()
   })
 
-  it('fills the id from a demo button, signs in and lands in the patient area', async () => {
+  it('a demo button fills both fields, so one click and submit signs in', async () => {
     const user = userEvent.setup()
     const { login } = renderLogin()
 
     await user.click(screen.getByRole('button', { name: 'P-10041' }))
     expect(screen.getByLabelText('מזהה מטופל')).toHaveValue('P-10041')
+    expect(screen.getByLabelText('סיסמה')).toHaveValue('demo')
 
-    await user.type(screen.getByLabelText('סיסמה'), 'demo')
     await user.click(screen.getByRole('button', { name: 'כניסה למערכת' }))
 
     expect(login).toHaveBeenCalledWith('P-10041', 'demo')

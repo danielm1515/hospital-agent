@@ -7,6 +7,7 @@ import { Button } from '../../components/Button'
 import { TextField } from '../../components/TextField'
 import { KeyIcon, ShieldCheckIcon } from '../../components/icons'
 import { useAuth } from '../../auth/AuthContext'
+import { DEMO_PASSWORD } from '../../auth/demo'
 import { STAFF_HOME } from '../../routes'
 
 /**
@@ -24,7 +25,7 @@ export const STAFF_DEMO_USERS = [
   { user_id: 'admin_coordinator', display_name: 'רכזת מנהלה', role: 'admin_staff' },
 ] as const
 
-export const DEMO_PASSWORD = 'demo'
+export { DEMO_PASSWORD }
 
 export function StaffLogin() {
   const { login } = useAuth()
