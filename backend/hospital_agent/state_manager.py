@@ -457,6 +457,11 @@ class StateManager:
             decision_token=payload["decision_token"],
             state_version=after.state_version,
             plan_hash=after.plan_hash,
+            # payload["content_approval_id"] has a second meaning on a different event: here,
+            # on POLICY_ALLOWED, it is the id the Policy Service wants recorded on this new
+            # intent row. On HUMAN_RESOLVED_CASE (`_apply_once`, above) the same payload key
+            # instead names the ContentApproval to verify and consume for a clinical answer
+            # (`_clinical_answer_approval`) - a third consumer must not conflate the two.
             approval_id=payload.get("content_approval_id"),
             content_hash=payload.get("content_hash"),
             medical_content_flag=evidence.get("medical_content_flag") is True,
