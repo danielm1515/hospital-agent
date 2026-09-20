@@ -157,7 +157,16 @@ function StatusContent({ view, onChanged }: { view: PatientView; onChanged: (nex
     case 'in_review':
       return <Alert variant="info">הפנייה הועברה לבדיקת צוות. מידע רפואי אינו נמסר באופן אוטומטי.</Alert>
     case 'closed':
-      return <p className="muted">הפנייה נסגרה.</p>
+      // `closed` means a person handled the case and no message was delivered through the
+      // system (`docs/api.md` §4). The reviewer's own reason is an audit record, not an
+      // answer to the patient: content reaches a patient only through a ContentApproval
+      // (§12.5), so the screen says where the answer will come from instead of inventing one.
+      return (
+        <Alert variant="info" title="הפנייה נסגרה על ידי איש צוות">
+          תשובה רפואית אינה נמסרת דרך המערכת. איש הצוות שטיפל בפנייה יחזור אליכם ישירות; אם לא שמעתם
+          מאיתנו, אפשר לפנות למוקד המטופלים.
+        </Alert>
+      )
     default:
       return (
         <p className="muted" role="status">

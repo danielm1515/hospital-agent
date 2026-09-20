@@ -182,7 +182,7 @@ describe('ReviewCase', () => {
   it('sends the decision with the reason and the shown context ref', async () => {
     renderCase()
 
-    await userEvent.type(await screen.findByLabelText('סיבת ההכרעה'), 'הופנתה למרפאה.')
+    await userEvent.type(await screen.findByLabelText(/סיבת ההכרעה/), 'הופנתה למרפאה.')
     await userEvent.click(screen.getByRole('button', { name: 'סגירת הפנייה' }))
 
     expect(api.decide).toHaveBeenCalledWith(CASE_ID, {
@@ -198,7 +198,7 @@ describe('ReviewCase', () => {
     vi.mocked(api.decide).mockResolvedValue({ case_id: CASE_ID, state: 'Classifying' })
     renderCase()
 
-    await userEvent.type(await screen.findByLabelText('סיבת ההכרעה'), 'זוהתה בדלפק.')
+    await userEvent.type(await screen.findByLabelText(/סיבת ההכרעה/), 'זוהתה בדלפק.')
     await userEvent.type(screen.getByLabelText('אסמכתת זיהוי'), 'ID-DESK-17')
     await userEvent.click(screen.getByRole('button', { name: 'אישור והמשך' }))
 
@@ -223,7 +223,7 @@ describe('ReviewCase', () => {
     vi.mocked(api.decide).mockRejectedValue(new api.ApiError(409, 'context_changed'))
     renderCase()
 
-    await userEvent.type(await screen.findByLabelText('סיבת ההכרעה'), 'סגירה.')
+    await userEvent.type(await screen.findByLabelText(/סיבת ההכרעה/), 'סגירה.')
     await userEvent.click(screen.getByRole('button', { name: 'סגירת הפנייה' }))
 
     expect(await screen.findByRole('alert')).toHaveTextContent('ההקשר השתנה')
@@ -238,7 +238,7 @@ describe('ReviewCase', () => {
     vi.mocked(api.decide).mockRejectedValue(new api.ApiError(409, 'not_in_review'))
     renderCase()
 
-    await userEvent.type(await screen.findByLabelText('סיבת ההכרעה'), 'סגירה.')
+    await userEvent.type(await screen.findByLabelText(/סיבת ההכרעה/), 'סגירה.')
     await userEvent.click(screen.getByRole('button', { name: 'סגירת הפנייה' }))
 
     expect(await screen.findByRole('alert')).toHaveTextContent('not_in_review')

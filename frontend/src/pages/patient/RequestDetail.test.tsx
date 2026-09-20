@@ -188,10 +188,13 @@ describe('RequestDetail: the other statuses', () => {
     expect(screen.queryByText(/medical_answer_attempt/)).not.toBeInTheDocument()
   })
 
-  it('closed shows the closing line', async () => {
+  it('closed says a person handled it and where the answer comes from', async () => {
     getRequest.mockResolvedValue(patientView({ status: 'closed' }))
     renderDetail()
-    expect(await screen.findByText('הפנייה נסגרה.')).toBeInTheDocument()
+    expect(await screen.findByText('הפנייה נסגרה על ידי איש צוות')).toBeInTheDocument()
+    expect(screen.getByRole('status')).toHaveTextContent('תשובה רפואית אינה נמסרת דרך המערכת')
+    // §12.3: the reviewer's own reason is an audit record, never shown to the patient.
+    expect(screen.queryByText(/סיבת ההכרעה/)).not.toBeInTheDocument()
   })
 
   it('marks the timeline step of the current status', async () => {

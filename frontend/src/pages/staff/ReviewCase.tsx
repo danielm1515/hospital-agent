@@ -262,12 +262,12 @@ export function ReviewCase() {
               >
                 <TextField
                   multiline
-                  label="סיבת ההכרעה"
+                  label="סיבת ההכרעה (פנימית)"
                   value={reason}
                   maxLength={2000}
                   counter
                   error={reasonError ?? undefined}
-                  hint="הסיבה נשמרת על רשומת האישור (§12.5)."
+                  hint="נשמרת על רשומת האישור וביומן הביקורת (§12.5). אינה נשלחת למטופל: מסירת תוכן רפואי מחייבת ContentApproval של איש צוות קליני."
                   onChange={(event) => setReason(event.target.value)}
                 />
 
