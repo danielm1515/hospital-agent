@@ -9,6 +9,7 @@
  *   authenticated call also clears the token and calls the `onUnauthorized` hook.
  */
 import type {
+  AnswerBody,
   AuditRecord,
   CaseDetail,
   CaseSummary,
@@ -215,6 +216,16 @@ export function decide(caseId: string, body: DecisionBody): Promise<DecisionResu
   if (body.verified_identity_ref !== undefined) payload.verified_identity_ref = body.verified_identity_ref
   if (body.patient_deadline !== undefined) payload.patient_deadline = body.patient_deadline
   return request<DecisionResult>('POST', `/staff/cases/${id(caseId)}/decision`, { body: payload })
+}
+
+/** Sends only the fields of `AnswerBody`; the reviewer comes from the token. */
+export function answer(caseId: string, body: AnswerBody): Promise<DecisionResult> {
+  const payload: AnswerBody = {
+    answer: body.answer,
+    reason: body.reason,
+    shown_context_ref: body.shown_context_ref,
+  }
+  return request<DecisionResult>('POST', `/staff/cases/${id(caseId)}/answer`, { body: payload })
 }
 
 export async function tombstone(caseId: string, entryId: string): Promise<void> {

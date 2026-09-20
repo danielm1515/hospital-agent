@@ -6,7 +6,9 @@ import { Alert } from '../../components/Alert'
 import { Button } from '../../components/Button'
 import { StatusPill } from '../../components/StatusPill'
 import { TextField } from '../../components/TextField'
+import { useAuth } from '../../auth/AuthContext'
 import { AuditTimeline } from './AuditTimeline'
+import { ClinicalAnswer } from './ClinicalAnswer'
 import {
   DECISION_LABELS,
   REQUIRED_FIELD_HINTS,
@@ -33,6 +35,7 @@ import {
 export function ReviewCase() {
   const { caseId = '' } = useParams<{ caseId: string }>()
   const navigate = useNavigate()
+  const { user } = useAuth()
 
   const [context, setContext] = useState<ReviewContext | null>(null)
   const [item, setItem] = useState<ReviewItem | null>(null)
@@ -245,6 +248,19 @@ export function ReviewCase() {
           <h2 className="col-h" id="col-decision">
             הכרעה
           </h2>
+          {item?.escalation_kind === 'MedicalQuestion' && (
+            <ClinicalAnswer
+              caseId={caseId}
+              shownContextRef={context.shown_context_ref}
+              role={user?.role ?? 'admin_staff'}
+              onAnswered={() =>
+                navigate('/staff', {
+                  replace: true,
+                  state: { notice: `נשלחה תשובה למטופל בפנייה ${caseId}, והפנייה נסגרה.` },
+                })
+              }
+            />
+          )}
           {allowed.length === 0 ? (
             <Alert variant="info" title="הפנייה אינה ממתינה להכרעה">
               המסך מציג את ההקשר בלבד. פניות להכרעה מופיעות בתור ההסלמות.

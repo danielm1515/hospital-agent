@@ -4,6 +4,7 @@ import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import * as api from '../../api/client'
 import type { ReviewContext, ReviewItem } from '../../api/types'
+import { authValue, STAFF_USER, TestAuthProvider } from '../../test/helpers'
 import { ReviewCase } from './ReviewCase'
 
 vi.mock('../../api/client', async (importOriginal) => ({
@@ -80,13 +81,15 @@ function context(overrides: Partial<ReviewContext> = {}): ReviewContext {
   }
 }
 
-function renderCase() {
+function renderCase(role: 'clinical_staff' | 'admin_staff' = 'clinical_staff') {
   return render(
     <MemoryRouter initialEntries={[`/staff/cases/${CASE_ID}`]}>
-      <Routes>
-        <Route path="/staff" element={<h1>תור הסלמות</h1>} />
-        <Route path="/staff/cases/:caseId" element={<ReviewCase />} />
-      </Routes>
+      <TestAuthProvider value={authValue({ user: { ...STAFF_USER, role } })}>
+        <Routes>
+          <Route path="/staff" element={<h1>תור הסלמות</h1>} />
+          <Route path="/staff/cases/:caseId" element={<ReviewCase />} />
+        </Routes>
+      </TestAuthProvider>
     </MemoryRouter>,
   )
 }

@@ -247,6 +247,15 @@ export interface DecisionResult {
   state: State
 }
 
+/** `POST /api/staff/cases/{case_id}/answer` body (`docs/api.md` §5). */
+export interface AnswerBody {
+  /** The exact text the ContentApproval covers, 1-2000 characters. */
+  answer: string
+  /** Internal, like a decision's reason: recorded, never sent to the patient. */
+  reason: string
+  shown_context_ref: string
+}
+
 // ---- Errors ---------------------------------------------------------------
 
 /** FastAPI's error body: `{"detail": "<code>"}`, including for a `422`. */
