@@ -21,15 +21,23 @@ export function ClinicalAnswer({
   shownContextRef,
   role,
   onAnswered,
+  onContextChanged,
 }: {
   caseId: string
   shownContextRef: string
   role: Role
   onAnswered: () => void
+  /**
+   * Re-fetches the context and the queue (`ReviewCase`'s own `refreshContext`, reused
+   * verbatim rather than duplicated here) - the recovery from a `409 context_changed`,
+   * kept as a callback so the typed answer and reason, both local state, survive it.
+   */
+  onContextChanged: () => void
 }) {
   const [text, setText] = useState('')
   const [reason, setReason] = useState('')
   const [error, setError] = useState<string | null>(null)
+  const [contextChanged, setContextChanged] = useState(false)
   const [busy, setBusy] = useState(false)
 
   if (role !== 'clinical_staff') {
@@ -47,12 +55,14 @@ export function ClinicalAnswer({
       return
     }
     setError(null)
+    setContextChanged(false)
     setBusy(true)
     try {
       await api.answer(caseId, { answer: text.trim(), reason: reason.trim(), shown_context_ref: shownContextRef })
       onAnswered()
     } catch (caught) {
-      setError(answerError(caught))
+      if (detailOf(caught) === 'context_changed') setContextChanged(true)
+      else setError(answerError(caught))
     } finally {
       setBusy(false)
     }
@@ -83,6 +93,20 @@ export function ClinicalAnswer({
         onChange={(event) => setReason(event.target.value)}
       />
       {error && <Alert variant="error">{error}</Alert>}
+      {contextChanged && (
+        <Alert variant="error" title="ההקשר השתנה">
+          <p>ההקשר השתנה מאז שנטען. רעננו את ההקשר וכתבו את התשובה שוב.</p>
+          <Button
+            variant="secondary"
+            onClick={() => {
+              setContextChanged(false)
+              onContextChanged()
+            }}
+          >
+            רענון הקשר
+          </Button>
+        </Alert>
+      )}
       <div className="actions">
         <Button type="submit" variant="primary" busy={busy}>
           אישור ושליחת התשובה
@@ -95,7 +119,6 @@ export function ClinicalAnswer({
 /** One Hebrew sentence per `docs/api.md` §5 code; an unknown code stays generic. */
 function answerError(caught: unknown): string {
   const code = detailOf(caught)
-  if (code === 'context_changed') return 'ההקשר השתנה מאז שנטען. רעננו את ההקשר וכתבו את התשובה שוב.'
   if (code === 'clinical_staff_only') return 'רק צוות קליני רשאי לאשר תוכן רפואי.'
   if (code === 'decision_not_allowed') return 'לפנייה הזו אי אפשר לשלוח תשובה קלינית.'
   if (code === 'not_in_review') return 'הפנייה כבר אינה ממתינה להכרעה.'

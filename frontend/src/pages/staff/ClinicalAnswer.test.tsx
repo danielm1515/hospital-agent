@@ -11,10 +11,17 @@ vi.mock('../../api/client', async (importOriginal) => ({
 }))
 
 const onAnswered = vi.fn()
+const onContextChanged = vi.fn()
 
 function renderAnswer(role: 'clinical_staff' | 'admin_staff' = 'clinical_staff') {
   return render(
-    <ClinicalAnswer caseId="CASE-1" shownContextRef="ctx-1" role={role} onAnswered={onAnswered} />,
+    <ClinicalAnswer
+      caseId="CASE-1"
+      shownContextRef="ctx-1"
+      role={role}
+      onAnswered={onAnswered}
+      onContextChanged={onContextChanged}
+    />,
   )
 }
 
@@ -22,6 +29,7 @@ beforeEach(() => {
   vi.mocked(api.answer).mockReset()
   vi.mocked(api.answer).mockResolvedValue({ case_id: 'CASE-1', state: 'Completed' })
   onAnswered.mockReset()
+  onContextChanged.mockReset()
 })
 
 describe('ClinicalAnswer', () => {
@@ -69,5 +77,24 @@ describe('ClinicalAnswer', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent(/ההקשר השתנה/)
     expect(screen.getByLabelText(/התשובה למטופל/)).toHaveValue('תשובה')
     expect(onAnswered).not.toHaveBeenCalled()
+  })
+
+  it('recovers from a context that changed: the refresh button actually refreshes, and the typed answer survives it', async () => {
+    vi.mocked(api.answer).mockRejectedValue(new ApiError(409, 'context_changed'))
+    renderAnswer()
+
+    await userEvent.type(screen.getByLabelText(/התשובה למטופל/), 'תשובה')
+    await userEvent.type(screen.getByLabelText(/סיבה/), 'סיבה')
+    await userEvent.click(screen.getByRole('button', { name: 'אישור ושליחת התשובה' }))
+    await screen.findByRole('alert')
+
+    expect(onContextChanged).not.toHaveBeenCalled()
+    await userEvent.click(screen.getByRole('button', { name: 'רענון הקשר' }))
+
+    expect(onContextChanged).toHaveBeenCalledTimes(1)
+    // The alert closes and the typed answer is untouched - nothing was lost by refreshing.
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    expect(screen.getByLabelText(/התשובה למטופל/)).toHaveValue('תשובה')
+    expect(screen.getByLabelText(/סיבה/)).toHaveValue('סיבה')
   })
 })

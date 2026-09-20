@@ -259,6 +259,7 @@ export function ReviewCase() {
                   state: { notice: `נשלחה תשובה למטופל בפנייה ${caseId}, והפנייה נסגרה.` },
                 })
               }
+              onContextChanged={() => void refreshContext()}
             />
           )}
           {allowed.length === 0 ? (
