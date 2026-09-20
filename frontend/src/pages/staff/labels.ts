@@ -5,7 +5,7 @@
  * ever shown *next to* the code it translates, never instead of it, and an
  * unknown code falls back to itself.
  */
-import type { Decision, EscalationKind, RequiredField } from '../../api/types'
+import type { Decision, EscalationKind, RequiredField, SafetyLevel, State } from '../../api/types'
 
 export const ESCALATION_LABELS: Record<EscalationKind, string> = {
   PatientVerificationFailed: 'זיהוי המטופל נכשל',
@@ -28,6 +28,54 @@ export const ESCALATION_LABELS: Record<EscalationKind, string> = {
 export function escalationLabel(kind: string | null | undefined): string {
   if (!kind) return '—'
   return ESCALATION_LABELS[kind as EscalationKind] ?? kind
+}
+
+/**
+ * The 12 States (§2.1) in Hebrew. Shown next to the State itself, never instead of
+ * it - the code is what the spec, the Audit and the guards all use.
+ */
+export const STATE_LABELS: Record<State, string> = {
+  Received: 'התקבלה',
+  Classifying: 'בסיווג',
+  Classified: 'סווגה',
+  Planning: 'בתכנון',
+  RetrievingData: 'באחזור נתונים',
+  Delivering: 'במסירה',
+  AssessingReadiness: 'בבדיקת מוכנות',
+  AwaitingPatientInput: 'ממתינה למטופל',
+  AwaitingHumanReview: 'ממתינה להכרעת צוות',
+  Ready: 'מוכנה למסירה',
+  Completed: 'הושלמה',
+  Failed: 'נכשלה',
+}
+
+export function stateLabel(state: string | null | undefined): string {
+  if (!state) return '—'
+  return STATE_LABELS[state as State] ?? state
+}
+
+/** The three intents the Classifier may return (`docs/api.md` §5). */
+export const INTENT_LABELS: Record<string, string> = {
+  AppointmentPreparation: 'הכנה לתור',
+  MedicalQuestion: 'שאלה רפואית',
+  Unsupported: 'לא נתמכת',
+}
+
+export function intentLabel(intent: string | null | undefined): string {
+  if (!intent) return '—'
+  return INTENT_LABELS[intent] ?? intent
+}
+
+export const SAFETY_LABELS: Record<SafetyLevel, string> = {
+  LowRisk: 'סיכון נמוך',
+  MediumRisk: 'סיכון בינוני',
+  HighRisk: 'סיכון גבוה',
+  CriticalRisk: 'סיכון קריטי',
+}
+
+export function safetyLabel(level: string | null | undefined): string {
+  if (!level) return '—'
+  return SAFETY_LABELS[level as SafetyLevel] ?? level
 }
 
 export const DECISION_LABELS: Record<Decision, string> = {

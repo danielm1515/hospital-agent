@@ -5,7 +5,14 @@ import { STATES } from '../../api/types'
 import { Alert } from '../../components/Alert'
 import { StatusPill } from '../../components/StatusPill'
 import { AuditTimeline } from './AuditTimeline'
-import { detailOf, escalationLabel, formatDateTime } from './labels'
+import {
+  detailOf,
+  escalationLabel,
+  formatDateTime,
+  intentLabel,
+  safetyLabel,
+  stateLabel,
+} from './labels'
 
 /**
  * The Case Monitor (§1), behind staff authentication: every case from
@@ -77,7 +84,10 @@ export function CaseMonitor() {
     <section className="staff-page">
       <header className="page-head">
         <h1 className="page-h">כל הפניות</h1>
-        <p className="lede">מצב כל הפניות במערכת. לחיצה על שורה פותחת את פרטי הפנייה ואת יומן הביקורת שלה.</p>
+        <p className="lede">
+          מצב כל הפניות במערכת. לחיצה על שורה פותחת את פרטי הפנייה ואת יומן הביקורת שלה. לצד כל תווית בעברית
+          מופיע שם השדה או הקוד שה־API החזיר, כי זה מה שמופיע באפיון וביומן.
+        </p>
       </header>
 
       <div className="field filter-field">
@@ -94,7 +104,7 @@ export function CaseMonitor() {
             <option value="">כל המצבים</option>
             {STATES.map((state) => (
               <option key={state} value={state}>
-                {state}
+                {stateLabel(state)} ({state})
               </option>
             ))}
           </select>
@@ -120,9 +130,10 @@ export function CaseMonitor() {
               <tr>
                 <th scope="col">פנייה</th>
                 <th scope="col">מטופל</th>
-                <th scope="col">State</th>
-                <th scope="col">כוונה</th>
+                <th scope="col">מצב (State)</th>
+                <th scope="col">כוונה (intent)</th>
                 <th scope="col">רמת בטיחות</th>
+                <th scope="col">הסלמה</th>
                 <th scope="col">עדכון אחרון</th>
               </tr>
             </thead>
@@ -179,54 +190,41 @@ function ExpandableRow({ row, detail, open, trace, traceError, onToggle }: RowPr
         <td className="mono">{detail?.patient_id ?? '—'}</td>
         <td>
           <StatusPill state={row.state} />
+          <span className="cell-sub">{stateLabel(row.state)}</span>
         </td>
-        <td>{detail?.intent ?? '—'}</td>
-        <td>{detail?.safety_level ?? '—'}</td>
+        <td>
+          <Coded label={intentLabel(detail?.intent)} code={detail?.intent} />
+        </td>
+        <td>
+          <Coded label={safetyLabel(detail?.safety_level)} code={detail?.safety_level} />
+        </td>
+        <td>
+          <Coded label={escalationLabel(row.escalation_kind)} code={row.escalation_kind} />
+        </td>
         <td className="nowrap">{formatDateTime(row.updated_at)}</td>
       </tr>
       {open && (
         <tr className="detail-row">
-          <td colSpan={6}>
+          <td colSpan={7}>
             <div className="case-detail">
-              <div className="detail-facts">
-                {detail ? (
-                  <>
-                    <Fact label="state_version" value={String(detail.state_version)} mono />
-                    <Fact label="current_step" value={detail.current_step === null ? '—' : String(detail.current_step)} />
-                    <Fact label="retry_cycle" value={String(detail.retry_cycle)} />
-                    <Fact label="attempt_count" value={String(detail.attempt_count)} />
-                    <Fact label="identity_verified" value={detail.identity_verified ? 'כן' : 'לא'} />
-                    <Fact label="plan_hash" value={detail.plan_hash ? `${detail.plan_hash.slice(0, 16)}…` : '—'} mono />
-                    <Fact label="required_documents" value={(detail.required_documents ?? []).join(', ') || '—'} mono />
-                    <Fact label="held_documents" value={detail.held_documents.join(', ') || '—'} mono />
-                    <Fact label="patient_deadline" value={formatDateTime(detail.patient_deadline)} />
-                    <Fact label="created_at" value={formatDateTime(detail.created_at)} />
-                    <Fact
-                      label="escalation_kind"
-                      value={
-                        detail.escalation_kind
-                          ? `${escalationLabel(detail.escalation_kind)} (${detail.escalation_kind})`
-                          : '—'
-                      }
-                    />
-                    <Fact label="escalated_from_state" value={detail.escalated_from_state ?? '—'} mono />
-                  </>
-                ) : (
-                  <p className="empty-note">פרטי הפנייה לא נטענו.</p>
-                )}
-              </div>
+              {detail ? <CaseFacts detail={detail} /> : <p className="empty-note">פרטי הפנייה לא נטענו.</p>}
 
               {detail?.ordered_steps && detail.ordered_steps.length > 0 && (
-                <ol className="plan-steps">
-                  {detail.ordered_steps.map((step) => (
-                    <li className="mono" key={step.step}>
-                      <span className="step-n">{step.step}</span>
-                      <span>{step.action}</span>
-                    </li>
-                  ))}
-                </ol>
+                <section className="fact-group">
+                  <h3 className="fact-group-h">התוכנית (ordered_steps)</h3>
+                  <ol className="plan-steps">
+                    {detail.ordered_steps.map((step) => (
+                      <li className={planStepClass(step.step, detail.current_step)} key={step.step}>
+                        <span className="step-n">{step.step}</span>
+                        <span className="mono">{step.action}</span>
+                        <span className="step-state">{planStepLabel(step.step, detail.current_step)}</span>
+                      </li>
+                    ))}
+                  </ol>
+                </section>
               )}
 
+              <h3 className="fact-group-h">יומן הביקורת (Audit)</h3>
               {traceError ? (
                 <Alert variant="error" title="טעינת יומן הביקורת נכשלה">
                   <span className="mono">{traceError}</span>
@@ -246,11 +244,116 @@ function ExpandableRow({ row, detail, open, trace, traceError, onToggle }: RowPr
   )
 }
 
-function Fact({ label, value, mono = false }: { label: string; value: string; mono?: boolean }) {
+/** A cell that reads in Hebrew and still shows the code the API returned (§12.3, D-tests). */
+function Coded({ label, code }: { label: string; code?: string | null }) {
+  if (!code) return <>—</>
   return (
-    <p className="fact">
-      <span className="fact-k mono">{label}</span>
-      <span className={mono ? 'fact-v mono' : 'fact-v'}>{value}</span>
-    </p>
+    <>
+      {label}
+      <span className="cell-sub mono">{code}</span>
+    </>
+  )
+}
+
+/** Where a plan step stands relative to `current_step`; `null` means the plan has not started. */
+function planStepClass(step: number, current: number | null): string {
+  if (current === null) return 'step-todo'
+  if (step < current) return 'step-done'
+  return step === current ? 'step-current' : 'step-todo'
+}
+
+function planStepLabel(step: number, current: number | null): string {
+  if (current === null) return 'טרם'
+  if (step < current) return 'בוצע'
+  return step === current ? 'השלב הנוכחי' : 'טרם'
+}
+
+/**
+ * The case as a person reads it: four groups, each fact with a Hebrew label and,
+ * beside it, the field name from `docs/api.md` §5 - the raw name stays visible
+ * because it is what the spec, the guards and the Audit all use.
+ */
+function CaseFacts({ detail }: { detail: CaseDetail }) {
+  const steps = detail.ordered_steps ?? []
+  const required = detail.required_documents ?? []
+  const missing = required.filter((documentId) => !detail.held_documents.includes(documentId))
+  const currentAction = steps.find((step) => step.step === detail.current_step)?.action
+
+  const stepValue =
+    detail.current_step === null
+      ? 'טרם התחילה תוכנית'
+      : `${detail.current_step}${steps.length > 0 ? ` מתוך ${steps.length}` : ''}${
+          currentAction ? ` · ${currentAction}` : ''
+        }`
+
+  return (
+    <div className="fact-groups">
+      <section className="fact-group">
+        <h3 className="fact-group-h">התקדמות</h3>
+        <dl className="fact-list">
+          <Fact label="שלב נוכחי" code="current_step" value={stepValue} />
+          <Fact label="ניסיונות בשלב הנוכחי" code="attempt_count" value={String(detail.attempt_count)} />
+          <Fact label="מחזור ניסיונות" code="retry_cycle" value={String(detail.retry_cycle)} />
+          <Fact label="גרסת המצב" code="state_version" value={String(detail.state_version)} />
+          <Fact
+            label="חתימת התוכנית"
+            code="plan_hash"
+            mono
+            value={detail.plan_hash ? `${detail.plan_hash.slice(0, 16)}…` : '—'}
+          />
+        </dl>
+      </section>
+
+      <section className="fact-group">
+        <h3 className="fact-group-h">מסמכים</h3>
+        <dl className="fact-list">
+          <Fact label="נדרשים" code="required_documents" mono value={required.join(', ') || '—'} />
+          <Fact label="שהתקבלו" code="held_documents" mono value={detail.held_documents.join(', ') || '—'} />
+          <Fact label="חסרים" value={missing.length > 0 ? missing.join(', ') : 'אין'} mono={missing.length > 0} />
+        </dl>
+      </section>
+
+      <section className="fact-group">
+        <h3 className="fact-group-h">זהות ומועדים</h3>
+        <dl className="fact-list">
+          <Fact label="המטופל זוהה" code="identity_verified" value={detail.identity_verified ? 'כן' : 'לא'} />
+          <Fact label="מועד היעד למטופל" code="patient_deadline" value={formatDateTime(detail.patient_deadline)} />
+          <Fact label="נפתחה" code="created_at" value={formatDateTime(detail.created_at)} />
+          <Fact label="עודכנה" code="updated_at" value={formatDateTime(detail.updated_at)} />
+        </dl>
+      </section>
+
+      <section className="fact-group">
+        <h3 className="fact-group-h">הסלמה</h3>
+        <dl className="fact-list">
+          <Fact
+            label="סוג ההסלמה"
+            code="escalation_kind"
+            value={detail.escalation_kind ? `${escalationLabel(detail.escalation_kind)} (${detail.escalation_kind})` : 'לא הוסלמה'}
+          />
+          <Fact
+            label="הוסלמה ממצב"
+            code="escalated_from_state"
+            value={
+              detail.escalated_from_state
+                ? `${stateLabel(detail.escalated_from_state)} (${detail.escalated_from_state})`
+                : '—'
+            }
+          />
+        </dl>
+      </section>
+    </div>
+  )
+}
+
+function Fact({ label, code, value, mono = false }: { label: string; code?: string; value: string; mono?: boolean }) {
+  return (
+    <div className="fact">
+      <dt className="fact-k">
+        {label}
+        {code && <span className="fact-code mono">{code}</span>}
+      </dt>
+      <dd className={mono ? 'fact-v mono' : 'fact-v'}>{value}</dd>
+    </div>
   )
 }

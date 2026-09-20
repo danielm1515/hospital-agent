@@ -126,6 +126,47 @@ describe('CaseMonitor', () => {
     expect(api.getAudit).toHaveBeenCalledWith('CASE-23FE645294B7')
   })
 
+  it('reads in Hebrew and still shows every code the API returned', async () => {
+    renderMonitor()
+    await screen.findByText('CASE-23FE645294B7')
+
+    // A label always sits next to its code, never instead of it.
+    expect(screen.getAllByText('הושלמה').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('Completed').length).toBeGreaterThan(0)
+    await waitFor(() => expect(screen.getAllByText('הכנה לתור')).toHaveLength(2))
+    expect(screen.getAllByText('AppointmentPreparation')).toHaveLength(2)
+    expect(screen.getAllByText('סיכון בינוני')).toHaveLength(2)
+    expect(screen.getAllByText('MediumRisk')).toHaveLength(2)
+    expect(screen.getByText('שאלה רפואית')).toBeInTheDocument()
+    expect(screen.getByText('MedicalQuestion')).toBeInTheDocument()
+  })
+
+  it('explains the expanded case in Hebrew, including where the plan stands', async () => {
+    vi.mocked(api.getCase).mockImplementation(async (caseId: string) => ({
+      ...DETAIL,
+      case_id: caseId,
+      current_step: 2,
+      held_documents: ['referral'],
+    }))
+    const { container } = renderMonitor()
+
+    await userEvent.click(await screen.findByRole('button', { name: 'CASE-23FE645294B7' }))
+    await screen.findByText('REQUEST_SUBMITTED')
+
+    // The current step is named, not just numbered, and counted against the plan.
+    expect(screen.getByText('2 מתוך 2 · CheckDocuments')).toBeInTheDocument()
+    // What is missing is worked out from the two lists, so nobody has to diff them by eye.
+    const documents = screen.getByRole('heading', { name: 'מסמכים' }).closest('.fact-group')
+    expect(documents).toHaveTextContent('חסרים')
+    expect(documents).toHaveTextContent('blood_test')
+    // Each Hebrew label carries the field name from docs/api.md beside it.
+    expect(screen.getByText('שלב נוכחי')).toBeInTheDocument()
+    expect(screen.getByText('current_step')).toBeInTheDocument()
+    // And the plan shows which step is the current one.
+    expect(container.querySelector('.plan-steps .step-current')).toHaveTextContent('CheckDocuments')
+    expect(container.querySelector('.plan-steps .step-done')).toHaveTextContent('CheckAppointment')
+  })
+
   it('shows an empty state when no case matches', async () => {
     vi.mocked(api.listCases).mockResolvedValue([])
     renderMonitor()

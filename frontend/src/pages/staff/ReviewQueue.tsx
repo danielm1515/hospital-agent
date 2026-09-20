@@ -3,7 +3,7 @@ import { Link, useLocation, useNavigate } from 'react-router-dom'
 import * as api from '../../api/client'
 import type { ReviewItem } from '../../api/types'
 import { Alert } from '../../components/Alert'
-import { detailOf, escalationLabel, formatDateTime } from './labels'
+import { detailOf, escalationLabel, formatDateTime, stateLabel } from './labels'
 
 /** The queue is polled rather than pushed (design decision 4). */
 export const QUEUE_POLL_MS = 5000
@@ -105,7 +105,14 @@ export function ReviewQueue() {
                     <span className="state cell-code">{item.escalation_kind}</span>
                   </td>
                   <td>
-                    <span className="state">{item.escalated_from_state ?? '—'}</span>
+                    {item.escalated_from_state === null ? (
+                      '—'
+                    ) : (
+                      <>
+                        <span className="cell-main">{stateLabel(item.escalated_from_state)}</span>
+                        <span className="state cell-code">{item.escalated_from_state}</span>
+                      </>
+                    )}
                   </td>
                   <td>
                     {item.reasons.length === 0 ? (

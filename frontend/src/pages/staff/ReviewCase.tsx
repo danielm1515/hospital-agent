@@ -16,6 +16,7 @@ import {
   escalationLabel,
   formatDateTime,
   groupByKind,
+  stateLabel,
   toIsoWithOffset,
 } from './labels'
 
@@ -114,7 +115,7 @@ export function ReviewCase() {
       const result = await api.decide(caseId, body)
       navigate('/staff', {
         replace: true,
-        state: { notice: `הפנייה ${result.case_id} עברה למצב ${result.state}.` },
+        state: { notice: `הפנייה ${result.case_id} עברה למצב ${stateLabel(result.state)} (${result.state}).` },
       })
     } catch (caught) {
       const detail = detailOf(caught)
@@ -169,14 +170,17 @@ export function ReviewCase() {
           <span>
             מטופל: <span className="mono">{context.patient_id}</span>
           </span>
-          <StatusPill state={context.state} />
+          <span>
+            מצב: {stateLabel(context.state)} <StatusPill state={context.state} />
+          </span>
           <span>
             הסלמה: {escalationLabel(context.escalation_kind)}{' '}
             {context.escalation_kind && <span className="state">{context.escalation_kind}</span>}
           </span>
           {context.escalated_from_state && (
             <span>
-              ממצב <span className="state">{context.escalated_from_state}</span>
+              ממצב {stateLabel(context.escalated_from_state)}{' '}
+              <span className="state">{context.escalated_from_state}</span>
             </span>
           )}
         </div>
