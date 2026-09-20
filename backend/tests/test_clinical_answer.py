@@ -327,3 +327,55 @@ def test_a_blocked_transition_tombstones_the_recorded_answer(review, sm, app_eng
         [message] = data_log.entries(conn, d.case_id, data_log.DataKind.OUTGOING_MESSAGE)
     assert message.content is None
     assert message.deleted_at is not None
+
+
+# --- what the patient sees -----------------------------------------------------------------
+
+def test_the_patient_sees_the_answer_as_a_delivered_message(review, session, sm, app_engine):
+    d = escalated(sm, app_engine)
+    answer_it(review, d)
+
+    view = session.patient_view(d.case_id)
+
+    assert (view.status, view.message) == ("completed", ANSWER)
+    assert [step.status for step in view.history][-1] == "completed"
+    # §12.3: still no kind, no reason, no audit.
+    assert not hasattr(view, "escalation_kind")
+
+
+def test_a_case_closed_without_an_answer_stays_closed(review, session, sm, app_engine):
+    d = escalated(sm, app_engine)
+    review.decide(reviewer_id=NURSE[0], reviewer_role=NURSE[1], case_id=d.case_id,
+                   decision="resolve", reason="הופנתה למרפאה",
+                   shown_context_ref=review.context(d.case_id).shown_context_ref)
+
+    view = session.patient_view(d.case_id)
+
+    assert (view.status, view.message) == ("closed", None)
+
+
+def test_a_deleted_answer_is_not_shown_again(review, session, sm, app_engine):
+    """§18.4: a tombstone leaves the hash and the approval, but no content to show."""
+    d = escalated(sm, app_engine)
+    answer_it(review, d)
+    with app_engine.connect() as conn:
+        [entry] = data_log.entries(conn, d.case_id, data_log.DataKind.OUTGOING_MESSAGE)
+    assert review.tombstone(d.case_id, entry.entry_id)
+
+    view = session.patient_view(d.case_id)
+
+    assert (view.status, view.message) == ("closed", None)
+
+
+def test_a_message_without_a_matching_approval_is_never_shown(session, sm, app_engine):
+    """The read-side stand-in for T6: no approval, no medical content on the screen."""
+    d = escalated(sm, app_engine)
+    with app_engine.begin() as conn:
+        data_log.record(conn, d.case_id, d.patient_id, data_log.DataKind.OUTGOING_MESSAGE,
+                        "טקסט שאיש לא אישר", sm.clock())
+    workflow_id, _ = write_approvals(app_engine, d, write_execution(app_engine, d))
+    assert resolve_with(sm, d, workflow_id, None).committed
+
+    view = session.patient_view(d.case_id)
+
+    assert (view.status, view.message) == ("closed", None)

@@ -22,7 +22,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
-from . import data_log, repository
+from . import auth, data_log, naming, repository
 from .case import CaseRecord
 from .naming import Component, Event, State
 from .state_manager import CaseNotFound as _UnknownCase
@@ -192,9 +192,11 @@ class SessionService:
             trace = repository.load_trace(conn, case.case_id)
             resolved = [row for row in trace if row.record_type == "Transition"
                         and row.event == Event.CASE_RESOLVED.value]
-            status = patient_status(case, delivered=bool(resolved))
-            history = status_history(trace, delivered=bool(resolved))
-            message = self._delivered_message(conn, case.case_id, resolved[-1]) if status == "completed" else None
+            answer = self._clinical_answer(conn, case.case_id) if case.state is State.COMPLETED else None
+            status = patient_status(case, delivered=bool(resolved) or answer is not None)
+            history = status_history(trace, delivered=bool(resolved) or answer is not None)
+            message = (self._delivered_message(conn, case.case_id, resolved[-1]) if resolved
+                       else answer) if status == "completed" else None
         needs_document = status == "needs_document"
         missing = sorted(set(case.required_documents or []) - set(case.held_documents)) if needs_document else []
         return PatientView(
@@ -219,6 +221,29 @@ class SessionService:
         sent = [entry.content for entry in data_log.entries(conn, case_id, data_log.DataKind.OUTGOING_MESSAGE)
                 if entry.content is not None and entry.content_hash == execution.content_hash]
         return sent[-1] if sent else None
+
+    def _clinical_answer(self, conn, case_id: str) -> str | None:
+        """The answer a clinical_staff reviewer gave and approved (§5, §12.4), or None.
+
+        The approval must be consumed - an approval that was never used authorised nothing -
+        and its content_hash must match an outgoing message whose content is still there.
+        This is what T6 does for the Tool Executor's path, applied where the patient reads.
+        """
+        approved = {
+            approval.content_hash
+            for approval in repository.content_approvals_for(
+                conn, case_id, naming.Action.ANSWER_CLINICAL_QUESTION.value)
+            if approval.approval_type == "ContentApproval"
+            and approval.reviewer_role == auth.CLINICAL_STAFF
+            and approval.consumed_at is not None
+            and approval.content_hash
+        }
+        if not approved:
+            return None
+        answers = [entry.content for entry
+                   in data_log.entries(conn, case_id, data_log.DataKind.OUTGOING_MESSAGE)
+                   if entry.content is not None and entry.content_hash in approved]
+        return answers[-1] if answers else None
 
     def _request_text(self, case_id: str) -> str | None:
         with self.engine.connect() as conn:
