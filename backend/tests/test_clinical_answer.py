@@ -379,3 +379,20 @@ def test_a_message_without_a_matching_approval_is_never_shown(session, sm, app_e
     view = session.patient_view(d.case_id)
 
     assert (view.status, view.message) == ("closed", None)
+
+
+def test_a_later_unapproved_message_never_displaces_the_approved_answer(review, session, sm, app_engine):
+    """`_clinical_answer` takes the newest approved message (`answers[-1]`) - pin that a
+    later, unapproved outgoing message in the Data Log can never sort ahead of it and be
+    shown instead. This is the ordering the seam actually depends on, not just presence."""
+    d = escalated(sm, app_engine)
+    answer_it(review, d)
+    unapproved = "עדכון מאוחר שאיש לא אישר"
+    with app_engine.begin() as conn:
+        data_log.record(conn, d.case_id, d.patient_id, data_log.DataKind.OUTGOING_MESSAGE,
+                        unapproved, sm.clock() + timedelta(seconds=1))
+
+    view = session.patient_view(d.case_id)
+
+    assert (view.status, view.message) == ("completed", ANSWER)
+    assert unapproved not in str(view)
