@@ -235,3 +235,71 @@ def test_tombstone_clears_the_entry_once(client, staff, sm, app_engine):
     assert client.delete(f"/api/staff/cases/{d.case_id}/data/DATA-NOPE", headers=staff).status_code == 404
     context = client.get(f"/api/staff/cases/{d.case_id}/context", headers=staff).json()
     assert context["data"] == []
+
+
+# --- the clinical answer (§5 AnswerClinicalQuestion, §12.4) ----------------------------------
+
+def token_for(client, user_id):
+    token = client.post("/api/auth/login", json={"user_id": user_id, "password": demo_password()}).json()["token"]
+    return {"Authorization": f"Bearer {token}"}
+
+
+def answer(client, headers, case_id, **overrides):
+    ref = client.get(f"/api/staff/cases/{case_id}/context", headers=headers).json()["shown_context_ref"]
+    body = {"answer": "אין להפסיק את הטיפול ללא הנחיית הרופא.", "reason": "נענתה טלפונית",
+            "shown_context_ref": ref, **overrides}
+    return client.post(f"/api/staff/cases/{case_id}/answer", json=body, headers=headers)
+
+
+def test_a_nurse_answers_a_medical_question_through_the_api(client, staff, sm, app_engine):
+    d = medical_question(sm, app_engine)
+
+    answered = answer(client, staff, d.case_id)
+
+    assert answered.status_code == 200
+    assert answered.json() == {"case_id": d.case_id, "state": "Completed"}
+
+
+def test_admin_staff_gets_403_from_the_answer_route(client, sm, app_engine):
+    """§12.4: a ContentApproval is clinical_staff only. admin_staff may still resolve or reject."""
+    d = medical_question(sm, app_engine)
+
+    refused = answer(client, token_for(client, ADMIN), d.case_id)
+
+    assert refused.status_code == 403 and refused.json()["detail"] == "clinical_staff_only"
+    assert sm.load(d.case_id).state is State.AWAITING_HUMAN_REVIEW
+
+
+def test_an_escalation_that_is_not_a_medical_question_is_409(client, staff, sm, app_engine):
+    d = retry_exhausted(sm, app_engine)
+
+    refused = answer(client, staff, d.case_id)
+
+    assert refused.status_code == 409 and refused.json()["detail"] == "decision_not_allowed"
+
+
+def test_the_answer_route_refuses_an_empty_body_without_echoing_it(client, staff, sm, app_engine):
+    d = medical_question(sm, app_engine)
+
+    refused = client.post(f"/api/staff/cases/{d.case_id}/answer",
+                          json={"answer": "", "reason": "", "shown_context_ref": ""}, headers=staff)
+
+    assert refused.status_code == 422 and refused.json() == {"detail": "invalid_body"}
+
+
+def test_a_stale_context_ref_is_409_context_changed(client, staff, sm, app_engine):
+    d = medical_question(sm, app_engine)
+
+    refused = answer(client, staff, d.case_id, shown_context_ref="ctx-stale")
+
+    assert refused.status_code == 409 and refused.json()["detail"] == "context_changed"
+
+
+def test_a_patient_token_cannot_reach_the_answer_route(client, sm, app_engine):
+    d = medical_question(sm, app_engine)
+
+    refused = client.post(f"/api/staff/cases/{d.case_id}/answer",
+                          json={"answer": "תשובה", "reason": "סיבה", "shown_context_ref": "ctx"},
+                          headers=token_for(client, PATIENT))
+
+    assert refused.status_code == 403

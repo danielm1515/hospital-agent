@@ -12,11 +12,12 @@ from sqlalchemy.engine import Engine
 
 from .. import repository
 from ..auth import Principal
-from ..human_review import ContextChanged, DecisionRejected, HumanReviewService, NotInReview
+from ..human_review import AnswerRejected, ContextChanged, DecisionRejected, HumanReviewService, NotInReview
 from ..naming import State
 from ..session import CaseNotFound
 from .deps import get_engine, get_reviews, require_staff
 from .schemas import (
+    AnswerRequest,
     AuditRecord,
     CaseDetail,
     CaseSummary,
@@ -91,6 +92,31 @@ def decide(case_id: str, body: DecisionRequest, principal: Principal = Depends(r
         raise HTTPException(status_code=409, detail="context_changed") from None
     except DecisionRejected as rejected:
         raise HTTPException(status_code=409, detail=rejected.reason) from None
+    return DecisionResponse(case_id=case_id, state=reviews.sm.load(case_id).state.value)
+
+
+@router.post("/cases/{case_id}/answer", response_model=DecisionResponse)
+def answer(case_id: str, body: AnswerRequest, principal: Principal = Depends(require_staff),
+           reviews: HumanReviewService = Depends(get_reviews)) -> DecisionResponse:
+    """§5, §12.4: a clinical answer, authorised by a ContentApproval bound to its exact text."""
+    try:
+        reviews.answer(
+            reviewer_id=principal.user_id,
+            reviewer_role=principal.role,
+            case_id=case_id,
+            answer=body.answer,
+            reason=body.reason,
+            shown_context_ref=body.shown_context_ref,
+        )
+    except CaseNotFound:
+        raise HTTPException(status_code=404, detail="case_not_found") from None
+    except NotInReview:
+        raise HTTPException(status_code=409, detail="not_in_review") from None
+    except ContextChanged:
+        raise HTTPException(status_code=409, detail="context_changed") from None
+    except AnswerRejected as rejected:
+        status = 403 if rejected.reason == "clinical_staff_only" else 409
+        raise HTTPException(status_code=status, detail=rejected.reason) from None
     return DecisionResponse(case_id=case_id, state=reviews.sm.load(case_id).state.value)
 
 

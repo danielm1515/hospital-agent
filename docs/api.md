@@ -74,6 +74,7 @@ methods: `GET`, `POST`, `DELETE`, `OPTIONS`. Allowed headers: `Authorization`,
 | GET | `/api/staff/reviews` | staff | The human-review queue |
 | GET | `/api/staff/cases/{case_id}/context` | staff | What the reviewer is shown |
 | POST | `/api/staff/cases/{case_id}/decision` | staff | Approve / resolve / reject |
+| POST | `/api/staff/cases/{case_id}/answer` | staff | Answer a `MedicalQuestion` with an approved clinical message |
 | DELETE | `/api/staff/cases/{case_id}/data/{entry_id}` | staff | Delete one Data Log entry |
 
 Codes used everywhere: `401 not_authenticated` (no token, a malformed token, an expired or
@@ -165,7 +166,7 @@ Every patient route answers with this object, and nothing else:
 | `in_progress` | The agent is working (classifying, planning, retrieving) | A spinner; keep polling |
 | `needs_document` | A document is missing | The upload form for `missing_document_ids` |
 | `in_review` | A human is handling it | "A staff member is reviewing your request" - **no** reason, no kind |
-| `completed` | An answer was delivered | `message` |
+| `completed` | An answer was delivered | `message` - either the status update the agent sent, or a clinical answer a `clinical_staff` reviewer wrote and approved |
 | `closed` | Finished without a delivered message (a reviewer resolved or rejected it) | "Your request was closed. The clinic will contact you." |
 
 - `request_text` is the text the patient submitted; `null` once a staff member has deleted
@@ -447,7 +448,7 @@ automatically. What to expect:
 
 | Decision | Kind | Resulting state |
 |---|---|---|
-| `resolve` | any | `Completed` (the patient sees `closed` - nothing was sent) |
+| `resolve` | any | `Completed` (the patient sees `closed` - this route never carries a message; for a `MedicalQuestion`, answering it through `POST .../answer` instead leaves the patient seeing `completed`) |
 | `reject` | any | `Failed` (the patient sees `closed`) |
 | `approve` | `PatientVerificationFailed` | `Classifying` - the request is re-validated automatically and goes on; or `Received` if the request text had been deleted: the decision stands and the case waits for staff |
 | `approve` | `RetryExhausted` | `Planning` (a new retry cycle) |
@@ -470,6 +471,28 @@ Errors - all of them leave the case exactly as it was:
 | 409 | other codes | Any other guard that refused the human event; show `detail` and re-fetch the case |
 | 422 | `invalid_body` | A field is over its length limit, or `patient_deadline` has no timezone |
 
+### POST /api/staff/cases/{case_id}/answer
+
+A clinical answer to a `MedicalQuestion` escalation (§5 `AnswerClinicalQuestion`). The text is
+recorded in the Data Log, a `ContentApproval` (§12.4) is bound to its exact `content_hash`, and
+the case closes. Request:
+
+```json
+{"answer": "...", "reason": "...", "shown_context_ref": "ctx-ba3e0652b0ea"}
+```
+
+- `answer` is 1-2000 characters: the exact text the approval covers and the patient then reads.
+- `reason` is 1-2000 characters, internal, exactly like a decision's reason. It never reaches
+  the patient.
+- `shown_context_ref` binds the answer to the context the reviewer was shown, like a decision.
+
+`200`: `{"case_id": "...", "state": "Completed"}`.
+
+- `403 clinical_staff_only` - only `clinical_staff` may grant a ContentApproval (§12.4). This is
+  a role rule, not an authentication one: an `admin_staff` token reaches the route and is refused.
+- `409 decision_not_allowed` - the escalation is not a `MedicalQuestion`.
+- `409 not_in_review`, `409 context_changed`, `404 case_not_found`, `422 invalid_body`.
+
 ### DELETE /api/staff/cases/{case_id}/data/{entry_id}
 
 §18.4: delete one Data Log entry's content. The entry stays as a tombstone (its
@@ -490,8 +513,12 @@ previous `shown_context_ref` is no longer valid.
   the only source of truth, and a refresh must never change what the user sees.
 - **A staff decision is a two-step flow by design**: fetch the context, then post the
   decision with its `shown_context_ref`. Never cache a context across a decision.
-- **There is no content-approval route.** A medical message is denied and the case reaches
-  the queue; the reviewer closes it with `resolve` (design decision 6).
+- **A medical message is never sent automatically.** It is denied and the case reaches the
+  queue; from there a `clinical_staff` reviewer either answers it through
+  `POST .../answer` (a `ContentApproval`, bound to the exact text, and the patient sees
+  `completed`) or closes it without a message through `POST .../decision` with
+  `resolve`/`reject` (the patient sees `closed`) - `admin_staff` may do the latter but not
+  the former (design decision 6).
 - **Error handling:** `401` → back to login; `403` → the wrong screen for this role;
   `404` → the case is gone or not the user's; `409` → show `detail`, re-fetch, try again;
   `422` → the form is invalid - validate locally against the rules listed above, since the

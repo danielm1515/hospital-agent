@@ -157,6 +157,14 @@ class DecisionRequest(BaseModel):
     patient_deadline: AwareDatetime | None = None
 
 
+class AnswerRequest(BaseModel):
+    """§5 AnswerClinicalQuestion. `answer` is the exact text the ContentApproval covers."""
+
+    answer: Annotated[str, StringConstraints(min_length=1, max_length=2000)]
+    reason: Annotated[str, StringConstraints(min_length=1, max_length=2000)]
+    shown_context_ref: Annotated[str, StringConstraints(min_length=1, max_length=200)]
+
+
 class DecisionResponse(BaseModel):
     case_id: str
     state: str
