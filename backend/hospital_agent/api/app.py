@@ -37,7 +37,8 @@ from . import routes_auth, routes_patient, routes_staff
 from .deps import get_engine
 
 # The UI's dev server (sub-project 6). CORS_ORIGINS adds any deployed origin.
-DEFAULT_CORS_ORIGINS = ("http://localhost:5173", "http://127.0.0.1:5173")
+DEFAULT_CORS_ORIGINS = ("http://localhost:5273", "http://127.0.0.1:5273",
+                        "http://localhost:5173", "http://127.0.0.1:5173")
 
 
 def cors_origins(env: dict[str, str] | None = None) -> list[str]:

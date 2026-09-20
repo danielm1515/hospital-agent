@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project status
 
-Sub-projects 1–7 are implemented and merged into `main`: 1 (Core), 2 (Policy), 3 (Execution), 4 (LLM), 5 (Human Review + the authenticated API) and 7 (D33: the Response Evaluator's recall measurement, `backend/eval/`) in `backend/`; 6 (React UI, `frontend/`) served by the compose `frontend` service on `http://localhost:5173` (design and plan under `docs/superpowers/`). The authoritative input is the **binding demo spec** `Hospital_Agent_Clean.docx` (Hebrew, final-project scope). A Markdown copy lives in `docs/spec/`, one file per spec section: **spec §N → `docs/spec/NN-*.md`** (index: `docs/spec/README.md`). The docx is the source of truth. `docs/spec/` is generated, so don't hand-edit it. After the docx changes, regenerate it:
+Sub-projects 1–7 are implemented and merged into `main`: 1 (Core), 2 (Policy), 3 (Execution), 4 (LLM), 5 (Human Review + the authenticated API) and 7 (D33: the Response Evaluator's recall measurement, `backend/eval/`) in `backend/`; 6 (React UI, `frontend/`) served by the compose `frontend` service on `http://localhost:5273` (design and plan under `docs/superpowers/`). The authoritative input is the **binding demo spec** `Hospital_Agent_Clean.docx` (Hebrew, final-project scope). A Markdown copy lives in `docs/spec/`, one file per spec section: **spec §N → `docs/spec/NN-*.md`** (index: `docs/spec/README.md`). The docx is the source of truth. `docs/spec/` is generated, so don't hand-edit it. After the docx changes, regenerate it:
 
 ```bash
 python scripts/spec_to_md.py
@@ -121,7 +121,7 @@ docker compose run --rm -e RUN_LIVE_LLM=1 backend python -m eval.d33 --live
 
 Sub-project 7 (D33) closes the last item this repo's design docs tracked. Sub-projects 1-7, including the React UI, are implemented and merged into `main`; nothing here is pending integration:
 
-- **Sub-project 6 (React UI)** (`frontend/`: patient screen, staff screen, §1, D24) is merged into `main` and served by the compose `frontend` service on `http://localhost:5173`.
+- **Sub-project 6 (React UI)** (`frontend/`: patient screen, staff screen, §1, D24) is merged into `main` and served by the compose `frontend` service on `http://localhost:5273`.
 - **The golden traces (§15)** are produced by the running system, not hand-derived: `python -m obs.golden` prints `35`, `4`, `54` audit rows for the three §0 scenarios, matching the spec's expected counts.
 - **The demo runs end to end**, on the same code and the same model, through exactly the three scenarios of §0 (normal flow with a missing document, medical escalation, technical failure with bounded retry) - only the patient's input and the mocked external responses change between them.
 - **Anything beyond §0 is the "full characterization" (אפיון מלא) vision document** (see *Project status* above), not this demo - it is out of scope, not a gap.

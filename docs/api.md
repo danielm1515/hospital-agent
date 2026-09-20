@@ -52,7 +52,7 @@ the same API rights here; the UI shows the staff screen for both (`role !== "pat
 
 ### CORS
 
-The API allows `http://localhost:5173` and `http://127.0.0.1:5173` (the Vite dev server),
+The API allows `http://localhost:5273` and `http://127.0.0.1:5273` (the Vite dev server),
 plus any comma-separated origin in the `CORS_ORIGINS` environment variable. Allowed
 methods: `GET`, `POST`, `DELETE`, `OPTIONS`. Allowed headers: `Authorization`,
 `Content-Type`. Credentials (cookies) are not used.
