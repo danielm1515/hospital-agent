@@ -102,6 +102,29 @@ export const DATA_KIND_ORDER = [
   'outgoing_message',
 ] as const
 
+/**
+ * Document ids/types the demo and the sub-project 11 catalog use, for the Case
+ * Monitor's required/held/missing facts (§5.3). A code shows beside its own label,
+ * never instead of it, and an id this version does not know falls back to itself.
+ */
+export const DOCUMENT_LABELS: Record<string, string> = {
+  referral: 'הפניה',
+  blood_test: 'בדיקת דם',
+  imaging: 'הדמיה',
+  consent_form: 'טופס הסכמה',
+  CBC: 'ספירת דם מלאה',
+  COAGULATION_TESTS: 'בדיקות קרישה',
+  ECG: 'תרשים פעילות חשמלית של הלב',
+  URINALYSIS: 'בדיקת שתן',
+  PREOP_SUMMARY: 'סיכום טרום ניתוח',
+}
+
+/** A document code with its Hebrew label beside it; an unknown code is shown alone. */
+export function documentLabel(documentId: string): string {
+  const label = DOCUMENT_LABELS[documentId]
+  return label ? `${documentId} (${label})` : documentId
+}
+
 export const DATA_KIND_LABELS: Record<string, string> = {
   request_text: 'הפנייה',
   uploaded_document: 'מסמכים שהועלו',

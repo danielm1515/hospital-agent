@@ -18,6 +18,7 @@ import type {
   LoginResponse,
   Me,
   PatientView,
+  PdfUploadResponse,
   ReviewContext,
   ReviewItem,
   State,
@@ -85,6 +86,7 @@ export function setOnUnauthorized(hook: (() => void) | null): void {
 type Method = 'GET' | 'POST' | 'DELETE'
 
 interface RequestOptions {
+  /** A JSON-serializable body, or a `FormData` body (sent as-is, no `Content-Type` set). */
   body?: unknown
   /** Send the bearer token and treat a 401 as an ended session. Default true. */
   auth?: boolean
@@ -111,8 +113,11 @@ async function readJson(response: Response): Promise<unknown> {
 
 async function request<T>(method: Method, path: string, options: RequestOptions = {}): Promise<T> {
   const auth = options.auth ?? true
+  const isFormData = options.body instanceof FormData
   const headers: Record<string, string> = { Accept: 'application/json' }
-  if (options.body !== undefined) headers['Content-Type'] = 'application/json'
+  // A `FormData` body sets its own multipart `Content-Type` with the boundary; the
+  // browser only does that when we leave the header unset.
+  if (options.body !== undefined && !isFormData) headers['Content-Type'] = 'application/json'
   if (auth) {
     const token = getToken()
     if (token) headers.Authorization = `Bearer ${token}`
@@ -123,7 +128,12 @@ async function request<T>(method: Method, path: string, options: RequestOptions 
     response = await fetch(BASE + path, {
       method,
       headers,
-      body: options.body === undefined ? undefined : JSON.stringify(options.body),
+      body:
+        options.body === undefined
+          ? undefined
+          : isFormData
+            ? (options.body as FormData)
+            : JSON.stringify(options.body),
     })
   } catch {
     throw new ApiError(0, 'network_error')
@@ -180,6 +190,18 @@ export function uploadDocument(caseId: string, body: UploadDocumentBody): Promis
   const { document_id, format, content } = body
   return request<PatientView>('POST', `/patient/requests/${id(caseId)}/documents`, {
     body: { document_id, format, content },
+  })
+}
+
+/**
+ * Sub-project 13 (`docs/api.md` §4): uploads a PDF as `multipart/form-data`, one part
+ * named `file` carrying the filename. Offered only when `document_upload === 'file'`.
+ */
+export function uploadDocumentFile(caseId: string, file: File): Promise<PdfUploadResponse> {
+  const formData = new FormData()
+  formData.append('file', file)
+  return request<PdfUploadResponse>('POST', `/patient/requests/${id(caseId)}/documents/file`, {
+    body: formData,
   })
 }
 

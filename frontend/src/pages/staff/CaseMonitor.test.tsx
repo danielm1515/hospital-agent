@@ -186,6 +186,24 @@ describe('CaseMonitor', () => {
     expect(container.querySelector('.plan-steps .step-done')).toHaveTextContent('CheckAppointment')
   })
 
+  it('shows the sub-project 11 catalog codes with their Hebrew label beside them', async () => {
+    vi.mocked(api.getCase).mockImplementation(async (caseId: string) => ({
+      ...DETAIL,
+      case_id: caseId,
+      required_documents: ['CBC', 'ECG'],
+      held_documents: ['CBC'],
+    }))
+    renderMonitor()
+
+    await userEvent.click(await screen.findByRole('button', { name: 'CASE-23FE645294B7' }))
+    await screen.findByText('REQUEST_SUBMITTED')
+
+    const documents = screen.getByRole('heading', { name: 'מסמכים' }).closest('.fact-group')
+    // The code stays on screen, and its Hebrew label sits beside it, never instead of it.
+    expect(documents).toHaveTextContent('CBC (ספירת דם מלאה)')
+    expect(documents).toHaveTextContent('ECG (תרשים פעילות חשמלית של הלב)')
+  })
+
   it('shows the correspondence with the patient, and which way each message went', async () => {
     const { container } = renderMonitor()
 

@@ -24,6 +24,7 @@ export function patientView(overrides: Partial<PatientView> = {}): PatientView {
     missing_document_request_template_id: null,
     message: null,
     history: historyFor(status),
+    document_upload: 'text',
     ...overrides,
   }
 }

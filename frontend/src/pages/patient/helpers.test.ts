@@ -37,12 +37,28 @@ describe('patient helpers', () => {
     expect(documentLabel('mystery_doc')).toBeNull()
   })
 
+  it('names the sub-project 11 catalog types (design §2)', () => {
+    expect(documentLabel('CBC')).toBe('ספירת דם מלאה')
+    expect(documentLabel('COAGULATION_TESTS')).toBe('בדיקות קרישה')
+    expect(documentLabel('ECG')).toBe('תרשים פעילות חשמלית של הלב')
+    expect(documentLabel('URINALYSIS')).toBe('בדיקת שתן')
+    expect(documentLabel('PREOP_SUMMARY')).toBe('סיכום טרום ניתוח')
+  })
+
   it('turns an error into one Hebrew sentence, never a code', () => {
     expect(errorMessage(new ApiError(404, 'case_not_found'))).toBe('הפנייה לא נמצאה.')
     expect(errorMessage(new ApiError(0, 'network_error'))).toMatch(/אין חיבור לשרת/)
     expect(errorMessage(new ApiError(422, 'validation_error'))).toBe('הפרטים שהוזנו אינם תקינים.')
     expect(errorMessage(new ApiError(409, 'medical_answer_attempt'))).not.toMatch(/medical/)
     expect(errorMessage(new Error('boom'))).not.toMatch(/boom/)
+  })
+
+  it('gives Hebrew for the sub-project 13 upload errors, ahead of the generic status fallback', () => {
+    // A 404 here is not the generic "case not found" - the specific detail wins.
+    expect(errorMessage(new ApiError(404, 'file_upload_not_enabled'))).toMatch(/העלאת קובץ אינה זמינה/)
+    expect(errorMessage(new ApiError(409, 'not_waiting_for_document'))).toMatch(/אינה ממתינה למסמך/)
+    expect(errorMessage(new ApiError(413, 'too_large'))).toMatch(/גדול מדי/)
+    expect(errorMessage(new ApiError(503, 'document_service_unavailable'))).toMatch(/שירות המסמכים אינו זמין/)
   })
 
   it('prints the time to the second, so two steps in the same minute differ', () => {

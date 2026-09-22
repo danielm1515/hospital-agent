@@ -113,18 +113,43 @@ export function statusText(status: PatientStatus): { title: string; note: string
 }
 
 /**
- * The demo's document ids, for a readable line next to the id itself. An id the
- * demo does not know is shown as the id alone - the UI never invents a name.
+ * The demo's document ids and the sub-project 11 catalog types, for a readable line
+ * next to the id itself. An id the demo does not know is shown as the id alone - the
+ * UI never invents a name.
  */
 const DOCUMENT_LABELS: Record<string, string> = {
   referral: 'הפניה',
   blood_test: 'בדיקת דם',
   imaging: 'הדמיה',
   consent_form: 'טופס הסכמה',
+  CBC: 'ספירת דם מלאה',
+  COAGULATION_TESTS: 'בדיקות קרישה',
+  ECG: 'תרשים פעילות חשמלית של הלב',
+  URINALYSIS: 'בדיקת שתן',
+  PREOP_SUMMARY: 'סיכום טרום ניתוח',
 }
 
 export function documentLabel(documentId: string): string | null {
   return DOCUMENT_LABELS[documentId] ?? null
+}
+
+/** The client-side refusal of a non-PDF file, and of a PDF over the 10 MB limit. */
+export const NOT_PDF_MESSAGE = 'יש לבחור קובץ PDF.'
+export const FILE_TOO_LARGE_MESSAGE = 'הקובץ גדול מדי. אפשר להעלות קובץ עד 10MB.'
+
+/** `POST .../documents/file` accepts a PDF of at most 10 MB (`docs/api.md` §4). */
+export const MAX_UPLOAD_BYTES = 10 * 1024 * 1024
+
+/**
+ * Hebrew for the sub-project 13 upload errors (`docs/api.md` §4), keyed by `detail`.
+ * Checked before the generic status-based fallbacks below, since a `404` here
+ * (`file_upload_not_enabled`) is not the same as the generic "case not found" `404`.
+ */
+const ERROR_DETAILS: Record<string, string> = {
+  not_waiting_for_document: 'הפנייה כבר אינה ממתינה למסמך. רעננו את המסך ונסו שוב.',
+  too_large: FILE_TOO_LARGE_MESSAGE,
+  document_service_unavailable: 'שירות המסמכים אינו זמין כרגע. נסו שוב מאוחר יותר או פנו למוקד המטופלים.',
+  file_upload_not_enabled: 'העלאת קובץ אינה זמינה כרגע. נסו שוב מאוחר יותר או פנו למוקד המטופלים.',
 }
 
 /**
@@ -134,6 +159,8 @@ export function documentLabel(documentId: string): string | null {
 export function errorMessage(caught: unknown): string {
   if (!(caught instanceof ApiError)) return 'אירעה תקלה. נסו שוב בעוד רגע.'
   if (caught.status === 0) return 'אין חיבור לשרת. בדקו את החיבור ונסו שוב.'
+  const specific = ERROR_DETAILS[caught.detail]
+  if (specific) return specific
   if (caught.status === 404) return 'הפנייה לא נמצאה.'
   if (caught.status === 422 || caught.detail === 'validation_error') return 'הפרטים שהוזנו אינם תקינים.'
   return 'אירעה תקלה. נסו שוב בעוד רגע.'

@@ -8,6 +8,7 @@ import { AuditTimeline } from './AuditTimeline'
 import { PatientThread } from './PatientThread'
 import {
   detailOf,
+  documentLabel,
   escalationLabel,
   formatDateTime,
   intentLabel,
@@ -320,9 +321,17 @@ function CaseFacts({ detail }: { detail: CaseDetail }) {
       <section className="fact-group">
         <h3 className="fact-group-h">מסמכים</h3>
         <dl className="fact-list">
-          <Fact label="נדרשים" code="required_documents" mono value={required.join(', ') || '—'} />
-          <Fact label="שהתקבלו" code="held_documents" mono value={detail.held_documents.join(', ') || '—'} />
-          <Fact label="חסרים" value={missing.length > 0 ? missing.join(', ') : 'אין'} mono={missing.length > 0} />
+          <Fact
+            label="נדרשים"
+            code="required_documents"
+            value={required.length > 0 ? required.map(documentLabel).join(', ') : '—'}
+          />
+          <Fact
+            label="שהתקבלו"
+            code="held_documents"
+            value={detail.held_documents.length > 0 ? detail.held_documents.map(documentLabel).join(', ') : '—'}
+          />
+          <Fact label="חסרים" value={missing.length > 0 ? missing.map(documentLabel).join(', ') : 'אין'} />
         </dl>
       </section>
 

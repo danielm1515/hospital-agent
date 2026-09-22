@@ -11,11 +11,12 @@ import { authValue, PATIENT_USER, TestAuthProvider } from '../../test/helpers'
 
 vi.mock('../../api/client', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../api/client')>()
-  return { ...actual, getRequest: vi.fn(), uploadDocument: vi.fn() }
+  return { ...actual, getRequest: vi.fn(), uploadDocument: vi.fn(), uploadDocumentFile: vi.fn() }
 })
 
 const getRequest = vi.mocked(api.getRequest)
 const uploadDocument = vi.mocked(api.uploadDocument)
+const uploadDocumentFile = vi.mocked(api.uploadDocumentFile)
 
 function renderDetail(caseId = 'CASE-1') {
   return render(
@@ -42,6 +43,7 @@ const needsDocument = (overrides: Partial<PatientView> = {}) =>
 beforeEach(() => {
   getRequest.mockReset()
   uploadDocument.mockReset()
+  uploadDocumentFile.mockReset()
 })
 
 describe('RequestDetail: needs_document (D24)', () => {
@@ -155,6 +157,127 @@ describe('RequestDetail: needs_document (D24)', () => {
 
     expect(await screen.findByText(/הפנייה ממתינה למסמך/)).toBeInTheDocument()
     expect(screen.queryByRole('region', { name: 'העלאת מסמך blood_test' })).not.toBeInTheDocument()
+  })
+})
+
+describe('RequestDetail: needs_document, file upload (sub-project 13, docs/api.md §4)', () => {
+  const needsDocumentFile = (overrides: Partial<PatientView> = {}) =>
+    needsDocument({ document_upload: 'file', ...overrides })
+
+  function pdfFile(name = 'results.pdf', sizeBytes = 1024) {
+    const file = new File(['%PDF-1.4 ...'], name, { type: 'application/pdf' })
+    Object.defineProperty(file, 'size', { value: sizeBytes })
+    return file
+  }
+
+  it('renders one PDF input and no text box or format select', async () => {
+    getRequest.mockResolvedValue(needsDocumentFile())
+    renderDetail()
+
+    const section = await screen.findByRole('region', { name: 'העלאת מסמך PDF' })
+    expect(within(section).getByLabelText('בחירת קובץ')).toHaveAttribute('accept', 'application/pdf,.pdf')
+    expect(within(section).queryByLabelText('תוכן המסמך')).not.toBeInTheDocument()
+    expect(within(section).queryByLabelText('סוג הקובץ')).not.toBeInTheDocument()
+    // Only one upload section - not one per missing document.
+    expect(screen.getAllByRole('region', { name: /העלאת מסמך/ })).toHaveLength(1)
+  })
+
+  it('refuses a non-PDF file without calling the API', async () => {
+    const user = userEvent.setup()
+    getRequest.mockResolvedValue(needsDocumentFile())
+    renderDetail()
+
+    const section = await screen.findByRole('region', { name: 'העלאת מסמך PDF' })
+    const file = new File(['hello'], 'results.txt', { type: 'text/plain' })
+    await user.upload(within(section).getByLabelText('בחירת קובץ'), file)
+    await user.click(within(section).getByRole('button', { name: 'שליחת המסמך' }))
+
+    expect(uploadDocumentFile).not.toHaveBeenCalled()
+    expect(within(section).getByRole('alert')).toHaveTextContent('יש לבחור קובץ PDF.')
+  })
+
+  it('refuses a PDF over 10 MB without calling the API', async () => {
+    const user = userEvent.setup()
+    getRequest.mockResolvedValue(needsDocumentFile())
+    renderDetail()
+
+    const section = await screen.findByRole('region', { name: 'העלאת מסמך PDF' })
+    await user.upload(within(section).getByLabelText('בחירת קובץ'), pdfFile('big.pdf', 10 * 1024 * 1024 + 1))
+    await user.click(within(section).getByRole('button', { name: 'שליחת המסמך' }))
+
+    expect(uploadDocumentFile).not.toHaveBeenCalled()
+    expect(within(section).getByRole('alert')).toHaveTextContent('הקובץ גדול מדי')
+  })
+
+  it.each([
+    ['accepted', 'CBC', 'ok', 'המסמך ספירת דם מלאה התקבל. הפנייה ממשיכה בטיפול.'],
+    ['not_required', 'ECG', 'info', 'המסמך תרשים פעילות חשמלית של הלב תקין, אבל אינו נדרש לתור הזה.'],
+    ['already_received', 'URINALYSIS', 'info', 'המסמך בדיקת שתן כבר התקבל קודם.'],
+    ['not_medical', null, 'error', 'הקובץ אינו מסמך רפואי, ולכן לא נקלט.'],
+    ['unreadable', null, 'error', 'לא הצלחנו לקרוא את המסמך. ודאו שזה קובץ PDF ברור ונסו שוב.'],
+    ['expired', 'COAGULATION_TESTS', 'error', 'המסמך בדיקות קרישה ישן מדי לפי כללי התוקף. יש להעלות מסמך עדכני.'],
+    ['not_yours', null, 'error', 'המסמך אינו שייך לך, ולכן לא נקלט.'],
+  ] as const)('shows the sentence for upload.code %s', async (code, documentType, variant, sentence) => {
+    const user = userEvent.setup()
+    getRequest.mockResolvedValue(needsDocumentFile())
+    const nextView =
+      code === 'accepted' ? patientView({ case_id: 'CASE-1', status: 'in_progress' }) : needsDocumentFile()
+    uploadDocumentFile.mockResolvedValue({ upload: { code, document_type: documentType }, request: nextView })
+    renderDetail()
+
+    const section = await screen.findByRole('region', { name: 'העלאת מסמך PDF' })
+    await user.upload(within(section).getByLabelText('בחירת קובץ'), pdfFile())
+    await user.click(within(section).getByRole('button', { name: 'שליחת המסמך' }))
+
+    expect(uploadDocumentFile).toHaveBeenCalledWith('CASE-1', expect.any(File))
+    expect(await screen.findByText(sentence)).toBeInTheDocument()
+    expect(screen.getByText(sentence).closest(`.alert.${variant}`)).not.toBeNull()
+  })
+
+  it('shows the neutral fail-closed sentence for a code this version does not know', async () => {
+    const user = userEvent.setup()
+    getRequest.mockResolvedValue(needsDocumentFile())
+    uploadDocumentFile.mockResolvedValue({
+      upload: { code: 'something_new' as never, document_type: null },
+      request: needsDocumentFile(),
+    })
+    renderDetail()
+
+    const section = await screen.findByRole('region', { name: 'העלאת מסמך PDF' })
+    await user.upload(within(section).getByLabelText('בחירת קובץ'), pdfFile())
+    await user.click(within(section).getByRole('button', { name: 'שליחת המסמך' }))
+
+    expect(await screen.findByText('המסמך לא נקלט. נסו שוב או פנו למוקד.')).toBeInTheDocument()
+  })
+
+  it('replaces the view with response.request on every code, including accepted', async () => {
+    const user = userEvent.setup()
+    getRequest.mockResolvedValue(needsDocumentFile())
+    uploadDocumentFile.mockResolvedValue({
+      upload: { code: 'accepted', document_type: 'CBC' },
+      request: patientView({ case_id: 'CASE-1', status: 'in_progress', document_upload: 'file' }),
+    })
+    const { container } = renderDetail()
+
+    const section = await screen.findByRole('region', { name: 'העלאת מסמך PDF' })
+    await user.upload(within(section).getByLabelText('בחירת קובץ'), pdfFile())
+    await user.click(within(section).getByRole('button', { name: 'שליחת המסמך' }))
+
+    await waitFor(() => expect(container.querySelector('.req-head .pill')).toHaveTextContent('בטיפול'))
+    expect(screen.queryByText('כדי להשלים את ההכנה לתור חסרים המסמכים הבאים:')).not.toBeInTheDocument()
+  })
+
+  it('shows the Hebrew sentence for an API error and does not change the view', async () => {
+    const user = userEvent.setup()
+    getRequest.mockResolvedValue(needsDocumentFile())
+    uploadDocumentFile.mockRejectedValue(new ApiError(409, 'not_waiting_for_document'))
+    renderDetail()
+
+    const section = await screen.findByRole('region', { name: 'העלאת מסמך PDF' })
+    await user.upload(within(section).getByLabelText('בחירת קובץ'), pdfFile())
+    await user.click(within(section).getByRole('button', { name: 'שליחת המסמך' }))
+
+    expect(await within(section).findByRole('alert')).toHaveTextContent('הפנייה כבר אינה ממתינה למסמך')
   })
 })
 

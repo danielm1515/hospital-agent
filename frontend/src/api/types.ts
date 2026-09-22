@@ -103,6 +103,13 @@ export interface PatientView {
    * entry's `status` is always `status`; a status the case entered twice is listed twice.
    */
   history: StatusChange[]
+  /**
+   * Which upload the `needs_document` screen offers (sub-project 13, `docs/api.md` §4):
+   * `'file'` for a PDF picker sent to `POST .../documents/file` when the server is
+   * configured with the document-service, `'text'` for the text form sent to
+   * `POST .../documents` otherwise. The same for every case of a running server.
+   */
+  document_upload: 'file' | 'text'
 }
 
 export interface CreateRequestBody {
@@ -118,6 +125,39 @@ export interface UploadDocumentBody {
   format: DocumentFormat
   /** 1–20000 characters. */
   content: string
+}
+
+/** The document catalog (sub-project 11, `docs/api.md` §4). */
+export type DocumentType = 'CBC' | 'COAGULATION_TESTS' | 'ECG' | 'URINALYSIS' | 'PREOP_SUMMARY'
+export const DOCUMENT_TYPES: readonly DocumentType[] = [
+  'CBC',
+  'COAGULATION_TESTS',
+  'ECG',
+  'URINALYSIS',
+  'PREOP_SUMMARY',
+]
+
+/** `PdfUploadResponse.upload.code` (`docs/api.md` §4). */
+export type UploadCode =
+  | 'accepted'
+  | 'not_required'
+  | 'already_received'
+  | 'not_medical'
+  | 'unreadable'
+  | 'expired'
+  | 'not_yours'
+
+export interface UploadResult {
+  code: UploadCode
+  /** The catalog type for `accepted`, `not_required` and `already_received`; `null` otherwise. */
+  document_type: DocumentType | null
+}
+
+/** `POST /api/patient/requests/{case_id}/documents/file` → 200 (`docs/api.md` §4). */
+export interface PdfUploadResponse {
+  upload: UploadResult
+  /** The patient view as it now stands - unchanged from before the upload for every code but `accepted`. */
+  request: PatientView
 }
 
 // ---- Staff: Case Monitor --------------------------------------------------

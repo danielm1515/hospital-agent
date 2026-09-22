@@ -139,6 +139,24 @@ describe('patient routes', () => {
       content: 'x',
     })
   })
+
+  it('uploads a PDF as multipart form data, with the file and the bearer token', async () => {
+    mockOnce(200, { upload: { code: 'accepted', document_type: 'CBC' }, request: { case_id: 'CASE-1' } })
+    const file = new File(['%PDF-1.4 ...'], 'results.pdf', { type: 'application/pdf' })
+    const result = await api.uploadDocumentFile('CASE-1', file)
+
+    expect(result).toEqual({ upload: { code: 'accepted', document_type: 'CBC' }, request: { case_id: 'CASE-1' } })
+    const [url, init] = lastCall()
+    expect(url).toBe('/api/patient/requests/CASE-1/documents/file')
+    expect(init.method).toBe('POST')
+    expect((init.headers as Record<string, string>).Authorization).toBe('Bearer tok-1')
+    // The browser sets the multipart boundary itself: no Content-Type is set by hand.
+    expect((init.headers as Record<string, string>)['Content-Type']).toBeUndefined()
+    expect(init.body).toBeInstanceOf(FormData)
+    const sent = (init.body as FormData).get('file')
+    expect(sent).toBeInstanceOf(File)
+    expect((sent as File).name).toBe('results.pdf')
+  })
 })
 
 describe('staff routes', () => {

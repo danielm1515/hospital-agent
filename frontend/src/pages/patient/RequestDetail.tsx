@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import * as api from '../../api/client'
 import { DOCUMENT_FORMATS } from '../../api/types'
-import type { DocumentFormat, PatientView, StatusChange } from '../../api/types'
+import type { DocumentFormat, DocumentType, PatientView, StatusChange, UploadResult } from '../../api/types'
 import { Alert } from '../../components/Alert'
+import type { AlertVariant } from '../../components/Alert'
 import { Button } from '../../components/Button'
 import { StatusPill } from '../../components/StatusPill'
 import { TextField } from '../../components/TextField'
@@ -12,10 +13,13 @@ import {
   documentLabel,
   elapsedBetween,
   errorMessage,
+  FILE_TOO_LARGE_MESSAGE,
   formatClock,
   formatDate,
   formatDateTime,
   isMoving,
+  MAX_UPLOAD_BYTES,
+  NOT_PDF_MESSAGE,
   sameDay,
   statusText,
   usePolling,
@@ -34,10 +38,20 @@ const MISSING_DOCUMENT_TEMPLATE = 'missing-document-v1'
 /** `POST .../documents` accepts 1-20000 characters of text (the demo has no binary upload). */
 const MAX_CONTENT = 20000
 
+/** The outcome of a PDF upload, shown next to the request regardless of its status. */
+interface UploadNotice {
+  variant: AlertVariant
+  text: string
+}
+
 export function RequestDetail() {
   const { caseId = '' } = useParams()
   const [view, setView] = useState<PatientView | null>(null)
   const [error, setError] = useState<string | null>(null)
+  // Lifted above `StatusContent`: `accepted` moves the case out of `needs_document`
+  // (`docs/api.md` §4), so a notice that lived only inside the upload form would
+  // unmount together with it the moment the view is replaced.
+  const [uploadNotice, setUploadNotice] = useState<UploadNotice | null>(null)
 
   const load = useCallback(async () => {
     try {
@@ -52,6 +66,10 @@ export function RequestDetail() {
   useEffect(() => {
     void load()
   }, [load])
+
+  useEffect(() => {
+    setUploadNotice(null)
+  }, [caseId])
 
   usePolling(view !== null && isMoving(view.status), () => void load())
 
@@ -95,7 +113,9 @@ export function RequestDetail() {
             <p className="req-full">{view.request_text ?? 'תוכן הפנייה נמחק מהמערכת.'}</p>
           </section>
 
-          <StatusContent view={view} onChanged={setView} />
+          {uploadNotice && <Alert variant={uploadNotice.variant}>{uploadNotice.text}</Alert>}
+
+          <StatusContent view={view} onChanged={setView} onUploadNotice={setUploadNotice} />
         </>
       )}
     </section>
@@ -144,10 +164,18 @@ function Timeline({ history }: { history: StatusChange[] }) {
 
 // ---- Content per status ----------------------------------------------------
 
-function StatusContent({ view, onChanged }: { view: PatientView; onChanged: (next: PatientView) => void }) {
+function StatusContent({
+  view,
+  onChanged,
+  onUploadNotice,
+}: {
+  view: PatientView
+  onChanged: (next: PatientView) => void
+  onUploadNotice: (notice: UploadNotice | null) => void
+}) {
   switch (view.status) {
     case 'needs_document':
-      return <MissingDocuments view={view} onChanged={onChanged} />
+      return <MissingDocuments view={view} onChanged={onChanged} onUploadNotice={onUploadNotice} />
     case 'completed':
       return (
         <Alert variant="ok" title="ההודעה שנשלחה אליך">
@@ -181,7 +209,15 @@ function StatusContent({ view, onChanged }: { view: PatientView; onChanged: (nex
  * the server sent - never sent to the patient by the system. An unknown template
  * id shows nothing but a neutral line (fail closed, §14).
  */
-function MissingDocuments({ view, onChanged }: { view: PatientView; onChanged: (next: PatientView) => void }) {
+function MissingDocuments({
+  view,
+  onChanged,
+  onUploadNotice,
+}: {
+  view: PatientView
+  onChanged: (next: PatientView) => void
+  onUploadNotice: (notice: UploadNotice | null) => void
+}) {
   if (view.missing_document_request_template_id !== MISSING_DOCUMENT_TEMPLATE) {
     return <p className="muted">הפנייה ממתינה למסמך. פנו למוקד המטופלים להמשך טיפול.</p>
   }
@@ -200,10 +236,147 @@ function MissingDocuments({ view, onChanged }: { view: PatientView; onChanged: (
         </ul>
       </Alert>
 
-      {view.missing_document_ids.map((documentId) => (
-        <UploadForm key={documentId} caseId={view.case_id} documentId={documentId} onUploaded={onChanged} />
-      ))}
+      {view.document_upload === 'file' ? (
+        <FileUploadForm caseId={view.case_id} onUploaded={onChanged} onUploadNotice={onUploadNotice} />
+      ) : (
+        view.missing_document_ids.map((documentId) => (
+          <UploadForm key={documentId} caseId={view.case_id} documentId={documentId} onUploaded={onChanged} />
+        ))
+      )}
     </>
+  )
+}
+
+// ---- File upload (sub-project 13) ------------------------------------------
+
+/** A file whose name and (when the browser reports one) type both say PDF. */
+function isPdfFile(file: File): boolean {
+  const nameIsPdf = /\.pdf$/i.test(file.name)
+  const typeIsPdf = file.type === '' || file.type === 'application/pdf'
+  return nameIsPdf && typeIsPdf
+}
+
+/** The type's Hebrew label, or the type code itself when this version does not know it. */
+function describeDocumentType(type: DocumentType | null): string {
+  if (!type) return ''
+  return documentLabel(type) ?? type
+}
+
+/**
+ * One Hebrew sentence per `upload.code` (`docs/api.md` §4, design §5.3). A code this
+ * version does not know is shown as the neutral, fail-closed sentence (§14).
+ */
+function uploadResultMessage(upload: UploadResult): UploadNotice {
+  const label = describeDocumentType(upload.document_type)
+  switch (upload.code) {
+    case 'accepted':
+      return { variant: 'ok', text: `המסמך ${label} התקבל. הפנייה ממשיכה בטיפול.` }
+    case 'not_required':
+      return { variant: 'info', text: `המסמך ${label} תקין, אבל אינו נדרש לתור הזה.` }
+    case 'already_received':
+      return { variant: 'info', text: `המסמך ${label} כבר התקבל קודם.` }
+    case 'not_medical':
+      return { variant: 'error', text: 'הקובץ אינו מסמך רפואי, ולכן לא נקלט.' }
+    case 'unreadable':
+      return { variant: 'error', text: 'לא הצלחנו לקרוא את המסמך. ודאו שזה קובץ PDF ברור ונסו שוב.' }
+    case 'expired':
+      return { variant: 'error', text: `המסמך ${label} ישן מדי לפי כללי התוקף. יש להעלות מסמך עדכני.` }
+    case 'not_yours':
+      return { variant: 'error', text: 'המסמך אינו שייך לך, ולכן לא נקלט.' }
+    default:
+      return { variant: 'error', text: 'המסמך לא נקלט. נסו שוב או פנו למוקד.' }
+  }
+}
+
+/**
+ * The sub-project 13 PDF picker (design §5.3): one file, checked in the browser for
+ * a PDF name/type and the 10 MB limit before it is sent, then `uploadDocumentFile`.
+ * The response always replaces the view (`request`), and `upload.code` says what
+ * happened to the file itself.
+ */
+function FileUploadForm({
+  caseId,
+  onUploaded,
+  onUploadNotice,
+}: {
+  caseId: string
+  onUploaded: (next: PatientView) => void
+  onUploadNotice: (notice: UploadNotice | null) => void
+}) {
+  const inputRef = useRef<HTMLInputElement>(null)
+  const [fileName, setFileName] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  function chooseFile(event: React.ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0]
+    setFileName(file ? file.name : null)
+    setError(null)
+  }
+
+  async function submit(event: React.FormEvent) {
+    event.preventDefault()
+    const file = inputRef.current?.files?.[0]
+    if (!file || !isPdfFile(file)) {
+      setError(NOT_PDF_MESSAGE)
+      return
+    }
+    if (file.size > MAX_UPLOAD_BYTES) {
+      setError(FILE_TOO_LARGE_MESSAGE)
+      return
+    }
+    setError(null)
+    onUploadNotice(null)
+    setBusy(true)
+    try {
+      const response = await api.uploadDocumentFile(caseId, file)
+      // The notice is shown by the parent (`RequestDetail`), not this form: `accepted`
+      // moves the case out of `needs_document` (`docs/api.md` §4), which unmounts this
+      // form the moment `onUploaded` replaces the view.
+      onUploaded(response.request)
+      onUploadNotice(uploadResultMessage(response.upload))
+      setFileName(null)
+      if (inputRef.current) inputRef.current.value = ''
+    } catch (caught) {
+      setError(errorMessage(caught))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <section className="upload" aria-label="העלאת מסמך PDF">
+      <h2 className="section-h">העלאת מסמך PDF</h2>
+
+      <form className="form" onSubmit={submit}>
+        <div className="field">
+          <label className="label" htmlFor="file-upload">
+            בחירת קובץ
+          </label>
+          <input
+            id="file-upload"
+            ref={inputRef}
+            className="file-input"
+            type="file"
+            accept="application/pdf,.pdf"
+            onChange={chooseFile}
+          />
+          <p className="hint">
+            {fileName
+              ? `נבחר הקובץ ${fileName}.`
+              : 'המערכת מזהה את סוג המסמך אוטומטית. אפשר להעלות קובץ PDF אחד, עד 10MB.'}
+          </p>
+        </div>
+
+        {error && <Alert variant="error">{error}</Alert>}
+
+        <div className="actions">
+          <Button type="submit" variant="primary" busy={busy}>
+            שליחת המסמך
+          </Button>
+        </div>
+      </form>
+    </section>
   )
 }
 
