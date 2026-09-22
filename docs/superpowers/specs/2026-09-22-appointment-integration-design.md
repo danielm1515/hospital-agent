@@ -44,7 +44,7 @@ GET /api/v1/patients/{patient_id}/appointment      X-API-Key, X-Case-ID, X-Execu
    No proxy is used, even when `HTTP_PROXY`/`http_proxy` is set in the environment
    (`urllib.request.ProxyHandler({})` on the opener) - a proxy would see `X-API-Key` and
    `patient_id`. The body is capped at 64 KiB: the transport never reads more than
-   `MAX_BODY_BYTES` (65537) bytes of an answer, and a body at or over 64 KiB maps to
+   `MAX_BODY_BYTES` (65537) bytes of an answer, and a body over 64 KiB (65536 bytes) maps to
    `invalid_response` without being parsed as JSON.
 5. **What the agent sends.** Only `patient_id` (spec §11 `minimized_fields`, already
    `ACTION_TARGETS[CheckAppointment]`), in the path, URL-quoted. Headers: `X-API-Key`, and
