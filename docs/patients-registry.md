@@ -57,7 +57,9 @@ Migration 0004 grants and confines it, in each database it migrates (`hospital` 
 - It cannot create large objects (`lo_creat`, `lo_create` and `lo_from_bytea` are revoked from
   `PUBLIC`; server-side `lo_import` / `lo_export` are superuser-only in Postgres 16) or
   temporary tables (`TEMPORARY` on the database is revoked from `PUBLIC`).
-- It holds at most 5 connections at once (`CONNECTION LIMIT 5`).
+- It holds at most 5 connections at once (`CONNECTION LIMIT 5`). A client of this role should
+  keep its pool at 4 or fewer, leaving one for a manual `psql` session (the appointment-service
+  uses `pool_size=2, max_overflow=2`).
 - It is a plain login role: 0004 refuses to migrate if an existing `hospital_reader` is a
   superuser, has `CREATEROLE`, `CREATEDB`, `REPLICATION` or `BYPASSRLS`, or is a member of any
   other role. An existing role keeps its password.
