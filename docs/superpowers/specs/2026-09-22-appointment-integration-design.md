@@ -84,6 +84,10 @@ GET /api/v1/patients/{patient_id}/appointment      X-API-Key, X-Case-ID, X-Execu
     replaced in place, nothing else read or printed). The owner approved this. The old key
     stops working.
 
+11. **`/health` says where appointments come from.** A real server adds
+    `"appointments": "appointment-service"` or `"mock"` next to `"orchestrator"`, so the owner
+    can see which one a running stack uses. Only the word - never the URL.
+
 ## 3. Components
 
 - `backend/hospital_agent/execution/appointment_service.py` - `AppointmentServiceGateway`,
