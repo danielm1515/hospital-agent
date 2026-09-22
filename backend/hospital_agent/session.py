@@ -17,13 +17,15 @@ DOCUMENT_UPLOADED - DocumentValid (§3.1) accepts a document only from it.
 """
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal, Protocol
 
 from . import auth, data_log, naming, repository
 from .case import CaseRecord
+from .document_intake import IntakeAnswer, IntakeUnavailable
 from .naming import Component, Event, State
 from .state_manager import CaseNotFound as _UnknownCase
 from .state_manager import StateManager, TransitionResult
@@ -33,9 +35,38 @@ MISSING_DOCUMENT_TEMPLATE_ID = "missing-document-v1"  # D24: a UI template, not 
 REQUEST_TEXT_UNAVAILABLE = "request_text_unavailable"
 REQUEST_TEXT_REQUIRED = "request_text_required"
 
+logger = logging.getLogger(__name__)
+
+# The document-service's rejections (design §4.1), as the patient-facing codes of design §5.3.
+# Any result not here - including one this version does not know - is "unreadable" (fail closed).
+_REJECTION_CODES = {
+    "NON_MEDICAL_DOCUMENT": "not_medical",
+    "DOCUMENT_UNREADABLE": "unreadable",
+    "DOCUMENT_EXPIRED": "expired",
+    "PATIENT_MISMATCH": "not_yours",
+}
+_UNREADABLE = "unreadable"
+
 
 class CaseNotFound(Exception):
     """An unknown case, or another patient's case - the API answers 404 for both."""
+
+
+class NotWaitingForDocument(Exception):
+    """A PDF for a case that is not in AwaitingPatientInput (the API answers 409)."""
+
+
+class DocumentIntake(Protocol):
+    def submit(self, patient_id: str, filename: str, data: bytes) -> IntakeAnswer: ...
+
+
+@dataclass(frozen=True)
+class UploadOutcome:
+    """What the patient is told about one PDF: an abstract code and, when the document-service
+    named an accepted type, that type - never an escalation kind, a reason or an Audit row."""
+
+    code: str
+    document_type: str | None
 
 
 class EventRejected(Exception):
@@ -65,6 +96,7 @@ class PatientView:
     missing_document_request_template_id: str | None
     message: str | None
     history: list[StatusChange]
+    document_upload: Literal["file", "text"] = "text"
 
 
 _STATUS: dict[State, str] = {
@@ -112,10 +144,12 @@ def status_history(trace: list[repository.AuditEntry], delivered: bool) -> list[
 
 
 class SessionService:
-    def __init__(self, state_manager: StateManager, *, wake: Callable[[], None] = lambda: None) -> None:
+    def __init__(self, state_manager: StateManager, *, wake: Callable[[], None] = lambda: None,
+                 document_intake: DocumentIntake | None = None) -> None:
         self.sm = state_manager
         self.engine = state_manager.engine
         self.wake = wake
+        self.document_intake = document_intake
 
     # --- events --------------------------------------------------------------------------
 
@@ -169,6 +203,76 @@ class SessionService:
         self.wake()
         return result
 
+    def upload_pdf(self, patient_id: str, case_id: str, data: bytes, filename: str) -> UploadOutcome:
+        """Forward the patient's PDF to the document-service (sub-project 13, design §5.3).
+
+        The rules:
+          1. The case must be the patient's (CaseNotFound -> 404) and in AwaitingPatientInput
+             (else NotWaitingForDocument -> 409 not_waiting_for_document) - checked before
+             anything is sent to the document-service.
+          2. No intake client configured -> the route answers 404 file_upload_not_enabled (the
+             text upload stays the way in).
+          3. Forward (patient_id, filename, data); IntakeUnavailable (no answer, 5xx, 401, or a
+             body that is not the contract) -> 503 document_service_unavailable; nothing recorded.
+          4. The effective type: ACCEPTED -> its document_type; DUPLICATE_DOCUMENT with
+             duplicate_of and a document_type -> that type (a retry after a timeout is the
+             document already delivered, design §4.1).
+          5. With an effective type: if it is not in case.required_documents -> not_required, no
+             event; if it is already in case.held_documents -> already_received, no event;
+             otherwise call the existing upload_document(patient_id, case_id,
+             document_id=<the type>, content=<reference line>, fmt="pdf",
+             document_extra={"document_ref": <DOC id>}) - the type is the document_id because
+             HOLD_DOCUMENT appends document_id to held_documents; the reference line is exactly
+             f"{document_ref} {document_type} ACCEPTED" (no medical text reaches the Data Log
+             or the Safety re-check) - and return accepted.
+          6. Without an effective type: NON_MEDICAL_DOCUMENT -> not_medical, DOCUMENT_UNREADABLE
+             -> unreadable, DOCUMENT_EXPIRED -> expired, PATIENT_MISMATCH -> not_yours, any
+             other result (including a duplicate without duplicate_of) -> unreadable. No event,
+             nothing recorded.
+          7. The application log gets only the outcome code - never the patient id, the file
+             name or a document id.
+
+        The document-service may take up to 70 s, so rule 5 reads the case again once it has
+        answered: a case that moved on meanwhile is NotWaitingForDocument, and so is one whose
+        DOCUMENT_UPLOADED did not reach Classifying (upload_document has tombstoned the
+        reference line by then). For a duplicate, <DOC id> is duplicate_of - the original,
+        accepted document, which is the one the reference line names.
+        """
+        self._waiting_case(patient_id, case_id)  # rule 1, before anything leaves
+        if self.document_intake is None:
+            raise IntakeUnavailable("not_configured")  # rule 2 is the route's; never reached from it
+        try:
+            answer = self.document_intake.submit(patient_id, filename, data)  # rule 3
+        except IntakeUnavailable:
+            logger.info("pdf upload: document_service_unavailable")
+            raise
+        document_type, document_ref = _effective(answer)  # rule 4
+        if document_type is None or document_ref is None:  # rule 6
+            outcome = UploadOutcome(_REJECTION_CODES.get(answer.result, _UNREADABLE), None)
+        else:
+            case = self._waiting_case(patient_id, case_id)  # rule 5, on the case as it is now
+            if document_type not in (case.required_documents or []):
+                outcome = UploadOutcome("not_required", document_type)
+            elif document_type in case.held_documents:
+                outcome = UploadOutcome("already_received", document_type)
+            else:
+                result = self.upload_document(patient_id, case_id, document_type,
+                                              f"{document_ref} {document_type} ACCEPTED", fmt="pdf",
+                                              document_extra={"document_ref": document_ref})
+                if not result.committed or result.state_after is not State.CLASSIFYING:
+                    logger.info("pdf upload: not_waiting_for_document")
+                    raise NotWaitingForDocument(case_id)
+                outcome = UploadOutcome("accepted", document_type)
+        logger.info("pdf upload: %s", outcome.code)  # rule 7: the code, nothing else
+        return outcome
+
+    def _waiting_case(self, patient_id: str, case_id: str) -> CaseRecord:
+        case = self.case_for_patient(patient_id, case_id)
+        if case.state is not State.AWAITING_PATIENT_INPUT:
+            logger.info("pdf upload: not_waiting_for_document")
+            raise NotWaitingForDocument(case_id)
+        return case
+
     # --- what the patient sees --------------------------------------------------------------
 
     def case_for_patient(self, patient_id: str, case_id: str) -> CaseRecord:
@@ -209,6 +313,7 @@ class SessionService:
             missing_document_request_template_id=MISSING_DOCUMENT_TEMPLATE_ID if needs_document else None,
             message=message,
             history=history,
+            document_upload="file" if self.document_intake is not None else "text",
         )
 
     @staticmethod
@@ -264,6 +369,15 @@ class SessionService:
             return self.sm.load(case_id)
         except _UnknownCase:
             raise CaseNotFound(case_id) from None
+
+
+def _effective(answer: IntakeAnswer) -> tuple[str | None, str | None]:
+    """Rule 4: (the accepted document's type, its id), or (None, None)."""
+    if answer.result == "ACCEPTED" and answer.document_type and answer.document_id:
+        return answer.document_type, answer.document_id
+    if answer.result == "DUPLICATE_DOCUMENT" and answer.duplicate_of and answer.document_type:
+        return answer.document_type, answer.duplicate_of
+    return None, None
 
 
 def _committed(result: TransitionResult) -> TransitionResult:

@@ -7,16 +7,23 @@ answer is always the abstract PatientCaseView: no escalation kind, no reason, no
 from __future__ import annotations
 
 import logging
+from email.message import Message
+from email.parser import HeaderParser
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
+from starlette.concurrency import run_in_threadpool
 
 from ..auth import DEMO_USERS, Principal
-from ..session import CaseNotFound, EventRejected, SessionService
+from ..document_intake import IntakeUnavailable
+from ..session import CaseNotFound, EventRejected, NotWaitingForDocument, SessionService
 from .deps import get_session, require_patient
-from .schemas import DocumentUpload, NewRequest, PatientCaseView
+from .schemas import DocumentUpload, NewRequest, PatientCaseView, PdfUploadResponse, UploadResult
 
 router = APIRouter(prefix="/api/patient", tags=["patient"])
 logger = logging.getLogger(__name__)
+
+MAX_PDF_BYTES = 10 * 1024 * 1024  # the document-service's own limit (design §5.3)
+UPLOAD_BODY_LIMIT = MAX_PDF_BYTES + 64 * 1024  # the file plus the multipart framing around it
 
 
 def _identity_verified(principal: Principal) -> bool:
@@ -63,6 +70,73 @@ def upload_document(case_id: str, body: DocumentUpload, principal: Principal = D
     except CaseNotFound:
         raise HTTPException(status_code=404, detail="case_not_found") from None
     return PatientCaseView.model_validate(session.patient_view(case_id))
+
+
+@router.post("/requests/{case_id}/documents/file", response_model=PdfUploadResponse)
+async def upload_pdf(case_id: str, request: Request, principal: Principal = Depends(require_patient),
+                     session: SessionService = Depends(get_session)) -> PdfUploadResponse:
+    """Sub-project 13 (design §5.3): the patient's PDF (multipart, one part named `file`),
+    forwarded to the document-service and never stored here. 200 with the outcome code and the
+    case as it now stands - also for a rejected or not-required document, which moves nothing.
+
+    The multipart body is parsed with the standard library (`_file_part`), not FastAPI's
+    `UploadFile`, which needs python-multipart - a runtime dependency this project does not
+    take. The UploadSizeLimit middleware has already refused a body over UPLOAD_BODY_LIMIT by
+    its Content-Length; the read below is capped at the same limit all the same.
+    """
+    if session.document_intake is None:
+        raise HTTPException(status_code=404, detail="file_upload_not_enabled")
+    body = bytearray()
+    async for chunk in request.stream():
+        body += chunk
+        if len(body) > UPLOAD_BODY_LIMIT:
+            raise HTTPException(status_code=413, detail="too_large")
+    part = _file_part(request.headers.get("content-type", ""), bytes(body))
+    if part is None:
+        raise HTTPException(status_code=422, detail="invalid_body")
+    filename, data = part
+    if len(data) > MAX_PDF_BYTES:
+        raise HTTPException(status_code=413, detail="too_large")
+    try:
+        # Off the event loop: the document-service may take up to 70 s to answer.
+        outcome = await run_in_threadpool(session.upload_pdf, principal.patient_id, case_id, data, filename)
+        view = await run_in_threadpool(session.patient_view, case_id)
+    except CaseNotFound:
+        raise HTTPException(status_code=404, detail="case_not_found") from None
+    except NotWaitingForDocument:
+        raise HTTPException(status_code=409, detail="not_waiting_for_document") from None
+    except IntakeUnavailable:
+        raise HTTPException(status_code=503, detail="document_service_unavailable") from None
+    return PdfUploadResponse(upload=UploadResult.model_validate(outcome),
+                             request=PatientCaseView.model_validate(view))
+
+
+def _file_part(content_type: str, body: bytes) -> tuple[str, bytes] | None:
+    """(filename, bytes) of the first multipart/form-data part named `file` that carries a
+    filename, or None when the body is not such a form. Strict and exact for binary content:
+    parts are split on CRLF + "--" + boundary, as RFC 7578 / RFC 2046 define them."""
+    header = Message()
+    header["content-type"] = content_type
+    boundary = header.get_param("boundary")
+    if header.get_content_type() != "multipart/form-data" or not isinstance(boundary, str) \
+            or not 1 <= len(boundary) <= 70:
+        return None
+    delimiter = b"\r\n--" + boundary.encode("latin-1", "replace")
+    sections = (b"\r\n" + body).split(delimiter)
+    if len(sections) < 3 or not sections[-1].startswith(b"--"):
+        return None  # no part, or no closing delimiter
+    for section in sections[1:-1]:
+        if not section.startswith(b"\r\n") or b"\r\n\r\n" not in section:
+            return None
+        raw_headers, content = section[2:].split(b"\r\n\r\n", 1)
+        headers = HeaderParser().parsestr(raw_headers.decode("utf-8", "replace") + "\r\n\r\n")
+        disposition = Message()
+        disposition["content-disposition"] = headers.get("content-disposition", "")
+        name = disposition.get_param("name", header="content-disposition")
+        filename = disposition.get_filename()
+        if disposition.get_content_disposition() == "form-data" and name == "file" and filename is not None:
+            return filename, content
+    return None
 
 
 def _owned(session: SessionService, principal: Principal, case_id: str):

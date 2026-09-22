@@ -13,6 +13,7 @@ or staff action calls, so a case moves the moment its event commits.
 """
 from __future__ import annotations
 
+import json
 import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -26,16 +27,20 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.exc import SQLAlchemyError
 
 from ..db import make_engine
+from ..document_intake import build_intake_client
 from ..execution.appointment_service import build_gateway
 from ..execution.background import sla_interval_seconds, start_background
 from ..execution.document_service import build_document_gateway
 from ..human_review import HumanReviewService
 from ..llm.model_selector import llm_version, select_provider
 from ..llm.orchestrator import Orchestrator, orchestrator_interval_seconds
-from ..session import SessionService
+from ..session import DocumentIntake, SessionService
 from ..wiring import build_state_manager
 from . import routes_auth, routes_patient, routes_staff
 from .deps import get_engine
+from .routes_patient import UPLOAD_BODY_LIMIT
+
+__all__ = ["UPLOAD_BODY_LIMIT", "UploadSizeLimit", "app", "cors_origins", "create_app"]
 
 # The UI's dev server (sub-project 6). CORS_ORIGINS adds any deployed origin.
 DEFAULT_CORS_ORIGINS = ("http://localhost:5273", "http://127.0.0.1:5273",
@@ -48,7 +53,39 @@ def cors_origins(env: dict[str, str] | None = None) -> list[str]:
     return list(DEFAULT_CORS_ORIGINS) + [origin for origin in extra if origin not in DEFAULT_CORS_ORIGINS]
 
 
-def create_app(engine: Engine | None = None, orchestrator: Orchestrator | None = None) -> FastAPI:
+class UploadSizeLimit:
+    """Pure ASGI: a PDF upload (POST .../documents/file) must say how big it is, and may be at
+    most UPLOAD_BODY_LIMIT - refused by its Content-Length alone, before the body is read or any
+    route runs (411 length_required, 413 too_large; `{"detail": code}` like the rest of the API).
+    Every other request passes untouched."""
+
+    def __init__(self, app) -> None:
+        self.app = app
+
+    async def __call__(self, scope, receive, send) -> None:
+        if scope["type"] == "http" and scope["method"] == "POST" and scope["path"].endswith("/documents/file"):
+            raw = dict(scope.get("headers") or []).get(b"content-length")
+            length = int(raw) if raw is not None and raw.isdigit() else None
+            if length is None:
+                await self._refuse(send, 411, "length_required")
+                return
+            if length > UPLOAD_BODY_LIMIT:
+                await self._refuse(send, 413, "too_large")
+                return
+        await self.app(scope, receive, send)
+
+    @staticmethod
+    async def _refuse(send, status: int, code: str) -> None:
+        body = json.dumps({"detail": code}).encode()
+        await send({"type": "http.response.start", "status": status,
+                    "headers": [(b"content-type", b"application/json"),
+                                (b"content-length", str(len(body)).encode()),
+                                (b"connection", b"close")]})
+        await send({"type": "http.response.body", "body": body})
+
+
+def create_app(engine: Engine | None = None, orchestrator: Orchestrator | None = None,
+               document_intake: DocumentIntake | None = None) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         owned = engine is None
@@ -65,7 +102,10 @@ def create_app(engine: Engine | None = None, orchestrator: Orchestrator | None =
 
         provider = select_provider() if owned else None
         sm = build_state_manager(app.state.engine, llm_version(provider) if provider else None)
-        app.state.session = SessionService(sm, wake=_wake)
+        # Sub-project 13: the patient's PDF goes to the document-service when it is configured;
+        # a test injects its own client (or none) the way it injects the Orchestrator.
+        app.state.session = SessionService(
+            sm, wake=_wake, document_intake=build_intake_client() if owned else document_intake)
         app.state.reviews = HumanReviewService(sm, app.state.session, wake=_wake)
 
         stops, started = [], None
@@ -98,6 +138,7 @@ def create_app(engine: Engine | None = None, orchestrator: Orchestrator | None =
             app.state.engine.dispose()
 
     app = FastAPI(title="Hospital Patient Agent", lifespan=lifespan)
+    app.add_middleware(UploadSizeLimit)  # added first, so CORS stays the outermost layer
     app.add_middleware(
         CORSMiddleware,
         allow_origins=cors_origins(),

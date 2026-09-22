@@ -68,6 +68,7 @@ methods: `GET`, `POST`, `DELETE`, `OPTIONS`. Allowed headers: `Authorization`,
 | GET | `/api/patient/requests` | patient | My requests |
 | GET | `/api/patient/requests/{case_id}` | patient | One of my requests |
 | POST | `/api/patient/requests/{case_id}/documents` | patient | Upload a document |
+| POST | `/api/patient/requests/{case_id}/documents/file` | patient | Upload a PDF, forwarded to the document-service (sub-project 13) |
 | GET | `/api/staff/cases` | staff | All cases (`?state=`) |
 | GET | `/api/staff/cases/{case_id}` | staff | One case, in full |
 | GET | `/api/staff/cases/{case_id}/audit` | staff | The case's audit trace |
@@ -140,12 +141,13 @@ Request:
 
 ## 4. Patient routes
 
-All four routes work on the patient the token names. Another patient's case is `404
+All five routes work on the patient the token names. Another patient's case is `404
 case_not_found`, exactly like a case that does not exist.
 
 ### The patient view
 
-Every patient route answers with this object, and nothing else:
+Every patient route answers with this object, and nothing else (the PDF upload wraps it, as
+`request`, beside its outcome code):
 
 ```json
 {
@@ -161,7 +163,8 @@ Every patient route answers with this object, and nothing else:
     {"status": "received", "at": "2026-09-19T22:12:47.693947Z"},
     {"status": "in_progress", "at": "2026-09-19T22:12:47.812004Z"},
     {"status": "needs_document", "at": "2026-09-19T22:12:47.898132Z"}
-  ]
+  ],
+  "document_upload": "text"
 }
 ```
 
@@ -186,6 +189,11 @@ Every patient route answers with this object, and nothing else:
   (§12.3) - and a status the case entered twice appears twice. The last entry's `status`
   always equals `status`, and the first is the submission. It is `[]` only for a case with
   no committed transition, which the patient routes never return.
+- `document_upload` says which upload the screen offers for `needs_document`: `"file"` when the
+  server is configured with the document-service (`DOCUMENT_SERVICE_URL` and
+  `DOCUMENT_API_KEY`) - a PDF picker, sent to `POST .../documents/file` - or `"text"` without
+  it - the text box, sent to `POST .../documents`. It is the same for every case of a running
+  server, and present in every state.
 
 **Polling.** The case advances in the background, so after a submit or an upload the UI
 polls `GET /api/patient/requests/{case_id}` (every ~2 s is plenty) until `status` stops
@@ -243,6 +251,60 @@ show a confirmation from this response alone.
 
 - `404 case_not_found`, `403 patients_only`, `422 invalid_body` for a bad body (the
   document's content never comes back in the error).
+
+### POST /api/patient/requests/{case_id}/documents/file
+
+Sub-project 13 (design §5.3). Offered only when the patient view says `"document_upload":
+"file"`. Request: `multipart/form-data` with one part named `file` carrying a filename - the
+PDF, at most 10 MB (10 485 760 bytes). The request must carry a `Content-Length`; a body over
+10 MB + 64 KiB (the file plus its multipart framing) is refused by that header alone, before
+it is read. Other parts are ignored.
+
+The server checks that the case is this patient's and is waiting for a document **before**
+anything is sent on, then forwards the file to the document-service, which reads it,
+classifies it and stores it only if it is accepted. The PDF is never stored here, and its
+content never enters the Data Log, the Audit or a log line: an accepted, required document
+records one reference line in the Data Log (`DOC-3F2A1B9C0D4E CBC ACCEPTED` - the
+document-service's id, the type, the result) and moves the case down the same
+`DOCUMENT_UPLOADED` path as the text upload. The document-service can take up to 70 s to
+answer; the server waits up to 75 s.
+
+`200`:
+
+```json
+{
+  "upload": {"code": "accepted", "document_type": "CBC"},
+  "request": { "...": "the patient view, as it now stands" }
+}
+```
+
+| `upload.code` | Meaning | The case |
+|---|---|---|
+| `accepted` | A readable, valid document of a type this case needs, and not yet held. A re-sent copy of a document the document-service already accepted (a retry after a timeout) is `accepted` too. | Leaves `needs_document` (`in_progress`, then re-checked) |
+| `not_required` | Accepted by the document-service, but this appointment does not need that type | Unchanged |
+| `already_received` | Of a type the case already holds | Unchanged |
+| `not_medical` | Not a medical document | Unchanged |
+| `unreadable` | Could not be read or classified (also any answer this version does not know) | Unchanged |
+| `expired` | Past its validity | Unchanged |
+| `not_yours` | Names another patient | Unchanged |
+
+`upload.document_type` is the catalog type (`CBC`, `COAGULATION_TESTS`, `ECG`, `URINALYSIS`,
+`PREOP_SUMMARY`) for `accepted`, `not_required` and `already_received`, and `null` for every
+other code. The document-service's own document id never comes back. `request` is the patient
+view after the upload - for every code but `accepted` it is exactly what it was before.
+
+- `404 file_upload_not_enabled` - the server has no document-service configured
+  (`document_upload` is `"text"`); use `POST .../documents`.
+- `404 case_not_found` - an unknown case, or someone else's. Nothing is sent on.
+- `409 not_waiting_for_document` - the case is not in `needs_document` (also when it moved on
+  while the document-service was answering). Nothing is sent on, or nothing is recorded.
+- `411 length_required` - no `Content-Length`.
+- `413 too_large` - a `Content-Length` over 10 MB + 64 KiB, or a file part over 10 MB.
+- `422 invalid_body` - not a `multipart/form-data` body with a part named `file`.
+- `503 document_service_unavailable` - the document-service did not answer, answered an
+  error, or answered something that is not its contract. Nothing is recorded; the patient may
+  try again (a re-sent copy of a document that was in fact accepted comes back `accepted`).
+- `401 not_authenticated`, `403 patients_only` - as everywhere.
 
 ## 5. Staff routes
 

@@ -114,6 +114,22 @@ class PatientCaseView(BaseModel):
     missing_document_request_template_id: str | None
     message: str | None
     history: list[PatientStatusChange]
+    document_upload: Literal["file", "text"]
+
+
+class UploadResult(BaseModel):
+    """The outcome of one PDF (sub-project 13, design §5.3): an abstract code only."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    code: Literal["accepted", "not_required", "already_received", "not_medical", "unreadable", "expired",
+                  "not_yours"]
+    document_type: str | None
+
+
+class PdfUploadResponse(BaseModel):
+    upload: UploadResult
+    request: PatientCaseView
 
 
 # --- the staff's side -----------------------------------------------------------------------
