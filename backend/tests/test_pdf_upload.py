@@ -498,3 +498,26 @@ def test_a_small_length_with_thousands_of_leading_zeros_passes():
     guard, tripwire = _guard()
     _run(guard, "POST", "/api/patient/requests/CASE-1/documents/file", {"Content-Length": "0" * 5000 + "12"})
     assert tripwire.ran
+
+
+# --- final-fix wave: the text route refuses once the file route is configured ------------------
+
+def test_the_text_route_refuses_once_the_file_route_is_configured(app_engine):
+    """The text route would let anyone hand-craft an arbitrary "held" document, bypassing the
+    document-service's intake entirely, once the case's screen already offers the real upload."""
+    intake = FakeIntake(accepted("ECG"))
+    with api(app_engine, intake) as client:
+        d = api_awaiting(client, app_engine)
+        response = client.post(f"/api/patient/requests/{d.case_id}/documents", headers=token(client),
+                               json={"document_id": "CBC", "format": "pdf", "content": "normal"})
+        assert response.status_code == 409 and response.json() == {"detail": "use_file_upload"}
+    assert intake.calls == []  # nothing was even attempted through the document-service
+
+
+def test_the_text_route_still_works_without_a_document_intake_client(app_engine):
+    with api(app_engine, None) as client:
+        d = api_awaiting(client, app_engine)  # missing "ECG" (held is only ["CBC"])
+        response = client.post(f"/api/patient/requests/{d.case_id}/documents", headers=token(client),
+                               json={"document_id": "ECG", "format": "pdf", "content": "normal"})
+        assert response.status_code == 200
+        assert response.json()["status"] == "in_progress"

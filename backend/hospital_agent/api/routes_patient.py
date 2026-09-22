@@ -65,7 +65,15 @@ def get_request(case_id: str, principal: Principal = Depends(require_patient),
 def upload_document(case_id: str, body: DocumentUpload, principal: Principal = Depends(require_patient),
                     session: SessionService = Depends(get_session)) -> PatientCaseView:
     """200 with the case as it now stands - also when the upload was refused: the Session
-    Service tombstones a rejected upload (D25) and the patient simply sees no change."""
+    Service tombstones a rejected upload (D25) and the patient simply sees no change.
+
+    Refused with `409 use_file_upload` once a document-service is configured
+    (`session.document_intake is not None`): the real upload (`POST .../documents/file`) then
+    runs the document-service's intake, and this route would otherwise let arbitrary text be
+    recorded as a held document without it. Without a document-service this route behaves
+    exactly as before (`document_upload` stays `"text"`)."""
+    if session.document_intake is not None:
+        raise HTTPException(status_code=409, detail="use_file_upload")
     try:
         session.upload_document(principal.patient_id, case_id, body.document_id, body.content, fmt=body.format)
     except CaseNotFound:

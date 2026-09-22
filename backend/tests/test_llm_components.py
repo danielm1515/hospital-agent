@@ -189,3 +189,19 @@ def test_status_message_shows_israel_time_in_winter_and_across_midnight():
 def test_status_message_refuses_missing_facts():
     with pytest.raises(ValueError):
         status_message(_case(appointment_at=None), InstructionSource("INSTR-PREP-COLONOSCOPY", "3"))
+
+
+def test_status_message_renders_catalog_labels_beside_the_codes():
+    # Sub-project 13 final-fix wave: a catalog code (design §2) is never shown bare.
+    text = status_message(_case(required_documents=["CBC", "ECG"], held_documents=["CBC", "ECG"]),
+                          InstructionSource("INSTR-PREP-COLONOSCOPY", "3"))
+    assert "המסמכים הנדרשים: ספירת דם מלאה, תרשים פעילות חשמלית של הלב - כולם התקבלו." in text
+
+
+def test_status_message_leaves_out_the_documents_sentence_when_none_are_required():
+    text = status_message(_case(required_documents=[], held_documents=[]),
+                          InstructionSource("INSTR-PREP-COLONOSCOPY", "3"))
+    assert "המסמכים הנדרשים" not in text
+    assert "  " not in text  # no stray double space where the documents clause used to sit
+    assert text == ("התור שלך נקבע ל־23/09/2026 בשעה 11:30 (שעון ישראל). "
+                    "הוראות ההכנה המאושרות (INSTR-PREP-COLONOSCOPY, גרסה 3) זמינות לעיון באזור האישי.")

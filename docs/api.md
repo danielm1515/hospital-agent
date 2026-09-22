@@ -249,8 +249,14 @@ validation is a committed self-loop - it bumps `state_version` / `updated_at` bu
 changes nothing, not even `updated_at`. Either way the UI must keep polling and must not
 show a confirmation from this response alone.
 
-- `404 case_not_found`, `403 patients_only`, `422 invalid_body` for a bad body (the
-  document's content never comes back in the error).
+Refused with `409 use_file_upload` once a document-service is configured (`DOCUMENT_SERVICE_URL`
++ `DOCUMENT_API_KEY`, sub-project 13): the patient view's `document_upload` is then `"file"`,
+the real upload is `POST .../documents/file`, and this route would otherwise let arbitrary text
+be recorded as a held document without the document-service's intake ever running. Without a
+document-service this route behaves exactly as before.
+
+- `404 case_not_found`, `403 patients_only`, `409 use_file_upload`, `422 invalid_body` for a
+  bad body (the document's content never comes back in the error).
 
 ### POST /api/patient/requests/{case_id}/documents/file
 

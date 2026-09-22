@@ -58,13 +58,15 @@ def map_documents(response: HttpResponse) -> ToolResult:
     for entry in items:
         if not isinstance(entry, dict):
             return _error("invalid_response")
+        if "document_type" not in entry:
+            return _error("invalid_response")
         result, doc_type = entry.get("result"), entry.get("document_type")
         if not isinstance(result, str):
             return _error("invalid_response")
         if doc_type is not None and not (isinstance(doc_type, str) and doc_type):
             return _error("invalid_response")
-    held = sorted({entry["document_type"] for entry in items
-                   if entry["result"] == "ACCEPTED" and entry["document_type"]})
+    held = sorted({entry.get("document_type") for entry in items
+                   if entry.get("result") == "ACCEPTED" and entry.get("document_type")})
     return ToolResult(OK, {"held_documents": held})
 
 

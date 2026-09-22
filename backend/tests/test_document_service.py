@@ -36,9 +36,21 @@ def test_no_documents_holds_nothing():
     listing({"document_type": "CBC"}), listing({"result": "ACCEPTED", "document_type": 5}),
     listing({"result": "ACCEPTED", "document_type": ""}), HttpResponse(404, b'{"error": "not_found"}'),
     HttpResponse(302, b""), HttpResponse(400, b'{"error": "validation_error"}'),
+    listing({"result": "ACCEPTED", "document_id": "DOC-1"}),
 ])
 def test_anything_else_is_an_invalid_response(answer):
     assert map_documents(answer) == ToolResult(ERROR, {"error": "invalid_response"})
+
+
+def test_an_accepted_entry_missing_document_type_never_raises():
+    # entry.get(...) in the validation loop lets an entry without "document_type" through;
+    # the held-documents comprehension must not then KeyError on a missing key.
+    answer = listing({"result": "ACCEPTED", "document_id": "DOC-1"})
+    try:
+        result = map_documents(answer)
+    except KeyError as exc:
+        pytest.fail(f"map_documents raised KeyError({exc}) instead of returning invalid_response")
+    assert result == ToolResult(ERROR, {"error": "invalid_response"})
 
 
 @pytest.mark.parametrize("status, error", [(500, "unavailable"), (502, "unavailable"), (503, "unavailable"), (504, "timeout")])
