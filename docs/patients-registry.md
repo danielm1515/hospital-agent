@@ -5,6 +5,30 @@ UI; this file is the contract for everything else.
 
 ## Connecting
 
+**Where the registry lives now: AWS RDS.** The project's `.env` points the live database at an
+RDS instance, so an external reader connects there, from the host or from a container alike:
+
+| | Value |
+|---|---|
+| Host | `hospital.cf42em6cy852.eu-north-1.rds.amazonaws.com` |
+| Port | `5432` |
+| Database | `hospital` |
+| User | `hospital_reader` |
+| Password | the `READER_DB_PASSWORD` in HospitalAgent's `.env` - a generated one, never the dev default |
+| TLS | required: `sslmode=require` (RDS offers TLS; `verify-full` additionally needs the RDS CA bundle) |
+
+```
+postgresql+psycopg://hospital_reader:<READER_DB_PASSWORD>@hospital.cf42em6cy852.eu-north-1.rds.amazonaws.com:5432/hospital?sslmode=require
+```
+
+**One thing is weaker on RDS than locally:** `hospital_reader` can create large objects there.
+Migration 0004 revokes `EXECUTE` on `lo_creat` / `lo_create` / `lo_from_bytea` from `PUBLIC`, but
+on RDS those functions belong to `rdsadmin`, so the master user's `REVOKE` only warns. Everything
+else below still holds on RDS - verified as `hospital_reader` against the instance. The instance
+is reachable from the internet, so restrict its security group to the addresses that need it.
+
+The local container, for when `.env` does not override the URLs:
+
 | | From the host | From another Docker container |
 |---|---|---|
 | Host | `127.0.0.1` | `host.docker.internal` |
@@ -73,8 +97,10 @@ What it still can do, stated plainly because a per-database migration does not o
   columns of tables it cannot read, and their row-count estimates (`pg_class.reltuples`,
   `pg_stat_user_tables`). It cannot read their rows.
 
-The cluster listens on `127.0.0.1` only, so all of this is reachable from this machine alone.
-After a downgrade of 0004 the table and the revokes are gone, but the role stays and can still
+The local container listens on `127.0.0.1` only, so there all of this is reachable from this
+machine alone; the RDS instance is reachable from wherever its security group allows. The
+appointment-service reads the RDS copy: its own `.env` sets `PATIENT_REGISTRY_URL` to the URL
+above. After a downgrade of 0004 the table and the revokes are gone, but the role stays and can still
 log in (it is cluster-wide and may hold grants in the other database).
 
 Read only the columns you need. A check that a patient exists needs

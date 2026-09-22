@@ -36,6 +36,14 @@ docker compose up --build
 
 Postgres on `localhost:54322` (database `hospital`, owner `hospital_owner`; the app connects as `hospital_app`), API on `localhost:8000` (`BACKEND_HOST_PORT` overrides the host side: after a reboot Windows can put 8000 inside a Hyper-V / WinNAT excluded port range - `netsh interface ipv4 show excludedportrange protocol=tcp` - and then nothing may bind it; start with e.g. `BACKEND_HOST_PORT=8200 docker compose up -d`. The UI never needs it, since it reaches the API as `backend:8000` inside the compose network), and the UI on `localhost:5273` (the Vite dev server, listening on `5173` inside the container - `docker-compose.yml` maps `127.0.0.1:5273:5173` because another of the owner's projects holds `5173` on the host - proxying `/api` to the backend so the browser needs no CORS). Migrations run on start.
 
+**The database can live on a managed Postgres (AWS RDS today).** The four database URLs in `docker-compose.yml` default to the local `db` container, and `.env` (git-ignored) overrides them: `DATABASE_URL` / `TEST_DATABASE_URL` as `hospital_app`, `MIGRATION_DATABASE_URL` / `TEST_MIGRATION_DATABASE_URL` as the instance's master user, all with `?sslmode=require`, plus a strong `READER_DB_PASSWORD`. `.env` currently points everything - the live `hospital` database **and** the tests' `hospital_test` - at the RDS instance; delete those lines to go back to the container. `db/init/` never reaches a managed instance, so run this once against a new one, before the backend first migrates it (idempotent; it creates `hospital_app`, `hospital` and `hospital_test`, and never drops anything):
+
+```bash
+docker compose run --rm backend python ../scripts/managed_db_bootstrap.py
+```
+
+A managed instance's master user is not a real superuser (on RDS it is `rds_superuser`), and two things differ there: migration 0004 cannot revoke `PUBLIC`'s `EXECUTE` on the large-object functions, which belong to `rdsadmin` - Postgres only warns - so `hospital_reader` can create large objects on RDS, and `tests/test_patients.py` reports that as a strict `xfail`; and the superuser-refusal test is skipped, because nobody but `rdsadmin` can create a `SUPERUSER` role there. The `managed_postgres` fixture (`tests/conftest.py`) is how the tests tell. A third difference needs no fixture: the master user only has `ADMIN OPTION` on a role it creates, so `throwaway_reader` grants itself the role before `DROP OWNED BY` (`docs/spec_corrections.md` row 71). A full run against RDS takes about 54 minutes, against the local container a few. The local `db` container still starts with the stack and keeps its old data; with `.env` pointing at RDS nothing uses it.
+
 ```bash
 cd frontend && npm install
 npm test

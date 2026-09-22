@@ -35,6 +35,16 @@ def owner_engine() -> Engine:
 
 
 @pytest.fixture(scope="session")
+def managed_postgres(owner_engine: Engine) -> bool:
+    """True when the migrating role is not a real superuser - a managed Postgres such as AWS
+    RDS, whose master user is rds_superuser. There, a few things a superuser can do are
+    impossible (pg_catalog functions belong to rdsadmin; nobody may create a SUPERUSER), and
+    the tests that depend on them say so instead of failing or passing by accident."""
+    with owner_engine.connect() as conn:
+        return not conn.execute(text("SELECT rolsuper FROM pg_roles WHERE rolname = current_user")).scalar()
+
+
+@pytest.fixture(scope="session")
 def alembic_config() -> Config:
     config = Config(str(BACKEND_DIR / "alembic.ini"))
     config.set_main_option("script_location", str(BACKEND_DIR / "alembic"))

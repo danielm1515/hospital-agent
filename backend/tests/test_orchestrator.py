@@ -267,7 +267,10 @@ def test_the_background_thread_wakes_on_demand(run):
         patient.submit()
         patient.validate()
         agent.wake()
-        deadline = time.monotonic() + 20
+        # A bound on waiting, not on speed: the loop leaves as soon as the state arrives. It is
+        # generous because on a managed Postgres far away (AWS RDS) every transition costs
+        # several network round trips.
+        deadline = time.monotonic() + 180
         while patient.state is not State.AWAITING_PATIENT_INPUT and time.monotonic() < deadline:
             time.sleep(0.05)
         assert patient.state is State.AWAITING_PATIENT_INPUT

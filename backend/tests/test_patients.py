@@ -11,6 +11,12 @@ from hospital_agent.auth import DEMO_USERS, PATIENT
 
 READER = "hospital_reader"
 OTHER_TABLES = ["cases", "audit_log", "data_log", "approvals", "executions"]
+# The three statements migration 0004's REVOKE cannot reach on a managed Postgres.
+LARGE_OBJECT_CREATORS_SQL = {
+    "SELECT lo_creat(-1)",
+    "SELECT lo_create(0)",
+    "SELECT lo_from_bytea(0, decode('00', 'hex'))",
+}
 
 
 def reader_password() -> str:
@@ -58,6 +64,10 @@ def throwaway_reader(owner_engine, migrated, alembic_config):
         finally:
             with owner_engine.begin() as conn:
                 if conn.execute(text("SELECT 1 FROM pg_roles WHERE rolname = :r"), {"r": name}).scalar():
+                    # DROP OWNED BY needs the privileges of the role. A superuser has them; a
+                    # managed instance's master user (RDS: rds_superuser) only has ADMIN OPTION on
+                    # a role it created (Postgres 16), so it grants itself membership first.
+                    conn.execute(text(f'GRANT "{name}" TO CURRENT_USER'))
                     conn.execute(text(f'DROP OWNED BY "{name}"'))
                     conn.execute(text(f'DROP ROLE "{name}"'))
 
@@ -176,7 +186,11 @@ def test_the_recreation_tests_leave_the_real_reader_untouched(owner_engine, read
     assert leftovers == []
 
 
-def test_the_migration_refuses_an_existing_reader_that_is_a_superuser(owner_engine, alembic_config, throwaway_reader):
+def test_the_migration_refuses_an_existing_reader_that_is_a_superuser(
+        owner_engine, alembic_config, throwaway_reader, managed_postgres):
+    if managed_postgres:
+        pytest.skip("a managed instance's master user cannot create a SUPERUSER role, "
+                    "so a superuser hospital_reader cannot exist there")
     with owner_engine.begin() as conn:
         conn.execute(text(f"CREATE ROLE \"{throwaway_reader}\" LOGIN SUPERUSER"))
     command.downgrade(alembic_config, "0003")
@@ -209,8 +223,22 @@ def test_the_reader_has_a_connection_limit(owner_engine, migrated):
     "CREATE TEMP TABLE reader_scratch (x int)",
     "CREATE TABLE public.reader_scratch (x int)",
 ])
-def test_the_reader_cannot_store_anything(reader, statement):
-    """No large objects, no temporary tables, no tables in public (design §3.2, final review I1)."""
-    with pytest.raises(ProgrammingError, match="permission denied"):
-        with reader.begin() as conn:
-            conn.execute(text(statement))
+def test_the_reader_cannot_store_anything(reader, statement, managed_postgres, request):
+    """No large objects, no temporary tables, no tables in public (design §3.2, final review I1).
+
+    On a managed Postgres the large-object functions belong to rdsadmin, so migration 0004's
+    REVOKE ... FROM PUBLIC only warns and the reader keeps them. That is a real gap on such an
+    instance, so the test is an explicit, strict xfail there - it fails loudly if the instance
+    ever does refuse them - and never a silent skip.
+    """
+    if managed_postgres and statement in LARGE_OBJECT_CREATORS_SQL:
+        request.applymarker(pytest.mark.xfail(
+            strict=True, reason="managed Postgres: lo_* belong to rdsadmin; PUBLIC's EXECUTE cannot be revoked"))
+    # Always roll back: where the statement is allowed, it must not leave a large object behind.
+    with reader.connect() as conn:
+        transaction = conn.begin()
+        try:
+            with pytest.raises(ProgrammingError, match="permission denied"):
+                conn.execute(text(statement))
+        finally:
+            transaction.rollback()

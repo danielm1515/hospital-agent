@@ -22,10 +22,13 @@ services:
   backend:
     build: ./backend
     environment:
-      DATABASE_URL: postgresql+psycopg://hospital_app:${APP_DB_PASSWORD:-hospital_app_dev}@db:5432/hospital
-      MIGRATION_DATABASE_URL: postgresql+psycopg://hospital_owner:${POSTGRES_PASSWORD:-hospital_owner_dev}@db:5432/hospital
-      TEST_DATABASE_URL: postgresql+psycopg://hospital_app:${APP_DB_PASSWORD:-hospital_app_dev}@db:5432/hospital_test
-      TEST_MIGRATION_DATABASE_URL: postgresql+psycopg://hospital_owner:${POSTGRES_PASSWORD:-hospital_owner_dev}@db:5432/hospital_test
+      # The four database URLs default to the local db container below. Setting them in .env
+      # (git-ignored) points the backend and the tests at a managed Postgres such as AWS RDS
+      # instead - run scripts/managed_db_bootstrap.py once against it first (CLAUDE.md).
+      DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://hospital_app:${APP_DB_PASSWORD:-hospital_app_dev}@db:5432/hospital}
+      MIGRATION_DATABASE_URL: ${MIGRATION_DATABASE_URL:-postgresql+psycopg://hospital_owner:${POSTGRES_PASSWORD:-hospital_owner_dev}@db:5432/hospital}
+      TEST_DATABASE_URL: ${TEST_DATABASE_URL:-postgresql+psycopg://hospital_app:${APP_DB_PASSWORD:-hospital_app_dev}@db:5432/hospital_test}
+      TEST_MIGRATION_DATABASE_URL: ${TEST_MIGRATION_DATABASE_URL:-postgresql+psycopg://hospital_owner:${POSTGRES_PASSWORD:-hospital_owner_dev}@db:5432/hospital_test}
       WATCHFILES_FORCE_POLLING: "true"
       # LLM design §3: from .env (git-ignored). Without a key the Agent Orchestrator does not start.
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
