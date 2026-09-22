@@ -84,7 +84,9 @@ place this design departs from the focused spec's §6.2 contract - see §6.1 for
 
 1. Size at most 10 MB, and the bytes start with `%PDF-`; otherwise `DOCUMENT_UNREADABLE`.
 2. `pypdf` parses it and extracts text; no text (a scan with no text layer) -> `DOCUMENT_UNREADABLE`.
-3. Same patient, same SHA-256 as an earlier upload -> `DUPLICATE_DOCUMENT`.
+3. Same patient, same SHA-256 as an earlier **accepted** upload -> `DUPLICATE_DOCUMENT`. A
+   rejected file may be sent again and is checked afresh - otherwise one failed classification
+   call would lock that file out for good.
 4. The LLM (§4.3) classifies the text. Not medical -> `NON_MEDICAL_DOCUMENT`; medical but no
    catalog type, or no confident answer -> `DOCUMENT_UNREADABLE`.
 5. A patient identifier in the text that is not this patient's -> `PATIENT_MISMATCH`. The demo
@@ -94,7 +96,9 @@ place this design departs from the focused spec's §6.2 contract - see §6.1 for
 7. Otherwise `ACCEPTED`.
 
 Only an `ACCEPTED` file is stored in S3. A rejected file is never stored; its metadata row keeps
-the result and the hash (so a re-upload of the same rejected file is recognised).
+the result and the hash, for the audit and the patient's list. A patient identifier is compared
+only when it has the demo IdP's shape (`P-` and digits); anything else the model reports (a
+document or customer number) is ignored rather than guessed at.
 
 ### 4.3 The classifier
 
