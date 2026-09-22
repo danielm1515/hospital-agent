@@ -41,18 +41,28 @@ GET /api/v1/patients/{patient_id}/appointment      X-API-Key, X-Case-ID, X-Execu
    fallback's. `idempotent()` is the fallback's (every automatic action is idempotent,
    Execution design decision 3). The transport is the standard library (`urllib.request`),
    so the runtime dependencies do not change; it is injectable, so the tests need no network.
+   No proxy is used, even when `HTTP_PROXY`/`http_proxy` is set in the environment
+   (`urllib.request.ProxyHandler({})` on the opener) - a proxy would see `X-API-Key` and
+   `patient_id`. The body is capped at 64 KiB: the transport never reads more than
+   `MAX_BODY_BYTES` (65537) bytes of an answer, and a body at or over 64 KiB maps to
+   `invalid_response` without being parsed as JSON.
 5. **What the agent sends.** Only `patient_id` (spec §11 `minimized_fields`, already
    `ACTION_TARGETS[CheckAppointment]`), in the path, URL-quoted. Headers: `X-API-Key`, and
    `X-Execution-ID` = the call's `idempotency_key` (the service writes it into its audit,
    which joins the two systems' traces). `X-Case-ID` is not sent: `ToolGateway.call` does not
    receive the case id, and widening that interface is not worth it - the service generates
-   its own. Timeout 5 s.
+   its own. Timeout 5 s - `urllib`'s `timeout` bounds each socket operation (the connect, and
+   each read) separately, not the call as a whole, so a server that answers in slow trickles
+   could in principle take longer than 5 s end to end. Acceptable for the owner's local
+   service; the bounded retry (§12.1 of the main spec) still limits the damage of a slow or
+   wedged server.
 6. **How each answer maps** (`ToolResult` kinds of `execution/gateway.py`; the executor and
    the Retry Manager are unchanged):
 
    | Answer | ToolResult | What the case does |
    |---|---|---|
-   | 200, `found=true`, a timezone-aware `appointment_at` | `ok {"appointment_at": <aware datetime>}` | `DATA_RETRIEVED`; readiness now uses the real time |
+   | 200, `found=true`, a timezone-aware `appointment_at`, `status="Scheduled"` and `appointment_at` still in the future | `ok {"appointment_at": <aware datetime>}` | `DATA_RETRIEVED`; readiness now uses the real time |
+   | 200, `found=true`, but `status` is not `"Scheduled"` (including a missing `status`) or `appointment_at` is not strictly later than now | `error "not_found"` | escalates, same as `found=false` (row 76: a cancelled or past appointment must not be confirmed to the patient) |
    | 200, `found=false` | `error "not_found"` | escalates (`NonIdempotentFailure`) - resolve or reject only |
    | 404 `patient_not_found` | `error "patient_not_found"` | escalates, same |
    | 401 / 403 | `error "unauthorized"` | escalates, same |

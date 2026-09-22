@@ -16,6 +16,7 @@ FOUND = {"found": True, "appointment": {"appointment_id": "APT-1", "patient_id":
                                          "department": "Neurology", "doctor_name": "Dr. Cohen",
                                          "appointment_at": "2026-10-03T10:30:00+03:00",
                                          "location": "Building B, Floor 2", "status": "Scheduled"}}
+NOW = datetime(2026, 9, 22, 12, 0, tzinfo=timezone.utc)  # before FOUND's appointment_at
 
 
 def response(status: int, body) -> HttpResponse:
@@ -35,13 +36,14 @@ class FakeTransport:
 
 def gateway(answer=None, raises=None, **kwargs):
     transport = FakeTransport(answer, raises)
+    kwargs.setdefault("clock", lambda: NOW)
     return AppointmentServiceGateway("http://appointments.test/", KEY, transport=transport, **kwargs), transport
 
 
 # --- the answer mapping, row by row (design §2.6) ------------------------------------------
 
 def test_a_found_appointment_is_ok_with_an_aware_time():
-    result = map_response(response(200, FOUND))
+    result = map_response(response(200, FOUND), now=NOW)
     assert result == ToolResult(OK, {"appointment_at": datetime(2026, 10, 3, 10, 30,
                                                                 tzinfo=timezone(timedelta(hours=3)))})
     assert result.data["appointment_at"].utcoffset() == timedelta(hours=3)
@@ -63,16 +65,24 @@ def test_a_found_appointment_is_ok_with_an_aware_time():
     (response(200, {"found": True, "appointment": {"appointment_at": "tomorrow"}}), "invalid_response"),
     (response(200, {"found": True, "appointment": {"appointment_at": "2026-10-03T10:30:00"}}), "invalid_response"),
     (response(200, {"found": False, "appointment": FOUND["appointment"]}), "invalid_response"),
+    # design §2.6 / row 76: usable only if Scheduled and still in the future.
+    (response(200, {"found": True, "appointment": {**FOUND["appointment"], "status": "Cancelled"}}), "not_found"),
+    (response(200, {"found": True, "appointment": {k: v for k, v in FOUND["appointment"].items()
+                                                    if k != "status"}}), "not_found"),
+    (response(200, {"found": True, "appointment": {**FOUND["appointment"],
+                                                    "appointment_at": "2026-09-22T14:59:00+03:00"}}), "not_found"),
+    (response(200, {"found": True, "appointment": {**FOUND["appointment"],
+                                                    "appointment_at": "2026-09-22T15:00:00+03:00"}}), "not_found"),
 ])
 def test_every_other_answer_is_an_error_with_a_known_code(answer, error):
-    assert map_response(answer) == ToolResult(ERROR, {"error": error})
+    assert map_response(answer, now=NOW) == ToolResult(ERROR, {"error": error})
     assert error in KNOWN_TOOL_ERRORS
 
 
 @pytest.mark.parametrize("status, error", [(500, "unavailable"), (502, "unavailable"),
                                            (503, "unavailable"), (504, "timeout")])
 def test_a_server_side_failure_is_transient(status, error):
-    assert map_response(response(status, {"error": "x"})) == ToolResult(TRANSIENT_FAILURE, {"error": error})
+    assert map_response(response(status, {"error": "x"}), now=NOW) == ToolResult(TRANSIENT_FAILURE, {"error": error})
 
 
 @pytest.mark.parametrize("raised, error", [
@@ -89,6 +99,14 @@ def test_a_urlerror_wrapping_a_timeout_is_a_timeout():
     import urllib.error
     gw, _ = gateway(raises=urllib.error.URLError(TimeoutError("timed out")))
     assert gw.call("CheckAppointment", {"patient_id": "P-10041"}, "K-1").data == {"error": "timeout"}
+
+
+def test_a_malformed_http_answer_is_an_invalid_response():
+    """The server did answer, but http.client could not parse it as HTTP - not the same as
+    getting no answer at all (design §2, minor fix 5)."""
+    import http.client
+    gw, _ = gateway(raises=http.client.IncompleteRead(b""))
+    assert gw.call("CheckAppointment", {"patient_id": "P-10041"}, "K-1") == ToolResult(ERROR, {"error": "invalid_response"})
 
 
 # --- the request (design §2.5) -------------------------------------------------------------
@@ -164,7 +182,7 @@ def server():
 
 
 def test_urllib_transport_over_a_real_server(server):
-    gw = AppointmentServiceGateway(server, KEY)
+    gw = AppointmentServiceGateway(server, KEY, clock=lambda: NOW)
     result = gw.call("CheckAppointment", {"patient_id": "P-10041"}, "K-1")
     assert result.kind == OK
     assert _Handler.seen == [("/api/v1/patients/P-10041/appointment", KEY)]
@@ -186,6 +204,28 @@ def test_a_redirect_is_never_followed(server):
 def test_a_refused_connection_is_transient():
     gw = AppointmentServiceGateway("http://127.0.0.1:1", KEY)
     assert gw.call("CheckAppointment", {"patient_id": "P-10041"}, "K") == ToolResult(TRANSIENT_FAILURE, {"error": "unavailable"})
+
+
+def test_no_proxy_is_used_even_when_one_is_configured(server, monkeypatch):
+    """A proxy from HTTP_PROXY would see X-API-Key and patient_id (design §2, minor fix 3)."""
+    monkeypatch.setenv("HTTP_PROXY", "http://127.0.0.1:1")
+    monkeypatch.setenv("http_proxy", "http://127.0.0.1:1")
+    gw = AppointmentServiceGateway(server, KEY, clock=lambda: NOW)
+    result = gw.call("CheckAppointment", {"patient_id": "P-10041"}, "K-1")
+    assert result.kind == OK
+
+
+def test_a_body_over_64kib_is_invalid_response_through_map_response():
+    big = json.dumps({"found": True, "appointment": FOUND["appointment"], "pad": "x" * (70 * 1024)}).encode()
+    assert len(big) > 64 * 1024
+    assert map_response(HttpResponse(200, big), now=NOW) == ToolResult(ERROR, {"error": "invalid_response"})
+
+
+def test_a_body_over_64kib_is_invalid_response_through_the_local_server(server):
+    _Handler.status, _Handler.body = 200, b"{" + b"x" * (70 * 1024)
+    gw = AppointmentServiceGateway(server, KEY, clock=lambda: NOW)
+    result = gw.call("CheckAppointment", {"patient_id": "P-10041"}, "K-1")
+    assert result == ToolResult(ERROR, {"error": "invalid_response"})
 
 
 # --- choosing the gateway (design §2.2, §2.3) --------------------------------------------

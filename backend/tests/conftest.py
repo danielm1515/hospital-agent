@@ -26,6 +26,21 @@ def _env(name: str) -> str:
     return value
 
 
+@pytest.fixture(autouse=True)
+def _no_real_appointment_service(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`docker compose run backend pytest` inherits APPOINTMENT_SERVICE_URL/APPOINTMENT_API_KEY
+    from the repo's .env (docker-compose.yml passes them through, defaulting to empty) - the
+    same way it inherits DATABASE_URL. Unlike DATABASE_URL, a test must never pick these two
+    up: build_gateway() (appointment_service.py) would then build a live
+    AppointmentServiceGateway pointed at the owner's real appointment-service instead of the
+    mock, on every test that builds an app or a State Manager. This fixture clears both
+    before each test; a test that wants a real gateway sets them itself (e.g.
+    test_build_gateway_reads_the_environment_by_default, the two build_gateway tests in
+    test_app_orchestrator.py)."""
+    monkeypatch.delenv("APPOINTMENT_SERVICE_URL", raising=False)
+    monkeypatch.delenv("APPOINTMENT_API_KEY", raising=False)
+
+
 @pytest.fixture(scope="session")
 def owner_engine() -> Engine:
     """The database owner (hospital_owner): runs migrations and cleans tables between tests."""

@@ -8,6 +8,7 @@ else that is not a found appointment with a timezone-aware time is an error (esc
 """
 from __future__ import annotations
 
+import http.client
 import json
 import os
 import urllib.error
@@ -15,7 +16,7 @@ import urllib.parse
 import urllib.request
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 from ..naming import Action
@@ -23,6 +24,11 @@ from .gateway import ERROR, OK, TRANSIENT_FAILURE, MockGateway, ToolGateway, Too
 
 TIMEOUT_SECONDS = 5
 _TRANSIENT = {500: "unavailable", 502: "unavailable", 503: "unavailable", 504: "timeout"}
+
+# design §2.4 / minor fix 4: the transport never reads more than this many bytes of a body -
+# an oversized answer is not the contract either way, so there is no reason to buffer it fully.
+# One byte over the 64 KiB limit is enough to tell "too long" apart from "exactly 64 KiB".
+MAX_BODY_BYTES = 64 * 1024 + 1
 
 
 @dataclass(frozen=True)
@@ -42,17 +48,20 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
         return None
 
 
-_OPENER = urllib.request.build_opener(_NoRedirect)
+# design §2.4 / minor fix 3: no proxy, even when HTTP_PROXY/http_proxy is set in the environment -
+# a proxy would see X-API-Key and patient_id. ProxyHandler({}) is an explicit "use no proxy",
+# overriding ProxyHandler's own default of reading those variables.
+_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}), _NoRedirect)
 
 
 def urllib_transport(url: str, headers: Mapping[str, str], timeout: float) -> HttpResponse:
     request = urllib.request.Request(url, headers=dict(headers), method="GET")
     try:
         with _OPENER.open(request, timeout=timeout) as answer:
-            return HttpResponse(answer.status, answer.read())
+            return HttpResponse(answer.status, answer.read(MAX_BODY_BYTES))
     except urllib.error.HTTPError as exc:  # a status the server did send is an answer, not a failure
         with exc:
-            return HttpResponse(exc.code, exc.read())
+            return HttpResponse(exc.code, exc.read(MAX_BODY_BYTES))
 
 
 def _error(code: str) -> ToolResult:
@@ -66,12 +75,14 @@ def _json(body: bytes) -> Any:
         return None
 
 
-def map_response(response: HttpResponse) -> ToolResult:
+def map_response(response: HttpResponse, *, now: datetime) -> ToolResult:
     """design §2.6, row by row."""
     if response.status in _TRANSIENT:
         return ToolResult(TRANSIENT_FAILURE, {"error": _TRANSIENT[response.status]})
     if response.status in (401, 403):
         return _error("unauthorized")
+    if len(response.body) >= MAX_BODY_BYTES:  # minor fix 4: too long to be the contract either way
+        return _error("invalid_response")
     body = _json(response.body)
     if response.status == 404:
         known = isinstance(body, dict) and body.get("error") == "patient_not_found"
@@ -89,6 +100,11 @@ def map_response(response: HttpResponse) -> ToolResult:
         return _error("invalid_response")
     if at.tzinfo is None or at.utcoffset() is None:  # the F3 guard would refuse it anyway
         return _error("invalid_response")
+    # spec_corrections row 76: usable only if still Scheduled and still in the future - a
+    # cancelled or past appointment must never be confirmed to the patient. A missing status
+    # is not "Scheduled" (strict): fail closed rather than assume the field was just omitted.
+    if appointment.get("status") != "Scheduled" or at <= now:
+        return _error("not_found")
     return ToolResult(OK, {"appointment_at": at})
 
 
@@ -96,10 +112,12 @@ class AppointmentServiceGateway:
     """ToolGateway: CheckAppointment over HTTP, every other action the fallback's."""
 
     def __init__(self, base_url: str, api_key: str, *, fallback: ToolGateway | None = None,
-                 transport: Transport = urllib_transport, timeout: float = TIMEOUT_SECONDS) -> None:
+                 transport: Transport = urllib_transport, timeout: float = TIMEOUT_SECONDS,
+                 clock: Callable[[], datetime] = lambda: datetime.now(UTC)) -> None:
         self._base_url = base_url.rstrip("/")
         self._api_key = api_key
         self._transport, self._timeout = transport, timeout
+        self._clock = clock
         self.fallback = fallback if fallback is not None else MockGateway()
         self.calls: list[tuple[str, dict[str, Any], str]] = []
 
@@ -120,10 +138,14 @@ class AppointmentServiceGateway:
         headers = {"X-API-Key": self._api_key, "X-Execution-ID": idempotency_key, "Accept": "application/json"}
         try:
             answer = self._transport(url, headers, self._timeout)
+        except http.client.HTTPException:
+            # the server did answer, just not in HTTP the gateway can trust (IncompleteRead,
+            # BadStatusLine, ...) - not the same as no answer at all, so not a transient_failure.
+            return _error("invalid_response")
         except OSError as exc:
             timed_out = isinstance(exc, TimeoutError) or isinstance(getattr(exc, "reason", None), TimeoutError)
             return ToolResult(TRANSIENT_FAILURE, {"error": "timeout" if timed_out else "unavailable"})
-        return map_response(answer)
+        return map_response(answer, now=self._clock())
 
 
 def build_gateway(env: Mapping[str, str] | None = None) -> tuple[ToolGateway | None, str]:

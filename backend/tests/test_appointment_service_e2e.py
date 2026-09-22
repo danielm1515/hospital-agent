@@ -9,6 +9,7 @@ from hospital_agent.naming import EscalationKind, State
 from tests.driver import Driver
 
 AT = "2026-10-03T10:30:00+03:00"
+NOW = datetime(2026, 9, 22, 12, 0, tzinfo=timezone.utc)  # before AT, fixed so the test never expires
 
 
 class ScriptedTransport:
@@ -26,7 +27,7 @@ def answer(status, body):
 
 def driver(sm, app_engine, *answers):
     transport = ScriptedTransport(*answers)
-    gw = AppointmentServiceGateway("http://appointments.test", "k", transport=transport)
+    gw = AppointmentServiceGateway("http://appointments.test", "k", transport=transport, clock=lambda: NOW)
     d = Driver(sm, app_engine, gateway=gw)
     d.to_classified()
     d.plan()
@@ -38,7 +39,8 @@ def reasons(d):
 
 
 def test_a_found_appointment_is_the_one_the_case_keeps(sm, app_engine):
-    d, transport = driver(sm, app_engine, answer(200, {"found": True, "appointment": {"appointment_at": AT}}))
+    d, transport = driver(sm, app_engine, answer(200, {"found": True,
+                                                       "appointment": {"appointment_at": AT, "status": "Scheduled"}}))
     d.run_step()
     assert d.case.appointment_at == datetime(2026, 10, 3, 10, 30, tzinfo=timezone(timedelta(hours=3)))
     assert transport.urls == [f"http://appointments.test/api/v1/patients/{d.patient_id}/appointment"]
@@ -72,7 +74,8 @@ def test_an_unavailable_service_is_retried_three_times_then_a_human_decides(sm, 
 
 def test_a_service_that_recovers_within_the_budget_is_used(sm, app_engine):
     d, transport = driver(sm, app_engine, answer(504, {"error": "timeout"}),
-                          answer(200, {"found": True, "appointment": {"appointment_at": AT}}))
+                          answer(200, {"found": True,
+                                       "appointment": {"appointment_at": AT, "status": "Scheduled"}}))
     d.run_step()
     d.run_step()
     assert d.case.appointment_at is not None and d.state is State.PLANNING
