@@ -71,8 +71,17 @@ POST /api/v1/patients/{patient_id}/documents     multipart: file (PDF)       X-A
      "result": "ACCEPTED" | "NON_MEDICAL_DOCUMENT" | "DOCUMENT_UNREADABLE" | "DOCUMENT_EXPIRED"
                | "DUPLICATE_DOCUMENT" | "PATIENT_MISMATCH"}
 GET  /api/v1/patients/{patient_id}/documents                                   X-API-Key
-200 {"documents": [{"document_id", "document_type", "document_date", "result", "uploaded_at"}, …]}
+200 {"documents": [{"document_id", "document_type", "document_date", "result", "valid_until",
+                    "uploaded_at"}, …]}
 ```
+
+Validity is judged on the day a document is checked (§2), not only on the day it was uploaded:
+the listing reports `result` as of today - an upload that was `ACCEPTED` but has since passed its
+`valid_until` (`document_date` + the type's validity) is listed as `DOCUMENT_EXPIRED` - and gives
+`valid_until` for every accepted type. The stored row keeps the result it got at upload. A
+`DUPLICATE_DOCUMENT` answer carries `duplicate_of` (the accepted original's `document_id`) and the
+original's `document_type` and `document_date`, so a caller whose first request timed out can
+treat the retry as the document it already delivered. Every error is `{"error": code}`.
 
 `ACCEPTED` means a readable medical document of a catalog type, the patient's own, not a
 duplicate and within its validity. Whether an accepted document is *required* is not the
