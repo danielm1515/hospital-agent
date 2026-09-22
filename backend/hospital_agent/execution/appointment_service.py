@@ -129,17 +129,21 @@ class AppointmentServiceGateway:
         return map_response(answer, now=self._clock())
 
 
-def build_gateway(env: Mapping[str, str] | None = None) -> tuple[ToolGateway | None, str]:
+def build_gateway(env: Mapping[str, str] | None = None,
+                   fallback: ToolGateway | None = None) -> tuple[ToolGateway | None, str]:
     """The gateway the live server uses (design §2.2-2.3): (gateway, "mock" | "appointment-service"),
-    or (None, why the Agent Orchestrator must not start). Neither value ever holds the URL or the key."""
+    or (None, why the Agent Orchestrator must not start). Neither value ever holds the URL or the
+    key. `fallback` (sub-project 13 design §5.1) is what every action but CheckAppointment uses -
+    typically the document-service gateway, so the two compose instead of each falling back to
+    its own mock."""
     env = os.environ if env is None else env
     url = env.get("APPOINTMENT_SERVICE_URL", "").strip()
     if not url:
-        return MockGateway(), "mock"
+        return (fallback if fallback is not None else MockGateway()), "mock"
     key = env.get("APPOINTMENT_API_KEY", "").strip()
     if not key:
         return None, "disabled: APPOINTMENT_API_KEY is not set"
     parts = urllib.parse.urlsplit(url)
     if parts.scheme not in ("http", "https") or not parts.hostname:
         return None, "disabled: APPOINTMENT_SERVICE_URL is not an http(s) URL"
-    return AppointmentServiceGateway(url, key), "appointment-service"
+    return AppointmentServiceGateway(url, key, fallback=fallback), "appointment-service"

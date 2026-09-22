@@ -290,3 +290,11 @@ def test_build_gateway_reads_the_environment_by_default(monkeypatch):
     monkeypatch.setenv("APPOINTMENT_SERVICE_URL", "http://h:1")
     monkeypatch.setenv("APPOINTMENT_API_KEY", KEY)
     assert build_gateway()[1] == "appointment-service"
+
+
+def test_build_gateway_falls_back_to_the_given_gateway():
+    fallback = MockGateway()
+    gw, source = build_gateway({}, fallback=fallback)
+    assert gw is fallback and source == "mock"
+    gw, _ = build_gateway({"APPOINTMENT_SERVICE_URL": "http://h:1", "APPOINTMENT_API_KEY": KEY}, fallback=fallback)
+    assert gw.fallback is fallback

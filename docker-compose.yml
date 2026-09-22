@@ -42,6 +42,10 @@ services:
       # (in .env); unset, it stays on the mock. Neither is ever logged.
       APPOINTMENT_SERVICE_URL: ${APPOINTMENT_SERVICE_URL:-}
       APPOINTMENT_API_KEY: ${APPOINTMENT_API_KEY:-}
+      # Sub-project 13: CheckDocuments asks the owner's document-service when both are set
+      # (in .env); unset, it stays on the mock. Neither is ever logged.
+      DOCUMENT_SERVICE_URL: ${DOCUMENT_SERVICE_URL:-}
+      DOCUMENT_API_KEY: ${DOCUMENT_API_KEY:-}
     # host.docker.internal reaches the appointment-service published on the host's 8080
     # (Docker Desktop; on Linux this maps it to the bridge gateway).
     extra_hosts:

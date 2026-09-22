@@ -14,7 +14,7 @@ def test_the_server_starts_the_orchestrator_only_with_a_provider(monkeypatch, ap
     monkeypatch.setattr(app_module, "select_provider", FakeProvider)
     with TestClient(app_module.create_app()) as client:
         assert client.get("/health").json() == {"status": "ok", "database": "ok", "orchestrator": "running",
-                                                "appointments": "mock"}
+                                                "appointments": "mock", "documents": "mock"}
 
 
 def test_the_app_exposes_the_running_orchestrator(monkeypatch, app_engine):
@@ -36,7 +36,7 @@ def test_the_server_uses_the_appointment_service_when_configured(monkeypatch, ap
     monkeypatch.setenv("APPOINTMENT_API_KEY", "dummy")
     with TestClient(app_module.create_app()) as client:
         assert client.get("/health").json() == {"status": "ok", "database": "ok", "orchestrator": "running",
-                                                "appointments": "appointment-service"}
+                                                "appointments": "appointment-service", "documents": "mock"}
 
 
 def test_the_server_refuses_to_start_with_a_url_and_no_key(monkeypatch, app_engine):
@@ -47,3 +47,13 @@ def test_the_server_refuses_to_start_with_a_url_and_no_key(monkeypatch, app_engi
         body = client.get("/health").json()
         assert body["orchestrator"] == "disabled: APPOINTMENT_API_KEY is not set"
         assert "appointments" not in body
+
+
+def test_the_server_refuses_to_start_with_a_document_url_and_no_key(monkeypatch, app_engine):
+    monkeypatch.setenv("DATABASE_URL", app_engine.url.render_as_string(hide_password=False))
+    monkeypatch.setattr(app_module, "select_provider", FakeProvider)
+    monkeypatch.setenv("DOCUMENT_SERVICE_URL", "http://127.0.0.1:1")
+    with TestClient(app_module.create_app()) as client:
+        body = client.get("/health").json()
+        assert body["orchestrator"] == "disabled: DOCUMENT_API_KEY is not set"
+        assert "appointments" not in body and "documents" not in body

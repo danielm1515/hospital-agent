@@ -28,6 +28,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from ..db import make_engine
 from ..execution.appointment_service import build_gateway
 from ..execution.background import sla_interval_seconds, start_background
+from ..execution.document_service import build_document_gateway
 from ..human_review import HumanReviewService
 from ..llm.model_selector import llm_version, select_provider
 from ..llm.orchestrator import Orchestrator, orchestrator_interval_seconds
@@ -54,6 +55,7 @@ def create_app(engine: Engine | None = None, orchestrator: Orchestrator | None =
         app.state.engine = make_engine() if owned else engine
         app.state.orchestrator_status = None  # reported by /health only for a real server
         app.state.appointments_source = None  # likewise: "mock" or "appointment-service"
+        app.state.documents_source = None  # likewise: "mock" or "document-service"
         app.state.orchestrator = orchestrator  # injected: stored as it is, never started
 
         def _wake() -> None:
@@ -73,12 +75,17 @@ def create_app(engine: Engine | None = None, orchestrator: Orchestrator | None =
                 app.state.orchestrator_status = "disabled: OPENAI_API_KEY is not set"
             else:
                 # The demo's external systems are mocks (spec §18); on the owner's stack
-                # CheckAppointment may ask the real appointment-service (sub-project 10).
-                gateway, source = build_gateway()
+                # CheckAppointment may ask the real appointment-service (sub-project 10) and
+                # CheckDocuments the real document-service (sub-project 13) - the appointment
+                # gateway falls back to the document gateway, which falls back to the mock.
+                documents_gateway, documents_source = build_document_gateway()
+                gateway, source = (None, documents_source) if documents_gateway is None \
+                    else build_gateway(fallback=documents_gateway)
                 if gateway is None:
                     app.state.orchestrator_status = source
                 else:
                     app.state.appointments_source = source
+                    app.state.documents_source = documents_source
                     started = app.state.orchestrator = Orchestrator(sm, provider, gateway)
                     stops.append(started.run_in_background(orchestrator_interval_seconds()))
                     app.state.orchestrator_status = "running"
@@ -111,6 +118,8 @@ def create_app(engine: Engine | None = None, orchestrator: Orchestrator | None =
         extra = {} if orchestrator_status is None else {"orchestrator": orchestrator_status}
         if request.app.state.appointments_source is not None:
             extra["appointments"] = request.app.state.appointments_source
+        if request.app.state.documents_source is not None:
+            extra["documents"] = request.app.state.documents_source
         try:
             with db.connect() as conn:
                 conn.execute(text("SELECT 1"))
