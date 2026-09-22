@@ -1,6 +1,6 @@
 # Sub-projects 11-13 - required documents per appointment, and a real documents system
 
-**Status:** approved by the owner (2026-09-22). Sub-project 11 built and live (appointment-service: 78 tests; plan `docs/superpowers/plans/2026-09-22-appointment-required-documents.md`).
+**Status:** approved by the owner (2026-09-22). Sub-project 11 built and live (appointment-service: 78 tests; plan `docs/superpowers/plans/2026-09-22-appointment-required-documents.md`). Sub-project 12 built and running (document-service: 123 tests, plan `docs/superpowers/plans/2026-09-22-document-service.md`); S3 awaits the owner's bucket.
 **Input:** the owner's focused spec `Hospital_Agent_Document_Focused_Spec.docx` (v1.0, September
 2026: "אפיון ממוקד לחיבור מערכות תורים ומסמכים"). Answers the owner gave while designing:
 build all of it, in stages; an LLM classifies each PDF; files go to AWS S3; the patient uploads
