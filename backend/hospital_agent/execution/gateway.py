@@ -45,7 +45,9 @@ INSTRUCTION_TEXT = ("Colonoscopy preparation (INSTR-PREP-COLONOSCOPY v3): clear 
 
 # The only third-party error strings audit's policy_reasons may hold (§12.3: IDs/codes only,
 # never an arbitrary external message); anything else is reported as "other".
-KNOWN_TOOL_ERRORS = frozenset({"timeout", "rejected"})
+# timeout / rejected: the mocks. The rest: the appointment-service (sub-project 10, design §2.6).
+KNOWN_TOOL_ERRORS = frozenset({"timeout", "rejected", "unavailable", "not_found", "patient_not_found",
+                               "unauthorized", "invalid_response"})
 
 
 @dataclass(frozen=True)
