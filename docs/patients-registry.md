@@ -10,7 +10,7 @@ RDS instance, so an external reader connects there, from the host or from a cont
 
 | | Value |
 |---|---|
-| Host | `hospital.cf42em6cy852.eu-north-1.rds.amazonaws.com` |
+| Host | `<your-rds-endpoint>` |
 | Port | `5432` |
 | Database | `hospital` |
 | User | `hospital_reader` |
@@ -18,7 +18,7 @@ RDS instance, so an external reader connects there, from the host or from a cont
 | TLS | required: `sslmode=require` (RDS offers TLS; `verify-full` additionally needs the RDS CA bundle) |
 
 ```
-postgresql+psycopg://hospital_reader:<READER_DB_PASSWORD>@hospital.cf42em6cy852.eu-north-1.rds.amazonaws.com:5432/hospital?sslmode=require
+postgresql+psycopg://hospital_reader:<READER_DB_PASSWORD>@<your-rds-endpoint>:5432/hospital?sslmode=require
 ```
 
 **One thing is weaker on RDS than locally:** `hospital_reader` can create large objects there.
