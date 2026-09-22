@@ -107,6 +107,12 @@ Read only the columns you need. A check that a patient exists needs
 `SELECT 1 FROM patients WHERE patient_id = $1`, not the name and phone. Never write a name or a
 phone into an application log.
 
+The appointment-service reads two things: that existence check, on every lookup and every
+booking, and `SELECT patient_id, full_name FROM patients ORDER BY patient_id` for its logged-in
+admin screen - the booking form's patient dropdown, and the name shown next to each
+appointment. It never reads `phone`. The dropdown is a convenience only: a booking asks the
+existence check again, so an id sent around the list is still refused.
+
 ## Adding a patient
 
 The patients also exist in the demo IdP, `DEMO_USERS` in `backend/hospital_agent/auth.py`, and
