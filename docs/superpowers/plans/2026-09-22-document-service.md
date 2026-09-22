@@ -110,7 +110,8 @@ EXPOSE 8000
 HEALTHCHECK --interval=10s --timeout=3s --start-period=10s --retries=5 \
   CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=2)" || exit 1
 
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# --no-access-log: the access log would print the URL, and the URL carries the patient id.
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--no-access-log"]
 ```
 
 `compose.yaml`:
@@ -647,8 +648,9 @@ def test_an_unusable_answer_fails(content):
 
 
 def test_an_api_error_fails():
+    import httpx
     import openai
-    classifier, _ = openai_with(raises=openai.APIConnectionError(request=None))
+    classifier, _ = openai_with(raises=openai.APIConnectionError(request=httpx.Request("POST", "https://api.openai.com")))
     with pytest.raises(ClassifierFailed):
         classifier.classify("text")
 
@@ -1096,7 +1098,8 @@ def test_an_s3_failure_is_storage_failed():
 
 
 def test_the_store_never_shows_credentials():
-    assert "y" not in repr(S3ObjectStore("bucket-name", "eu-north-1", client=s3_client())).replace("eu-north-1", "")
+    assert repr(S3ObjectStore("bucket-name", "eu-north-1", client=s3_client())) == \
+        "S3ObjectStore(bucket='bucket-name', region='eu-north-1')"
 ```
 
 `tests/test_api.py`:
@@ -1265,7 +1268,8 @@ def test_the_log_never_holds_the_patient_id_or_a_file_name(tmp_path, caplog):
     app, _ = make(tmp_path)
     with TestClient(app) as client:
         upload(client, "cbc")
-    logged = "\n".join(record.getMessage() for record in caplog.records)
+    # Only this service's own logger: the test client's httpx logs the request URL itself.
+    logged = "\n".join(r.getMessage() for r in caplog.records if r.name == "document-service")
     assert "P-10041" not in logged and "cbc.pdf" not in logged
 
 
@@ -1428,12 +1432,10 @@ def test_the_store_comes_from_the_environment(tmp_path, monkeypatch):
 
 **Files:** Create `README.md`, `tests/test_live.py`.
 
-- [ ] **Step 1: `tests/test_live.py`** (skipped unless asked; they reach OpenAI / AWS with the owner's own `.env` values, passed with `--env-file .env` by the owner):
+- [ ] **Step 1: `tests/test_live.py`** - skipped unless asked. `conftest.py` clears `OPENAI_API_KEY` and `S3_BUCKET` before every test, so the live tests read copies, `LIVE_OPENAI_API_KEY` and `LIVE_S3_BUCKET`, which the owner's command sets inside the container from the service's own `.env` (nothing is printed):
 
 ```python
-"""Live checks - they run only when asked, with the service's own credentials:
-    docker run ... --env-file .env -e RUN_LIVE_LLM=1 ... pytest tests/test_live.py
-They are the only tests that reach the network."""
+"""Live checks - the only tests that reach the network, and only when asked (README, "בדיקות")."""
 import os
 from pathlib import Path
 
@@ -1445,21 +1447,14 @@ live_llm = pytest.mark.skipif(os.getenv("RUN_LIVE_LLM") != "1", reason="set RUN_
 live_s3 = pytest.mark.skipif(os.getenv("RUN_LIVE_S3") != "1", reason="set RUN_LIVE_S3=1 to write to the bucket")
 
 
-@pytest.fixture
-def real_env(monkeypatch):
-    """conftest clears the live variables; these tests put back what the owner passed in."""
-    return os.environ.get
-
-
 @live_llm
 @pytest.mark.parametrize("name, expected", [("cbc", "CBC"), ("coagulation", "COAGULATION_TESTS"), ("ecg", "ECG"),
                                             ("urinalysis", "URINALYSIS"), ("preop_summary", "PREOP_SUMMARY"),
                                             ("electricity_bill", None)])
 def test_the_real_model_classifies_the_demo_files(name, expected):
     from app.classifier import OpenAIClassifier
-    key = os.environ["LIVE_OPENAI_API_KEY"]
     text = "".join(p.extract_text() or "" for p in pypdf.PdfReader(FIXTURES / "2026" / f"{name}.pdf").pages)
-    got = OpenAIClassifier(key, os.environ.get("OPENAI_MODEL", "gpt-5.6-luna")).classify(text)
+    got = OpenAIClassifier(os.environ["LIVE_OPENAI_API_KEY"], os.environ.get("OPENAI_MODEL", "gpt-5.6-luna")).classify(text)
     assert got.document_type == expected and got.is_medical == (expected is not None)
 
 
@@ -1470,13 +1465,11 @@ def test_the_real_bucket_accepts_a_private_encrypted_put():
         "patients/LIVE-TEST/DOC-LIVE.pdf", (FIXTURES / "2026" / "cbc.pdf").read_bytes())
 ```
 
-Because `conftest.py` clears `OPENAI_API_KEY` and `S3_BUCKET`, the live tests read `LIVE_OPENAI_API_KEY` / `LIVE_S3_BUCKET`; the README's command maps them (`-e LIVE_OPENAI_API_KEY="$OPENAI_API_KEY"` is **not** used - the owner runs `docker compose run --rm -e RUN_LIVE_LLM=1 -e LIVE_OPENAI_API_KEY -e LIVE_S3_BUCKET api ...`? No: the image has no tests). Use this documented command instead, which never prints a secret:
+The owner's command (in the README), run from the project root in Git Bash:
 
 ```
 MSYS_NO_PATHCONV=1 docker run --rm --env-file .env -v "$(pwd -W):/src" -w /src python:3.12-slim sh -c 'pip install -q -r requirements-dev.txt && LIVE_OPENAI_API_KEY="$OPENAI_API_KEY" LIVE_S3_BUCKET="$S3_BUCKET" RUN_LIVE_LLM=1 RUN_LIVE_S3=1 pytest -q -p no:cacheprovider tests/test_live.py'
 ```
-
-(the variables are copied inside the container before pytest's conftest clears the originals). Remove the unused `real_env` fixture if it stays unused.
 
 - [ ] **Step 2: `README.md`** (Hebrew, like `appointment-service`'s), sections:
   - **מה השירות עושה** - intake, classification, private storage, listing; the six result codes and what each means (the design's table).
