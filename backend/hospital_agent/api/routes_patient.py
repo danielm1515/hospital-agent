@@ -24,6 +24,7 @@ logger = logging.getLogger(__name__)
 
 MAX_PDF_BYTES = 10 * 1024 * 1024  # the document-service's own limit (design §5.3)
 UPLOAD_BODY_LIMIT = MAX_PDF_BYTES + 64 * 1024  # the file plus the multipart framing around it
+MAX_FORM_PARTS = 64  # the form has one file part; a few others are ignored, thousands are refused
 
 
 def _identity_verified(principal: Principal) -> bool:
@@ -91,7 +92,8 @@ async def upload_pdf(case_id: str, request: Request, principal: Principal = Depe
         body += chunk
         if len(body) > UPLOAD_BODY_LIMIT:
             raise HTTPException(status_code=413, detail="too_large")
-    part = _file_part(request.headers.get("content-type", ""), bytes(body))
+    # Off the event loop: up to 10 MB of parsing must not stall every other request.
+    part = await run_in_threadpool(_file_part, request.headers.get("content-type", ""), bytes(body))
     if part is None:
         raise HTTPException(status_code=422, detail="invalid_body")
     filename, data = part
@@ -114,7 +116,16 @@ async def upload_pdf(case_id: str, request: Request, principal: Principal = Depe
 def _file_part(content_type: str, body: bytes) -> tuple[str, bytes] | None:
     """(filename, bytes) of the first multipart/form-data part named `file` that carries a
     filename, or None when the body is not such a form. Strict and exact for binary content:
-    parts are split on CRLF + "--" + boundary, as RFC 7578 / RFC 2046 define them."""
+    parts are split on CRLF + "--" + boundary, as RFC 7578 / RFC 2046 define them. At most
+    MAX_FORM_PARTS parts are looked at - a body with more is not the one-file form this route
+    takes - and any failure while parsing is None (422), never a 500."""
+    try:
+        return _parse_file_part(content_type, body)
+    except Exception:  # noqa: BLE001 - a hostile body must end in 422, whatever it trips
+        return None
+
+
+def _parse_file_part(content_type: str, body: bytes) -> tuple[str, bytes] | None:
     header = Message()
     header["content-type"] = content_type
     boundary = header.get_param("boundary")
@@ -122,13 +133,18 @@ def _file_part(content_type: str, body: bytes) -> tuple[str, bytes] | None:
             or not 1 <= len(boundary) <= 70:
         return None
     delimiter = b"\r\n--" + boundary.encode("latin-1", "replace")
-    sections = (b"\r\n" + body).split(delimiter)
+    # preamble + at most MAX_FORM_PARTS parts + the closing "--": a longer body leaves its rest
+    # unsplit in the last piece, which then does not start with "--" and is refused.
+    sections = (b"\r\n" + body).split(delimiter, MAX_FORM_PARTS + 1)
     if len(sections) < 3 or not sections[-1].startswith(b"--"):
-        return None  # no part, or no closing delimiter
+        return None  # no part, too many parts, or no closing delimiter
     for section in sections[1:-1]:
-        if not section.startswith(b"\r\n") or b"\r\n\r\n" not in section:
+        if not section.startswith(b"\r\n"):
             return None
-        raw_headers, content = section[2:].split(b"\r\n\r\n", 1)
+        pieces = section[2:].split(b"\r\n\r\n", 1)
+        if len(pieces) != 2 or not pieces[0].strip():
+            continue  # a part without header lines is not the file
+        raw_headers, content = pieces
         headers = HeaderParser().parsestr(raw_headers.decode("utf-8", "replace") + "\r\n\r\n")
         disposition = Message()
         disposition["content-disposition"] = headers.get("content-disposition", "")

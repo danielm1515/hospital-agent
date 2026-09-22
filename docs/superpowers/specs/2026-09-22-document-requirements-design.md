@@ -183,6 +183,14 @@ by configuration like sub-project 10 (`DOCUMENT_SERVICE_URL` + `DOCUMENT_API_KEY
   appointment (the focused spec's `DOCUMENT_NOT_REQUIRED`).
 - Any rejection -> no event; the patient sees why, in Hebrew, per result code.
 - The document service unreachable -> `503`, no event, nothing recorded.
+- **The route parses the one-part multipart body itself, with the standard library** (sub-project
+  13 task 3), after the patient's token is verified, instead of FastAPI's `UploadFile` - which
+  would need `python-multipart` (a new runtime dependency) and would parse the body before
+  authentication. The body is capped at 10 MB + 64 KiB (by `Content-Length`, before it is read)
+  and at 64 parts, and it is parsed off the event loop.
+- A document the document service accepted while the case moved on (`409
+  not_waiting_for_document`) stays there without an event; a later retry of the same file comes
+  back as `DUPLICATE_DOCUMENT` with `duplicate_of`, which the agent treats as `accepted`.
 - **An exception to "only the Tool Executor calls an external system", recorded.** This call is
   the patient's own action, not a step of the plan; it is not proposed, allowed by policy or
   retried. The Session Service is the component that already owns uploads (`DocumentValid`

@@ -405,3 +405,96 @@ def test_a_body_that_is_not_one_file_part_is_422(app_engine, kwargs):
         response = client.post(f"/api/patient/requests/{d.case_id}/documents/file", headers=headers, **kwargs)
         assert response.status_code == 422 and response.json() == {"detail": "invalid_body"}
     assert intake.calls == []
+
+
+# --- fix round 1: hostile multipart bodies and Content-Length values --------------------------------
+
+def _raw_post(client, case_id, body, boundary="X"):
+    return client.post(f"/api/patient/requests/{case_id}/documents/file", content=body,
+                       headers={**token(client), "Content-Type": f"multipart/form-data; boundary={boundary}"})
+
+
+def test_a_part_without_headers_is_422_not_500(app_engine):
+    intake = FakeIntake(accepted("ECG"))
+    with TestClient(create_app(app_engine, document_intake=intake), raise_server_exceptions=False) as client:
+        d = api_awaiting(client, app_engine)
+        for body in (b"--X\r\n\r\nDATA\r\n--X--", b"--X\r\nDATA\r\n--X--", b"--X\r\n\r\n\r\n--X--"):
+            response = _raw_post(client, d.case_id, body)
+            assert response.status_code == 422 and response.json() == {"detail": "invalid_body"}
+    assert intake.calls == []
+
+
+def test_a_body_of_thousands_of_tiny_parts_is_refused_quickly(app_engine):
+    import time
+    intake = FakeIntake(accepted("ECG"))
+    part = b'--X\r\nContent-Disposition: form-data; name="n"\r\n\r\nv\r\n'
+    body = part * 10_000 + b"--X--"
+    with api(app_engine, intake) as client:
+        d = api_awaiting(client, app_engine)
+        started = time.monotonic()
+        response = _raw_post(client, d.case_id, body)
+        elapsed = time.monotonic() - started
+    assert response.status_code == 422 and response.json() == {"detail": "invalid_body"}
+    assert elapsed < 1.0
+    assert intake.calls == []
+
+
+def test_a_file_part_after_the_first_64_parts_is_not_looked_for(app_engine):
+    filler = b"".join(b'--X\r\nContent-Disposition: form-data; name="n%d"\r\n\r\nv\r\n' % i for i in range(64))
+    body = filler + b'--X\r\nContent-Disposition: form-data; name="file"; filename="a.pdf"\r\n\r\nPDF\r\n--X--'
+    intake = FakeIntake(accepted("ECG"))
+    with api(app_engine, intake) as client:
+        d = api_awaiting(client, app_engine)
+        assert _raw_post(client, d.case_id, body).status_code == 422
+    assert intake.calls == []
+
+
+def test_the_parse_runs_off_the_event_loop(app_engine, monkeypatch):
+    import asyncio
+    from hospital_agent.api import routes_patient
+    seen, real = [], routes_patient._file_part
+
+    def spy(*args):
+        try:
+            asyncio.get_running_loop()
+            seen.append("event loop")
+        except RuntimeError:
+            seen.append("worker thread")
+        return real(*args)
+    monkeypatch.setattr(routes_patient, "_file_part", spy)
+    with api(app_engine, FakeIntake(accepted("ECG"))) as client:
+        d = api_awaiting(client, app_engine)
+        assert post_pdf(client, d.case_id).status_code == 200
+    assert seen == ["worker thread"]
+
+
+@pytest.mark.parametrize("value, status, code", [
+    ("9" * 5000, 413, "too_large"),
+    ("abc", 411, "length_required"),
+    ("-5", 411, "length_required"),
+    ("1e3", 411, "length_required"),
+    ("", 411, "length_required"),
+])
+def test_an_absurd_content_length_never_500s(value, status, code):
+    import json
+    guard, tripwire = _guard()
+    sent, received = _run(guard, "POST", "/api/patient/requests/CASE-1/documents/file", {"Content-Length": value})
+    assert not tripwire.ran and received == []
+    assert sent[0]["status"] == status and json.loads(sent[1]["body"]) == {"detail": code}
+
+
+def test_a_non_201_answer_is_logged_with_its_status_code_only(sm, app_engine, caplog):
+    d = awaiting(sm, app_engine)
+    service = SessionService(sm, document_intake=FakeIntake(raises=IntakeUnavailable("status_400")))
+    with caplog.at_level(logging.INFO, logger="hospital_agent.session"):
+        with pytest.raises(IntakeUnavailable):
+            service.upload_pdf(PATIENT, d.case_id, PDF, FILENAME)
+    lines = [r.getMessage() for r in caplog.records if r.name == "hospital_agent.session"]
+    assert "pdf upload: document_service_unavailable (status_400)" in lines
+    assert PATIENT not in caplog.text and FILENAME not in caplog.text
+
+
+def test_a_small_length_with_thousands_of_leading_zeros_passes():
+    guard, tripwire = _guard()
+    _run(guard, "POST", "/api/patient/requests/CASE-1/documents/file", {"Content-Length": "0" * 5000 + "12"})
+    assert tripwire.ran

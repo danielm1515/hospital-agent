@@ -298,12 +298,19 @@ view after the upload - for every code but `accepted` it is exactly what it was 
 - `404 case_not_found` - an unknown case, or someone else's. Nothing is sent on.
 - `409 not_waiting_for_document` - the case is not in `needs_document` (also when it moved on
   while the document-service was answering). Nothing is sent on, or nothing is recorded.
-- `411 length_required` - no `Content-Length`.
-- `413 too_large` - a `Content-Length` over 10 MB + 64 KiB, or a file part over 10 MB.
-- `422 invalid_body` - not a `multipart/form-data` body with a part named `file`.
+- `411 length_required` - no `Content-Length`, or one that is not a plain non-negative
+  number (empty, signed, `abc`, `1e3`).
+- `413 too_large` - a `Content-Length` over 10 MB + 64 KiB (however many digits it has), or
+  a file part over 10 MB.
+- `422 invalid_body` - not a `multipart/form-data` body with a part named `file` (and a
+  filename) among its first 64 parts, or a body that cannot be parsed at all.
 - `503 document_service_unavailable` - the document-service did not answer, answered an
-  error, or answered something that is not its contract. Nothing is recorded; the patient may
-  try again (a re-sent copy of a document that was in fact accepted comes back `accepted`).
+  error, or answered something that is not its contract. Nothing is recorded. Tell the
+  patient the document service could not take the file, to try again later or contact the
+  call centre - a retry is not promised to help (some of these answers are about the file
+  itself), though a re-sent copy of a document that was in fact accepted comes back
+  `accepted`. The application log records only the kind (`no_answer`, `status_<n>`,
+  `invalid_response`).
 - `401 not_authenticated`, `403 patients_only` - as everywhere.
 
 ## 5. Staff routes

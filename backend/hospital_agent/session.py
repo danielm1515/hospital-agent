@@ -243,8 +243,10 @@ class SessionService:
             raise IntakeUnavailable("not_configured")  # rule 2 is the route's; never reached from it
         try:
             answer = self.document_intake.submit(patient_id, filename, data)  # rule 3
-        except IntakeUnavailable:
-            logger.info("pdf upload: document_service_unavailable")
+        except IntakeUnavailable as unavailable:
+            # The client's code only (no_answer, status_<n>, invalid_response), so an operator
+            # can tell a 400 from a 5xx - never a patient id, a file name or a document id.
+            logger.info("pdf upload: document_service_unavailable (%s)", unavailable)
             raise
         document_type, document_ref = _effective(answer)  # rule 4
         if document_type is None or document_ref is None:  # rule 6

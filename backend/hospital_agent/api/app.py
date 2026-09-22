@@ -65,11 +65,13 @@ class UploadSizeLimit:
     async def __call__(self, scope, receive, send) -> None:
         if scope["type"] == "http" and scope["method"] == "POST" and scope["path"].endswith("/documents/file"):
             raw = dict(scope.get("headers") or []).get(b"content-length")
-            length = int(raw) if raw is not None and raw.isdigit() else None
-            if length is None:
+            if raw is None or not raw.isdigit():  # missing, empty, signed, or not a number at all
                 await self._refuse(send, 411, "length_required")
                 return
-            if length > UPLOAD_BODY_LIMIT:
+            # Compared as digits first: int() of thousands of digits would raise (Python's
+            # int-to-str limit) - and any length that long is over the limit anyway.
+            digits = raw.lstrip(b"0") or b"0"
+            if len(digits) > len(str(UPLOAD_BODY_LIMIT)) or int(digits) > UPLOAD_BODY_LIMIT:
                 await self._refuse(send, 413, "too_large")
                 return
         await self.app(scope, receive, send)
