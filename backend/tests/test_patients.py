@@ -1,5 +1,6 @@
 """Sub-project 9: the patients registry other systems read (design §3)."""
 import os
+import uuid
 
 import pytest
 from alembic import command
@@ -21,19 +22,44 @@ def engine_as(role: str, password: str):
     return create_engine(url)
 
 
-def _restore_reader_role(owner_engine, alembic_config) -> None:
-    """Always bring the schema back to head first - upgrade is a no-op when already there,
-    and recovers the schema if a migration the caller ran inside its `try` raised partway
-    through, which would otherwise leave the session-scoped `migrated` fixture's database
-    stuck below head for the rest of the run - before resetting hospital_reader's password to
-    the real one. Shared by every test that makes migration 0004 (re-)create the role."""
-    command.upgrade(alembic_config, "head")
-    # Not inside a dollar-quoted block (unlike the old migration code this guards against), so
-    # doubling quotes is sufficient here - still done, since this only ever restores the real
-    # env-provided password, never an attacker-chosen one.
-    safe_password = reader_password().replace("'", "''")
-    with owner_engine.begin() as conn:
-        conn.execute(text(f"ALTER ROLE {READER} PASSWORD '{safe_password}'"))
+THROWAWAY_PREFIX = "hospital_reader_t_"
+
+
+@pytest.fixture
+def throwaway_reader(owner_engine, migrated, alembic_config):
+    """A throwaway reader role for the tests that make migration 0004 (re-)create its role.
+
+    Roles are cluster-wide, and on the owner's stack hospital (migrated on every backend start)
+    and hospital_test share one cluster, so these tests never ALTER or DROP the real
+    hospital_reader: 0004 reads the role's name from the Alembic config, and this fixture points
+    it at a fresh role for the test's own downgrade/upgrade.
+
+    Teardown runs even when the test body raised, and leaves hospital_test as the rest of the
+    session expects it: the attribute restored, then 0003 -> head again with the default role
+    (a plain `upgrade head` would be a no-op and leave patients granted only to the throwaway
+    role), then the throwaway role dropped.
+    """
+    name = THROWAWAY_PREFIX + uuid.uuid4().hex[:8]
+    missing = object()
+    previous = alembic_config.attributes.get("reader_role", missing)
+    alembic_config.attributes["reader_role"] = name
+    try:
+        yield name
+    finally:
+        if previous is missing:
+            alembic_config.attributes.pop("reader_role", None)
+        else:
+            alembic_config.attributes["reader_role"] = previous
+        try:
+            # A migration run is one transaction (alembic/env.py), so a body that raised left the
+            # database at 0003 or at head, never between: downgrading to 0003 is safe from both.
+            command.downgrade(alembic_config, "0003")
+            command.upgrade(alembic_config, "head")
+        finally:
+            with owner_engine.begin() as conn:
+                if conn.execute(text("SELECT 1 FROM pg_roles WHERE rolname = :r"), {"r": name}).scalar():
+                    conn.execute(text(f'DROP OWNED BY "{name}"'))
+                    conn.execute(text(f'DROP ROLE "{name}"'))
 
 
 @pytest.fixture
@@ -96,26 +122,25 @@ def test_the_app_role_reads_the_patients_but_cannot_write_them(app_engine):
             conn.execute(text("UPDATE patients SET full_name = 'x'"))
 
 
-def test_rerunning_the_migration_keeps_an_existing_roles_password(owner_engine, migrated, alembic_config):
+def test_rerunning_the_migration_keeps_an_existing_roles_password(owner_engine, alembic_config, throwaway_reader):
     """Roles are cluster-wide: 0004 must not fail on an existing role, nor reset a password
     the owner of the database changed (design §3.2)."""
+    command.downgrade(alembic_config, "0003")
+    command.upgrade(alembic_config, "head")  # creates the throwaway role with the default password
     changed = "changed-by-the-owner"
     with owner_engine.begin() as conn:
-        conn.execute(text(f"ALTER ROLE {READER} PASSWORD '{changed}'"))
+        conn.execute(text(f"ALTER ROLE \"{throwaway_reader}\" PASSWORD '{changed}'"))
+    command.downgrade(alembic_config, "0003")
+    command.upgrade(alembic_config, "head")  # the role now exists: it must keep `changed`
+    engine = engine_as(throwaway_reader, changed)
     try:
-        command.downgrade(alembic_config, "0003")
-        command.upgrade(alembic_config, "head")
-        engine = engine_as(READER, changed)
-        try:
-            with engine.connect() as conn:
-                assert conn.execute(text("SELECT count(*) FROM patients")).scalar() == 3
-        finally:
-            engine.dispose()
+        with engine.connect() as conn:
+            assert conn.execute(text("SELECT count(*) FROM patients")).scalar() == 3
     finally:
-        _restore_reader_role(owner_engine, alembic_config)
+        engine.dispose()
 
 
-def test_the_migration_quotes_a_tricky_password_safely(owner_engine, migrated, alembic_config, monkeypatch):
+def test_the_migration_quotes_a_tricky_password_safely(owner_engine, alembic_config, throwaway_reader, monkeypatch):
     """0004 used to build the CREATE ROLE statement as an f-string inside a DO $body$ ... $body$
     block, with only single quotes escaped. A password containing the substring '$body$' would
     end that dollar-quoted block early, so whatever followed it would run as arbitrary SQL under
@@ -124,30 +149,68 @@ def test_the_migration_quotes_a_tricky_password_safely(owner_engine, migrated, a
     proves a password containing both a quote and a '$body$' tag round-trips as exactly one
     password, with nothing else executed alongside it."""
     tricky = "o'brien's $body$ password; DROP TABLE patients; --"
-    with owner_engine.begin() as conn:
-        # The role holds a GRANT on patients; Postgres refuses to drop a role that still has
-        # privileges anywhere in the cluster, so those are dropped first (this cluster's
-        # `hospital` database, unlike `hospital_test`, is never migrated by these tests, so
-        # hospital_test is the only database that can hold such a privilege here).
-        conn.execute(text(f"DROP OWNED BY {READER}"))
-        conn.execute(text(f"DROP ROLE {READER}"))
     monkeypatch.setenv("READER_DB_PASSWORD", tricky)
+    command.downgrade(alembic_config, "0003")
+    command.upgrade(alembic_config, "head")  # creates the throwaway role with the tricky password
+    engine = engine_as(throwaway_reader, tricky)
     try:
-        command.downgrade(alembic_config, "0003")
-        command.upgrade(alembic_config, "head")
-        engine = engine_as(READER, tricky)
-        try:
-            with engine.connect() as conn:
-                assert conn.execute(text("SELECT count(*) FROM patients")).scalar() == 3
-        finally:
-            engine.dispose()
-        # Nothing past the would-be broken-out point ran: the table a real exploit would have
-        # tried to drop is still there, with all three seeded rows intact.
-        with owner_engine.begin() as conn:
+        with engine.connect() as conn:
             assert conn.execute(text("SELECT count(*) FROM patients")).scalar() == 3
     finally:
-        # Undo the monkeypatch explicitly (safe to call twice; the fixture would otherwise do
-        # it only after this function returns) so _restore_reader_role's own naive ALTER ROLE
-        # string-building sees the real default password, not the tricky one still active here.
-        monkeypatch.undo()
-        _restore_reader_role(owner_engine, alembic_config)
+        engine.dispose()
+    # Nothing past the would-be broken-out point ran: the table a real exploit would have
+    # tried to drop is still there, with all three seeded rows intact.
+    with owner_engine.begin() as conn:
+        assert conn.execute(text("SELECT count(*) FROM patients")).scalar() == 3
+
+
+def test_the_recreation_tests_leave_the_real_reader_untouched(owner_engine, reader):
+    """Runs after the two tests above (file order): the real hospital_reader still reads
+    patients in hospital_test with its own password, and no throwaway role is left behind."""
+    with reader.connect() as conn:
+        assert conn.execute(text("SELECT count(*) FROM patients")).scalar() == 3
+    with owner_engine.connect() as conn:
+        leftovers = conn.execute(
+            text("SELECT rolname FROM pg_roles WHERE rolname LIKE :p"), {"p": THROWAWAY_PREFIX.replace("_", r"\_") + "%"}
+        ).scalars().all()
+    assert leftovers == []
+
+
+def test_the_migration_refuses_an_existing_reader_that_is_a_superuser(owner_engine, alembic_config, throwaway_reader):
+    with owner_engine.begin() as conn:
+        conn.execute(text(f"CREATE ROLE \"{throwaway_reader}\" LOGIN SUPERUSER"))
+    command.downgrade(alembic_config, "0003")
+    with pytest.raises(RuntimeError, match="refuses to grant.*SUPERUSER"):
+        command.upgrade(alembic_config, "head")
+
+
+def test_the_migration_refuses_an_existing_reader_that_is_a_member_of_another_role(
+        owner_engine, alembic_config, throwaway_reader):
+    with owner_engine.begin() as conn:
+        conn.execute(text(f"CREATE ROLE \"{throwaway_reader}\" LOGIN"))
+        conn.execute(text(f"GRANT hospital_app TO \"{throwaway_reader}\""))
+    command.downgrade(alembic_config, "0003")
+    with pytest.raises(RuntimeError, match="refuses to grant.*member of hospital_app"):
+        command.upgrade(alembic_config, "head")
+
+
+def test_the_reader_has_a_connection_limit(owner_engine, migrated):
+    with owner_engine.connect() as conn:
+        limit = conn.execute(text("SELECT rolconnlimit FROM pg_roles WHERE rolname = :r"), {"r": READER}).scalar()
+    assert limit == 5
+
+
+@pytest.mark.parametrize("statement", [
+    "SELECT lo_creat(-1)",
+    "SELECT lo_create(0)",
+    "SELECT lo_from_bytea(0, decode('00', 'hex'))",
+    "SELECT lo_import('/etc/hostname')",
+    "SELECT lo_export(1, '/tmp/x')",
+    "CREATE TEMP TABLE reader_scratch (x int)",
+    "CREATE TABLE public.reader_scratch (x int)",
+])
+def test_the_reader_cannot_store_anything(reader, statement):
+    """No large objects, no temporary tables, no tables in public (design §3.2, final review I1)."""
+    with pytest.raises(ProgrammingError, match="permission denied"):
+        with reader.begin() as conn:
+            conn.execute(text(statement))
