@@ -193,15 +193,50 @@ describe('CaseMonitor', () => {
       required_documents: ['CBC', 'ECG'],
       held_documents: ['CBC'],
     }))
+    const { container } = renderMonitor()
+
+    await userEvent.click(await screen.findByRole('button', { name: 'CASE-23FE645294B7' }))
+    await screen.findByText('REQUEST_SUBMITTED')
+
+    const documents = screen.getByRole('heading', { name: 'מסמכים' }).closest('.fact-group') as HTMLElement
+    // The code stays on screen, and its Hebrew label sits beside it, never instead of it.
+    expect(documents).toHaveTextContent('CBC')
+    expect(documents).toHaveTextContent('ספירת דם מלאה')
+    expect(documents).toHaveTextContent('ECG')
+    expect(documents).toHaveTextContent('תרשים פעילות חשמלית של הלב')
+
+    // Each code is its own isolated element (a Latin run inside Hebrew text must not pick
+    // its own bidi direction, CLAUDE.md), not one joined string - the same pattern the
+    // patient screen uses (RequestDetail.tsx: span.code[dir=ltr]).
+    const codes = Array.from(documents.querySelectorAll('.code'))
+    const codeTexts = codes.map((el) => el.textContent)
+    expect(codeTexts).toEqual(expect.arrayContaining(['CBC', 'ECG']))
+    for (const el of codes) {
+      expect(el).toHaveAttribute('dir', 'ltr')
+    }
+    expect(container.querySelector('.fact-group')?.innerHTML).not.toMatch(/CBC \(/)
+  })
+
+  it('isolates the missing-document codes too, each in its own element', async () => {
+    vi.mocked(api.getCase).mockImplementation(async (caseId: string) => ({
+      ...DETAIL,
+      case_id: caseId,
+      required_documents: ['CBC', 'ECG'],
+      held_documents: ['CBC'],
+    }))
     renderMonitor()
 
     await userEvent.click(await screen.findByRole('button', { name: 'CASE-23FE645294B7' }))
     await screen.findByText('REQUEST_SUBMITTED')
 
-    const documents = screen.getByRole('heading', { name: 'מסמכים' }).closest('.fact-group')
-    // The code stays on screen, and its Hebrew label sits beside it, never instead of it.
-    expect(documents).toHaveTextContent('CBC (ספירת דם מלאה)')
-    expect(documents).toHaveTextContent('ECG (תרשים פעילות חשמלית של הלב)')
+    // "ECG" is missing (required but not held) - it still renders as its own isolated code,
+    // with its label, inside the "חסרים" fact.
+    const missingFact = screen.getByText('חסרים').closest('.fact') as HTMLElement
+    expect(missingFact).toHaveTextContent('ECG')
+    expect(missingFact).toHaveTextContent('תרשים פעילות חשמלית של הלב')
+    const missingCode = missingFact.querySelector('.code')
+    expect(missingCode).toHaveAttribute('dir', 'ltr')
+    expect(missingCode?.textContent).toBe('ECG')
   })
 
   it('shows the correspondence with the patient, and which way each message went', async () => {

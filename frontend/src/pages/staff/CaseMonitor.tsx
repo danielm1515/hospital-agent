@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import type { ReactNode } from 'react'
 import * as api from '../../api/client'
 import type { CaseDetail, CaseSummary, ReviewContext, State } from '../../api/types'
 import { STATES } from '../../api/types'
@@ -7,8 +8,8 @@ import { StatusPill } from '../../components/StatusPill'
 import { AuditTimeline } from './AuditTimeline'
 import { PatientThread } from './PatientThread'
 import {
+  DOCUMENT_LABELS,
   detailOf,
-  documentLabel,
   escalationLabel,
   formatDateTime,
   intentLabel,
@@ -321,17 +322,13 @@ function CaseFacts({ detail }: { detail: CaseDetail }) {
       <section className="fact-group">
         <h3 className="fact-group-h">מסמכים</h3>
         <dl className="fact-list">
-          <Fact
-            label="נדרשים"
-            code="required_documents"
-            value={required.length > 0 ? required.map(documentLabel).join(', ') : '—'}
-          />
+          <Fact label="נדרשים" code="required_documents" value={<DocumentCodes ids={required} empty="—" />} />
           <Fact
             label="שהתקבלו"
             code="held_documents"
-            value={detail.held_documents.length > 0 ? detail.held_documents.map(documentLabel).join(', ') : '—'}
+            value={<DocumentCodes ids={detail.held_documents} empty="—" />}
           />
-          <Fact label="חסרים" value={missing.length > 0 ? missing.map(documentLabel).join(', ') : 'אין'} />
+          <Fact label="חסרים" value={<DocumentCodes ids={missing} empty="אין" />} />
         </dl>
       </section>
 
@@ -368,7 +365,17 @@ function CaseFacts({ detail }: { detail: CaseDetail }) {
   )
 }
 
-function Fact({ label, code, value, mono = false }: { label: string; code?: string; value: string; mono?: boolean }) {
+function Fact({
+  label,
+  code,
+  value,
+  mono = false,
+}: {
+  label: string
+  code?: string
+  value: ReactNode
+  mono?: boolean
+}) {
   return (
     <div className="fact">
       <dt className="fact-k">
@@ -377,5 +384,29 @@ function Fact({ label, code, value, mono = false }: { label: string; code?: stri
       </dt>
       <dd className={mono ? 'fact-v mono' : 'fact-v'}>{value}</dd>
     </div>
+  )
+}
+
+/**
+ * A required/held/missing document list as isolated codes, each with its Hebrew label
+ * beside it - never one joined string, so a Latin code does not pick its own bidi
+ * direction inside Hebrew text (CLAUDE.md), the same pattern the patient screen uses
+ * (`RequestDetail.tsx`: `span.code[dir=ltr]`). The label is shown only for a code this
+ * version knows; an unknown one is shown alone, never invented.
+ */
+function DocumentCodes({ ids, empty }: { ids: string[]; empty: string }) {
+  if (ids.length === 0) return <>{empty}</>
+  return (
+    <>
+      {ids.map((id, index) => (
+        <span className="doc-code-item" key={id}>
+          {index > 0 && ', '}
+          <span className="code" dir="ltr">
+            {id}
+          </span>
+          {DOCUMENT_LABELS[id] && ` ${DOCUMENT_LABELS[id]}`}
+        </span>
+      ))}
+    </>
   )
 }
