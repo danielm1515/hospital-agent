@@ -38,6 +38,14 @@ services:
       DEMO_PASSWORD: ${DEMO_PASSWORD:-demo}
       # Sub-project 9: the read-only role other systems use for the patients table.
       READER_DB_PASSWORD: ${READER_DB_PASSWORD:-hospital_reader_dev}
+      # Sub-project 10: CheckAppointment asks the owner's appointment-service when both are set
+      # (in .env); unset, it stays on the mock. Neither is ever logged.
+      APPOINTMENT_SERVICE_URL: ${APPOINTMENT_SERVICE_URL:-}
+      APPOINTMENT_API_KEY: ${APPOINTMENT_API_KEY:-}
+    # host.docker.internal reaches the appointment-service published on the host's 8080
+    # (Docker Desktop; on Linux this maps it to the bridge gateway).
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     ports:
       # BACKEND_HOST_PORT: Windows can reserve 8000 after a reboot (a Hyper-V / WinNAT excluded
       # port range - `netsh interface ipv4 show excludedportrange protocol=tcp`), and then no

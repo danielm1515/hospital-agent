@@ -9,6 +9,7 @@ else that is not a found appointment with a timezone-aware time is an error (esc
 from __future__ import annotations
 
 import json
+import os
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -123,3 +124,19 @@ class AppointmentServiceGateway:
             timed_out = isinstance(exc, TimeoutError) or isinstance(getattr(exc, "reason", None), TimeoutError)
             return ToolResult(TRANSIENT_FAILURE, {"error": "timeout" if timed_out else "unavailable"})
         return map_response(answer)
+
+
+def build_gateway(env: Mapping[str, str] | None = None) -> tuple[ToolGateway | None, str]:
+    """The gateway the live server uses (design §2.2-2.3): (gateway, "mock" | "appointment-service"),
+    or (None, why the Agent Orchestrator must not start). Neither value ever holds the URL or the key."""
+    env = os.environ if env is None else env
+    url = env.get("APPOINTMENT_SERVICE_URL", "").strip()
+    if not url:
+        return MockGateway(), "mock"
+    key = env.get("APPOINTMENT_API_KEY", "").strip()
+    if not key:
+        return None, "disabled: APPOINTMENT_API_KEY is not set"
+    parts = urllib.parse.urlsplit(url)
+    if parts.scheme not in ("http", "https") or not parts.hostname:
+        return None, "disabled: APPOINTMENT_SERVICE_URL is not an http(s) URL"
+    return AppointmentServiceGateway(url, key), "appointment-service"

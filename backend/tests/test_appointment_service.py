@@ -1,7 +1,7 @@
 """Sub-project 10: CheckAppointment against the owner's appointment-service (design §2)."""
 import json
 import threading
-from datetime import UTC, datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 import pytest
@@ -186,3 +186,43 @@ def test_a_redirect_is_never_followed(server):
 def test_a_refused_connection_is_transient():
     gw = AppointmentServiceGateway("http://127.0.0.1:1", KEY)
     assert gw.call("CheckAppointment", {"patient_id": "P-10041"}, "K") == ToolResult(TRANSIENT_FAILURE, {"error": "unavailable"})
+
+
+# --- choosing the gateway (design §2.2, §2.3) --------------------------------------------
+
+from hospital_agent.execution.appointment_service import build_gateway  # noqa: E402
+
+
+@pytest.mark.parametrize("env", [{}, {"APPOINTMENT_SERVICE_URL": ""}, {"APPOINTMENT_SERVICE_URL": "  "},
+                                 {"APPOINTMENT_API_KEY": KEY}])
+def test_without_a_url_it_is_the_mock_exactly_as_before(env):
+    gw, source = build_gateway(env)
+    assert type(gw) is MockGateway and source == "mock"
+
+
+@pytest.mark.parametrize("key", ["", "   "])
+def test_a_url_without_a_key_refuses_to_start(key):
+    gw, status = build_gateway({"APPOINTMENT_SERVICE_URL": "http://h:8080", "APPOINTMENT_API_KEY": key})
+    assert gw is None and status == "disabled: APPOINTMENT_API_KEY is not set"
+
+
+@pytest.mark.parametrize("url", ["host.docker.internal:8080", "ftp://h/x", "http://", "file:///etc/passwd"])
+def test_a_url_that_is_not_http_refuses_to_start(url):
+    gw, status = build_gateway({"APPOINTMENT_SERVICE_URL": url, "APPOINTMENT_API_KEY": KEY})
+    assert gw is None and status == "disabled: APPOINTMENT_SERVICE_URL is not an http(s) URL"
+    assert url not in status
+
+
+def test_a_url_and_a_key_give_the_appointment_service():
+    gw, source = build_gateway({"APPOINTMENT_SERVICE_URL": " http://host.docker.internal:8080 ",
+                                "APPOINTMENT_API_KEY": f" {KEY} "})
+    assert isinstance(gw, AppointmentServiceGateway) and source == "appointment-service"
+    assert type(gw.fallback) is MockGateway
+
+
+def test_build_gateway_reads_the_environment_by_default(monkeypatch):
+    monkeypatch.delenv("APPOINTMENT_SERVICE_URL", raising=False)
+    assert build_gateway()[1] == "mock"
+    monkeypatch.setenv("APPOINTMENT_SERVICE_URL", "http://h:1")
+    monkeypatch.setenv("APPOINTMENT_API_KEY", KEY)
+    assert build_gateway()[1] == "appointment-service"

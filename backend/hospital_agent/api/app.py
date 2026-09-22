@@ -26,8 +26,8 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.exc import SQLAlchemyError
 
 from ..db import make_engine
+from ..execution.appointment_service import build_gateway
 from ..execution.background import sla_interval_seconds, start_background
-from ..execution.gateway import MockGateway
 from ..human_review import HumanReviewService
 from ..llm.model_selector import llm_version, select_provider
 from ..llm.orchestrator import Orchestrator, orchestrator_interval_seconds
@@ -53,6 +53,7 @@ def create_app(engine: Engine | None = None, orchestrator: Orchestrator | None =
         owned = engine is None
         app.state.engine = make_engine() if owned else engine
         app.state.orchestrator_status = None  # reported by /health only for a real server
+        app.state.appointments_source = None  # likewise: "mock" or "appointment-service"
         app.state.orchestrator = orchestrator  # injected: stored as it is, never started
 
         def _wake() -> None:
@@ -70,10 +71,17 @@ def create_app(engine: Engine | None = None, orchestrator: Orchestrator | None =
             stops.append(start_background(sm, sla_interval_seconds()))
             if provider is None:
                 app.state.orchestrator_status = "disabled: OPENAI_API_KEY is not set"
-            else:  # the demo's external systems are mocks (spec §18)
-                started = app.state.orchestrator = Orchestrator(sm, provider, MockGateway())
-                stops.append(started.run_in_background(orchestrator_interval_seconds()))
-                app.state.orchestrator_status = "running"
+            else:
+                # The demo's external systems are mocks (spec §18); on the owner's stack
+                # CheckAppointment may ask the real appointment-service (sub-project 10).
+                gateway, source = build_gateway()
+                if gateway is None:
+                    app.state.orchestrator_status = source
+                else:
+                    app.state.appointments_source = source
+                    started = app.state.orchestrator = Orchestrator(sm, provider, gateway)
+                    stops.append(started.run_in_background(orchestrator_interval_seconds()))
+                    app.state.orchestrator_status = "running"
         yield
         for stop in stops:
             stop.set()
@@ -101,6 +109,8 @@ def create_app(engine: Engine | None = None, orchestrator: Orchestrator | None =
     def health(request: Request, db: Engine = Depends(get_engine)) -> JSONResponse:
         orchestrator_status = request.app.state.orchestrator_status
         extra = {} if orchestrator_status is None else {"orchestrator": orchestrator_status}
+        if request.app.state.appointments_source is not None:
+            extra["appointments"] = request.app.state.appointments_source
         try:
             with db.connect() as conn:
                 conn.execute(text("SELECT 1"))

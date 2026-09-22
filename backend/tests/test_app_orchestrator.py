@@ -13,7 +13,8 @@ def test_the_server_starts_the_orchestrator_only_with_a_provider(monkeypatch, ap
         assert client.get("/health").json()["orchestrator"] == "disabled: OPENAI_API_KEY is not set"
     monkeypatch.setattr(app_module, "select_provider", FakeProvider)
     with TestClient(app_module.create_app()) as client:
-        assert client.get("/health").json() == {"status": "ok", "database": "ok", "orchestrator": "running"}
+        assert client.get("/health").json() == {"status": "ok", "database": "ok", "orchestrator": "running",
+                                                "appointments": "mock"}
 
 
 def test_the_app_exposes_the_running_orchestrator(monkeypatch, app_engine):

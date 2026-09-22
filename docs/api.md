@@ -92,11 +92,13 @@ in this document, so leaving them enabled is fine for the demo. A non-demo build
 ### GET /health
 
 ```json
-{"status": "ok", "database": "ok", "orchestrator": "running"}
+{"status": "ok", "database": "ok", "orchestrator": "running", "appointments": "mock"}
 ```
 
-`orchestrator` appears only on a real server: `"running"`, or
-`"disabled: OPENAI_API_KEY is not set"`. `503` with
+`orchestrator` appears only on a real server: `"running"`, `"disabled: OPENAI_API_KEY is not set"`,
+`"disabled: APPOINTMENT_API_KEY is not set"` or `"disabled: APPOINTMENT_SERVICE_URL is not an http(s) URL"`.
+While it runs, `appointments` says where `CheckAppointment` goes: `"mock"`, or `"appointment-service"`
+when `APPOINTMENT_SERVICE_URL` is set (sub-project 10) - the word only, never the URL. `503` with
 `{"status": "degraded", "database": "unavailable"}` when Postgres cannot be reached.
 
 ### POST /api/auth/login
