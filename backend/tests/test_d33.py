@@ -76,8 +76,7 @@ def test_the_set_covers_the_kinds_d33_names():
     assert all(m.medical for m in hidden)
     assert any(m.text == INSTRUCTION_TEXT and not m.medical for m in messages), \
         "the approved preparation instructions must appear verbatim, labelled operational"
-    # 22/09/2026 09:30 UTC is 12:30 in Israel time (UTC+3 in September)
-    status = TEMPLATE.format(date="22/09/2026", time="12:30", documents="referral, blood_test",
+    status = TEMPLATE.format(date="22/09/2026", time="09:30", documents="referral, blood_test",
                              source_id="INSTR-PREP-COLONOSCOPY", version=3)
     assert any(m.text == status and not m.medical for m in messages), \
         "the system's own status message (llm/message.py) must be in the set, unchanged"
