@@ -33,6 +33,8 @@ services:
       # §18.3 demo IdP: both have a development default, so the demo runs without them.
       AUTH_SECRET: ${AUTH_SECRET:-}
       DEMO_PASSWORD: ${DEMO_PASSWORD:-demo}
+      # Sub-project 9: the read-only role other systems use for the patients table.
+      READER_DB_PASSWORD: ${READER_DB_PASSWORD:-hospital_reader_dev}
     ports:
       # BACKEND_HOST_PORT: Windows can reserve 8000 after a reboot (a Hyper-V / WinNAT excluded
       # port range - `netsh interface ipv4 show excludedportrange protocol=tcp`), and then no

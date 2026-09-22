@@ -1,4 +1,4 @@
-"""Postgres schema (spec §18.2, plus the §12.3 Data Log) as SQLAlchemy Core tables, and engine creation.
+"""Postgres schema (spec §18.2, plus the §12.3 Data Log and the sub-project 9 patients registry) as SQLAlchemy Core tables, and engine creation.
 
 alembic/versions/ holds the migrations that create these tables; this module
 mirrors them for queries. tests/test_schema.py fails if the two drift apart.
@@ -135,6 +135,17 @@ data_log = Table(
     Column("content_hash", Text, nullable=False),
     Column("created_at", DateTime(timezone=True), nullable=False),
     Column("deleted_at", DateTime(timezone=True)),
+)
+
+
+# Migration 0004 (sub-project 9): the registry other systems read via hospital_reader.
+patients = Table(
+    "patients",
+    metadata,
+    Column("patient_id", Text, primary_key=True),
+    Column("full_name", Text, nullable=False),
+    Column("phone", Text, nullable=False),
+    Column("created_at", DateTime(timezone=True), nullable=False),
 )
 
 

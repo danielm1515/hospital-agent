@@ -35,13 +35,18 @@ def owner_engine() -> Engine:
 
 
 @pytest.fixture(scope="session")
-def migrated(owner_engine: Engine) -> None:
+def alembic_config() -> Config:
     config = Config(str(BACKEND_DIR / "alembic.ini"))
     config.set_main_option("script_location", str(BACKEND_DIR / "alembic"))
     config.attributes["url"] = _env("TEST_MIGRATION_DATABASE_URL")
     config.attributes["configure_logger"] = False
-    command.downgrade(config, "base")
-    command.upgrade(config, "head")
+    return config
+
+
+@pytest.fixture(scope="session")
+def migrated(owner_engine: Engine, alembic_config: Config) -> None:
+    command.downgrade(alembic_config, "base")
+    command.upgrade(alembic_config, "head")
 
 
 @pytest.fixture
