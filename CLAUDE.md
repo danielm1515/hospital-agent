@@ -34,7 +34,7 @@ Run from the repo root. The backend runs in Docker (Python 3.13). The repo is mo
 docker compose up --build
 ```
 
-Postgres on `localhost:54322` (database `hospital`, owner `hospital_owner`; the app connects as `hospital_app`), API on `localhost:8000`, and the UI on `localhost:5273` (the Vite dev server, listening on `5173` inside the container - `docker-compose.yml` maps `127.0.0.1:5273:5173` because another of the owner's projects holds `5173` on the host - proxying `/api` to the backend so the browser needs no CORS). Migrations run on start.
+Postgres on `localhost:54322` (database `hospital`, owner `hospital_owner`; the app connects as `hospital_app`), API on `localhost:8000` (`BACKEND_HOST_PORT` overrides the host side: after a reboot Windows can put 8000 inside a Hyper-V / WinNAT excluded port range - `netsh interface ipv4 show excludedportrange protocol=tcp` - and then nothing may bind it; start with e.g. `BACKEND_HOST_PORT=8200 docker compose up -d`. The UI never needs it, since it reaches the API as `backend:8000` inside the compose network), and the UI on `localhost:5273` (the Vite dev server, listening on `5173` inside the container - `docker-compose.yml` maps `127.0.0.1:5273:5173` because another of the owner's projects holds `5173` on the host - proxying `/api` to the backend so the browser needs no CORS). Migrations run on start.
 
 ```bash
 cd frontend && npm install

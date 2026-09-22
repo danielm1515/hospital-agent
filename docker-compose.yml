@@ -34,7 +34,11 @@ services:
       AUTH_SECRET: ${AUTH_SECRET:-}
       DEMO_PASSWORD: ${DEMO_PASSWORD:-demo}
     ports:
-      - "127.0.0.1:8000:8000"
+      # BACKEND_HOST_PORT: Windows can reserve 8000 after a reboot (a Hyper-V / WinNAT excluded
+      # port range - `netsh interface ipv4 show excludedportrange protocol=tcp`), and then no
+      # process may bind it. The UI does not care: it reaches the API as backend:8000 inside
+      # the compose network. Only direct calls to the API from the host use this port.
+      - "127.0.0.1:${BACKEND_HOST_PORT:-8000}:8000"
     volumes:
       - .:/repo
     depends_on:
