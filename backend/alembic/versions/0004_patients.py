@@ -15,6 +15,7 @@ import os
 
 import sqlalchemy as sa
 from alembic import op
+from psycopg import sql
 
 revision = "0004"
 down_revision = "0003"
@@ -43,21 +44,35 @@ def upgrade() -> None:
     )
     op.bulk_insert(patients, PATIENTS)
 
-    # A dev default, like APP_DB_PASSWORD. Quotes are doubled so the literal stays one literal.
-    password = os.environ.get("READER_DB_PASSWORD", "hospital_reader_dev").replace("'", "''")
-    op.execute(
-        f"""
-        DO $body$
-        BEGIN
-            IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = '{READER_ROLE}') THEN
-                CREATE ROLE {READER_ROLE} LOGIN PASSWORD '{password}';
-            END IF;
-        END
-        $body$
-        """
-    )
+    _create_reader_role_if_absent(op.get_bind())
     op.execute(f"GRANT SELECT ON patients TO {APP_ROLE}")
     op.execute(f"GRANT SELECT ON patients TO {READER_ROLE}")
+
+
+def _create_reader_role_if_absent(conn: sa.engine.Connection) -> None:
+    """Idempotent: roles are cluster-wide, and this migration runs on both hospital and
+    hospital_test, so an existing role must keep its password rather than fail or be reset.
+
+    CREATE ROLE has no bind-parameter form for its PASSWORD clause, so the password can't go
+    through a plain SQLAlchemy text() statement - and building the SQL text ourselves (even
+    with quotes doubled) is unsafe: a password containing a driver-specific delimiter (e.g. a
+    dollar-quote tag) could still break out of the literal. psycopg's own SQL composition
+    (sql.Literal) quotes the value as a single parameter however many quotes or special
+    characters it contains, so it is used here directly against the raw psycopg connection
+    that underlies this Alembic transaction, instead of building a SQL string at all.
+    """
+    exists = conn.execute(
+        sa.text("SELECT 1 FROM pg_roles WHERE rolname = :role"), {"role": READER_ROLE}
+    ).scalar()
+    if exists:
+        return
+    password = os.environ.get("READER_DB_PASSWORD", "hospital_reader_dev")
+    raw_conn = conn.connection.driver_connection  # the underlying psycopg.Connection
+    statement = sql.SQL("CREATE ROLE {role} LOGIN PASSWORD {password}").format(
+        role=sql.Identifier(READER_ROLE), password=sql.Literal(password)
+    )
+    with raw_conn.cursor() as cursor:
+        cursor.execute(statement)
 
 
 def downgrade() -> None:

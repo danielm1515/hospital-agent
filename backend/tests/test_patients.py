@@ -21,6 +21,21 @@ def engine_as(role: str, password: str):
     return create_engine(url)
 
 
+def _restore_reader_role(owner_engine, alembic_config) -> None:
+    """Always bring the schema back to head first - upgrade is a no-op when already there,
+    and recovers the schema if a migration the caller ran inside its `try` raised partway
+    through, which would otherwise leave the session-scoped `migrated` fixture's database
+    stuck below head for the rest of the run - before resetting hospital_reader's password to
+    the real one. Shared by every test that makes migration 0004 (re-)create the role."""
+    command.upgrade(alembic_config, "head")
+    # Not inside a dollar-quoted block (unlike the old migration code this guards against), so
+    # doubling quotes is sufficient here - still done, since this only ever restores the real
+    # env-provided password, never an attacker-chosen one.
+    safe_password = reader_password().replace("'", "''")
+    with owner_engine.begin() as conn:
+        conn.execute(text(f"ALTER ROLE {READER} PASSWORD '{safe_password}'"))
+
+
 @pytest.fixture
 def reader(migrated):
     engine = engine_as(READER, reader_password())
@@ -97,5 +112,42 @@ def test_rerunning_the_migration_keeps_an_existing_roles_password(owner_engine, 
         finally:
             engine.dispose()
     finally:
+        _restore_reader_role(owner_engine, alembic_config)
+
+
+def test_the_migration_quotes_a_tricky_password_safely(owner_engine, migrated, alembic_config, monkeypatch):
+    """0004 used to build the CREATE ROLE statement as an f-string inside a DO $body$ ... $body$
+    block, with only single quotes escaped. A password containing the substring '$body$' would
+    end that dollar-quoted block early, so whatever followed it would run as arbitrary SQL under
+    hospital_owner, a superuser (design §3.2 correction). The fix builds the CREATE ROLE
+    statement through psycopg's own SQL composition instead of string interpolation, so this
+    proves a password containing both a quote and a '$body$' tag round-trips as exactly one
+    password, with nothing else executed alongside it."""
+    tricky = "o'brien's $body$ password; DROP TABLE patients; --"
+    with owner_engine.begin() as conn:
+        # The role holds a GRANT on patients; Postgres refuses to drop a role that still has
+        # privileges anywhere in the cluster, so those are dropped first (this cluster's
+        # `hospital` database, unlike `hospital_test`, is never migrated by these tests, so
+        # hospital_test is the only database that can hold such a privilege here).
+        conn.execute(text(f"DROP OWNED BY {READER}"))
+        conn.execute(text(f"DROP ROLE {READER}"))
+    monkeypatch.setenv("READER_DB_PASSWORD", tricky)
+    try:
+        command.downgrade(alembic_config, "0003")
+        command.upgrade(alembic_config, "head")
+        engine = engine_as(READER, tricky)
+        try:
+            with engine.connect() as conn:
+                assert conn.execute(text("SELECT count(*) FROM patients")).scalar() == 3
+        finally:
+            engine.dispose()
+        # Nothing past the would-be broken-out point ran: the table a real exploit would have
+        # tried to drop is still there, with all three seeded rows intact.
         with owner_engine.begin() as conn:
-            conn.execute(text(f"ALTER ROLE {READER} PASSWORD '{reader_password()}'"))
+            assert conn.execute(text("SELECT count(*) FROM patients")).scalar() == 3
+    finally:
+        # Undo the monkeypatch explicitly (safe to call twice; the fixture would otherwise do
+        # it only after this function returns) so _restore_reader_role's own naive ALTER ROLE
+        # string-building sees the real default password, not the tricky one still active here.
+        monkeypatch.undo()
+        _restore_reader_role(owner_engine, alembic_config)
