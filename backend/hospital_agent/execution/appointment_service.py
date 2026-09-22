@@ -1,67 +1,38 @@
-"""CheckAppointment against the owner's appointment-service (sub-project 10, design §2).
+"""CheckAppointment against the owner's appointment-service (sub-project 10, design §2; sub-project
+13 design §5.1 moves `required_documents` here too - the appointment system owns them).
 
 Only CheckAppointment leaves over HTTP; the other three actions are MockGateway's, because no
 real system exists for them. Every HTTP outcome becomes a ToolResult the Tool Executor and
 the Retry Manager already understand, so nothing downstream changes: server-side failures
 and no answer at all are transient (bounded retry, then RETRY_EXHAUSTED), and everything
 else that is not a found appointment with a timezone-aware time is an error (escalation).
+The HTTP transport itself lives in `.http` (sub-project 13 task 1), shared with the
+document-service gateway.
 """
 from __future__ import annotations
 
-import http.client
+import http.client as http_client
 import json
 import os
-import urllib.error
 import urllib.parse
-import urllib.request
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
 from ..naming import Action
+from . import http
 from .gateway import ERROR, OK, TRANSIENT_FAILURE, MockGateway, ToolGateway, ToolResult
+from .http import HttpResponse, MAX_BODY_BYTES, no_answer_result
 
 TIMEOUT_SECONDS = 5
 _TRANSIENT = {500: "unavailable", 502: "unavailable", 503: "unavailable", 504: "timeout"}
-
-# design §2.4 / minor fix 4: the transport never reads more than this many bytes of a body -
-# an oversized answer is not the contract either way, so there is no reason to buffer it fully.
-# One byte over the 64 KiB limit is enough to tell "too long" apart from "exactly 64 KiB".
-MAX_BODY_BYTES = 64 * 1024 + 1
-
-
-@dataclass(frozen=True)
-class HttpResponse:
-    status: int
-    body: bytes
-
 
 # (url, headers, timeout) -> the response; raises OSError when there is no answer at all.
 Transport = Callable[[str, Mapping[str, str], float], HttpResponse]
 
 
-class _NoRedirect(urllib.request.HTTPRedirectHandler):
-    """A redirect would carry X-API-Key to wherever Location points: never follow one."""
-
-    def redirect_request(self, req, fp, code, msg, headers, newurl):
-        return None
-
-
-# design §2.4 / minor fix 3: no proxy, even when HTTP_PROXY/http_proxy is set in the environment -
-# a proxy would see X-API-Key and patient_id. ProxyHandler({}) is an explicit "use no proxy",
-# overriding ProxyHandler's own default of reading those variables.
-_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}), _NoRedirect)
-
-
 def urllib_transport(url: str, headers: Mapping[str, str], timeout: float) -> HttpResponse:
-    request = urllib.request.Request(url, headers=dict(headers), method="GET")
-    try:
-        with _OPENER.open(request, timeout=timeout) as answer:
-            return HttpResponse(answer.status, answer.read(MAX_BODY_BYTES))
-    except urllib.error.HTTPError as exc:  # a status the server did send is an answer, not a failure
-        with exc:
-            return HttpResponse(exc.code, exc.read(MAX_BODY_BYTES))
+    return http.request("GET", url, headers, None, timeout)
 
 
 def _error(code: str) -> ToolResult:
@@ -105,7 +76,19 @@ def map_response(response: HttpResponse, *, now: datetime) -> ToolResult:
     # is not "Scheduled" (strict): fail closed rather than assume the field was just omitted.
     if appointment.get("status") != "Scheduled" or at <= now:
         return _error("not_found")
-    return ToolResult(OK, {"appointment_at": at})
+    required = _required_documents(appointment.get("required_documents"))
+    if required is None:
+        return _error("invalid_response")
+    return ToolResult(OK, {"appointment_at": at, "required_documents": required})
+
+
+def _required_documents(value: Any) -> list[str] | None:
+    """design §5.1: a list of non-empty strings, deduplicated and sorted - or None when the value
+    is not that shape, including when an older appointment-service omits the field entirely
+    (it cannot say what is required, so fail closed rather than assume nothing is needed)."""
+    if not isinstance(value, list) or not all(isinstance(item, str) and item for item in value):
+        return None
+    return sorted(set(value))
 
 
 class AppointmentServiceGateway:
@@ -138,13 +121,11 @@ class AppointmentServiceGateway:
         headers = {"X-API-Key": self._api_key, "X-Execution-ID": idempotency_key, "Accept": "application/json"}
         try:
             answer = self._transport(url, headers, self._timeout)
-        except http.client.HTTPException:
-            # the server did answer, just not in HTTP the gateway can trust (IncompleteRead,
-            # BadStatusLine, ...) - not the same as no answer at all, so not a transient_failure.
-            return _error("invalid_response")
-        except OSError as exc:
-            timed_out = isinstance(exc, TimeoutError) or isinstance(getattr(exc, "reason", None), TimeoutError)
-            return ToolResult(TRANSIENT_FAILURE, {"error": "timeout" if timed_out else "unavailable"})
+        except (OSError, http_client.HTTPException) as exc:
+            # OSError: no answer at all (transient). http_client.HTTPException: the server did
+            # answer, just not in HTTP the gateway can trust (IncompleteRead, BadStatusLine, ...) -
+            # not the same as no answer at all, so not a transient_failure.
+            return no_answer_result(exc)
         return map_response(answer, now=self._clock())
 
 

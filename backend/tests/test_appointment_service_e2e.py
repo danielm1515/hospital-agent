@@ -40,7 +40,8 @@ def reasons(d):
 
 def test_a_found_appointment_is_the_one_the_case_keeps(sm, app_engine):
     d, transport = driver(sm, app_engine, answer(200, {"found": True,
-                                                       "appointment": {"appointment_at": AT, "status": "Scheduled"}}))
+                                                       "appointment": {"appointment_at": AT, "status": "Scheduled",
+                                                                       "required_documents": ["referral", "blood_test"]}}))
     d.run_step()
     assert d.case.appointment_at == datetime(2026, 10, 3, 10, 30, tzinfo=timezone(timedelta(hours=3)))
     assert transport.urls == [f"http://appointments.test/api/v1/patients/{d.patient_id}/appointment"]
@@ -75,7 +76,8 @@ def test_an_unavailable_service_is_retried_three_times_then_a_human_decides(sm, 
 def test_a_service_that_recovers_within_the_budget_is_used(sm, app_engine):
     d, transport = driver(sm, app_engine, answer(504, {"error": "timeout"}),
                           answer(200, {"found": True,
-                                       "appointment": {"appointment_at": AT, "status": "Scheduled"}}))
+                                       "appointment": {"appointment_at": AT, "status": "Scheduled",
+                                                       "required_documents": ["referral", "blood_test"]}}))
     d.run_step()
     d.run_step()
     assert d.case.appointment_at is not None and d.state is State.PLANNING

@@ -15,7 +15,8 @@ KEY = "test-key-9f8e7d"
 FOUND = {"found": True, "appointment": {"appointment_id": "APT-1", "patient_id": "P-10041",
                                          "department": "Neurology", "doctor_name": "Dr. Cohen",
                                          "appointment_at": "2026-10-03T10:30:00+03:00",
-                                         "location": "Building B, Floor 2", "status": "Scheduled"}}
+                                         "location": "Building B, Floor 2", "status": "Scheduled",
+                                         "required_documents": ["COAGULATION_TESTS", "CBC", "ECG"]}}
 NOW = datetime(2026, 9, 22, 12, 0, tzinfo=timezone.utc)  # before FOUND's appointment_at
 
 
@@ -45,8 +46,31 @@ def gateway(answer=None, raises=None, **kwargs):
 def test_a_found_appointment_is_ok_with_an_aware_time():
     result = map_response(response(200, FOUND), now=NOW)
     assert result == ToolResult(OK, {"appointment_at": datetime(2026, 10, 3, 10, 30,
-                                                                tzinfo=timezone(timedelta(hours=3)))})
+                                                                tzinfo=timezone(timedelta(hours=3))),
+                                     "required_documents": ["CBC", "COAGULATION_TESTS", "ECG"]})
     assert result.data["appointment_at"].utcoffset() == timedelta(hours=3)
+
+
+def test_a_found_appointment_carries_its_required_documents_sorted():
+    assert map_response(response(200, FOUND), now=NOW).data["required_documents"] == ["CBC", "COAGULATION_TESTS", "ECG"]
+
+
+def test_an_appointment_with_no_requirements_needs_nothing():
+    body = {"found": True, "appointment": {**FOUND["appointment"], "required_documents": []}}
+    assert map_response(response(200, body), now=NOW).data["required_documents"] == []
+
+
+@pytest.mark.parametrize("value", [None, "CBC", [""], [1], ["CBC", None]])
+def test_malformed_requirements_are_an_invalid_response(value):
+    appointment = {**FOUND["appointment"], "required_documents": value}
+    assert map_response(response(200, {"found": True, "appointment": appointment}), now=NOW) == \
+        ToolResult(ERROR, {"error": "invalid_response"})
+
+
+def test_an_appointment_service_without_the_field_is_an_invalid_response():
+    """An older appointment-service (before sub-project 11) cannot say what is required: fail closed."""
+    appointment = {k: v for k, v in FOUND["appointment"].items() if k != "required_documents"}
+    assert map_response(response(200, {"found": True, "appointment": appointment}), now=NOW).data == {"error": "invalid_response"}
 
 
 @pytest.mark.parametrize("answer, error", [

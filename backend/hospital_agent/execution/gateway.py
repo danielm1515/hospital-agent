@@ -29,9 +29,11 @@ ACTION_TARGETS: dict[str, tuple[str, tuple[str, ...]]] = {
 
 # action -> the result fields its owning system may set on DATA_RETRIEVED (design §3.4): each
 # system supplies only its own facts, so e.g. the instruction system cannot set held_documents.
+# design §5.1 (sub-projects 11-13): the appointment system owns what an appointment requires,
+# the document system what the patient holds.
 RESULT_FIELDS: dict[str, tuple[str, ...]] = {
-    Action.CHECK_APPOINTMENT.value: ("appointment_at",),
-    Action.CHECK_DOCUMENTS.value: ("required_documents", "held_documents"),
+    Action.CHECK_APPOINTMENT.value: ("appointment_at", "required_documents"),
+    Action.CHECK_DOCUMENTS.value: ("held_documents",),
     Action.LOAD_INSTRUCTIONS.value: ("instruction_ids",),  # instruction_text goes to the Data Log, not the event
     Action.SEND_STATUS_UPDATE.value: ("delivered",),
 }
@@ -67,8 +69,9 @@ def _utcnow() -> datetime:
 
 
 class MockGateway:
-    """Deterministic demo systems: a colonoscopy appointment, a referral already held, a
-    blood test still missing, the approved preparation instructions, and a patient channel."""
+    """Deterministic demo systems: a colonoscopy appointment carrying its own required documents
+    (design §5.1 - the appointment system owns them), a referral already held, a blood test
+    still missing, the approved preparation instructions, and a patient channel."""
 
     def __init__(
         self,
@@ -102,10 +105,9 @@ class MockGateway:
         match action:
             case Action.CHECK_APPOINTMENT.value:
                 at = self.clock() + timedelta(hours=self.hours_until_appointment)
-                return ToolResult(OK, {"appointment_at": at})
+                return ToolResult(OK, {"appointment_at": at, "required_documents": list(self.required_documents)})
             case Action.CHECK_DOCUMENTS.value:
-                return ToolResult(OK, {"required_documents": list(self.required_documents),
-                                       "held_documents": list(self.held_documents)})
+                return ToolResult(OK, {"held_documents": list(self.held_documents)})
             case Action.LOAD_INSTRUCTIONS.value:
                 return ToolResult(OK, {"instruction_ids": ["INSTR-PREP-COLONOSCOPY:3"],
                                        "instruction_text": INSTRUCTION_TEXT})

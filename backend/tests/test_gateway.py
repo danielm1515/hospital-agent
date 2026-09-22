@@ -34,11 +34,25 @@ def test_action_parameters_are_within_the_minimized_fields():
 def test_mock_returns_the_demo_data():
     gw = MockGateway(clock=lambda: NOW)
     assert gw.call("CheckAppointment", {"patient_id": "P"}, "k1") == \
-        type(gw.call("CheckAppointment", {}, "k0"))(OK, {"appointment_at": NOW + timedelta(hours=96)})
+        type(gw.call("CheckAppointment", {}, "k0"))(OK, {"appointment_at": NOW + timedelta(hours=96),
+                                                          "required_documents": ["referral", "blood_test"]})
     docs = gw.call("CheckDocuments", {"patient_id": "P"}, "k2")
-    assert docs.data == {"required_documents": ["referral", "blood_test"], "held_documents": ["referral"]}
+    assert docs.data == {"held_documents": ["referral"]}
     assert gw.call("LoadInstructions", {}, "k3").data == {"instruction_ids": ["INSTR-PREP-COLONOSCOPY:3"],
                                                           "instruction_text": INSTRUCTION_TEXT}
+
+
+def test_the_mock_appointment_carries_the_requirements_and_the_mock_documents_only_what_is_held():
+    gw = MockGateway(clock=lambda: NOW)
+    assert gw.call("CheckAppointment", {"patient_id": "P"}, "k").data == {
+        "appointment_at": NOW + timedelta(hours=96), "required_documents": ["referral", "blood_test"]}
+    assert gw.call("CheckDocuments", {"patient_id": "P"}, "k").data == {"held_documents": ["referral"]}
+
+
+def test_each_system_supplies_only_its_own_facts():
+    """Design §5.1: the appointment system owns the requirements, the document system what is held."""
+    assert RESULT_FIELDS["CheckAppointment"] == ("appointment_at", "required_documents")
+    assert RESULT_FIELDS["CheckDocuments"] == ("held_documents",)
 
 
 def test_mock_fails_as_scripted_then_recovers():
