@@ -173,9 +173,17 @@ def _case(**changes) -> CaseRecord:
 
 def test_status_message_uses_only_state_facts():
     text = status_message(_case(), InstructionSource("INSTR-PREP-COLONOSCOPY", "3"))
-    assert text == ("התור שלך נקבע ל־23/09/2026 בשעה 08:30 (UTC). "
+    assert text == ("התור שלך נקבע ל־23/09/2026 בשעה 11:30 (שעון ישראל). "
                     "המסמכים הנדרשים: referral, blood_test - כולם התקבלו. "
                     "הוראות ההכנה המאושרות (INSTR-PREP-COLONOSCOPY, גרסה 3) זמינות לעיון באזור האישי.")
+
+
+def test_status_message_shows_israel_time_in_winter_and_across_midnight():
+    source = InstructionSource("INSTR-PREP-COLONOSCOPY", "3")
+    winter = status_message(_case(appointment_at=datetime(2026, 12, 1, 8, 30, tzinfo=UTC)), source)
+    assert "ל־01/12/2026 בשעה 10:30 (שעון ישראל)" in winter
+    late = status_message(_case(appointment_at=datetime(2026, 12, 1, 23, 15, tzinfo=UTC)), source)
+    assert "ל־02/12/2026 בשעה 01:15 (שעון ישראל)" in late
 
 
 def test_status_message_refuses_missing_facts():
