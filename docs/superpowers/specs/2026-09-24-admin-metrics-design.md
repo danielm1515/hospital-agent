@@ -51,6 +51,7 @@
 - **מדדי אירוע** (B, C, D, E): האירועים **שקרו** בחלון (`audit_log.recorded_at`, `executions.started_at`). עונים על "כמה עבודה הייתה השבוע". כשמדד אירוע עוקב אחרי תוצאה (B3, D2), התוצאה נספרת גם אם קרתה אחרי `to` — החלון קובע מי נכנס, לא מתי הסתיים.
 - המסך מציין ליד כל קבוצה איזו מהשתיים היא, כדי שמספרים מקבוצות שונות לא יושוו זה לזה בטעות.
 - percentile על קבוצה ריקה הוא `null`, לא `0`.
+- משכי זמן בשניות, `double precision`: `extract(epoch FROM ...)` מחזיר `numeric` ו־`percentile_cont` מחזיר `double precision` (אומת ב־prototype), ולכן כל `extract` עובר cast מפורש.
 
 ### 4.1 A — זרימת פניות (קוהורט)
 
@@ -58,7 +59,7 @@
 |---|---|---|
 | A1 | פניות שנפתחו | `count(cases)` |
 | A2 | לפי מצב נוכחי: הושלמו (`Completed`), נדחו ע״י צוות (`Failed`), ממתינות לאדם (`AwaitingHumanReview`), ממתינות למטופל (`AwaitingPatientInput`), בטיפול (כל השאר) | `cases.state` |
-| A3 | פילוח `intent` × `safety_level` (`null` = טרם סווגה) | `cases.intent`, `cases.safety_level` |
+| A3 | תוצאת הסיווג — קטגוריה אחת לכל פנייה, לפי סדר העדיפות: **שאלה רפואית** (יש לה שורת `MEDICAL_QUESTION_DETECTED`) ← **הוסלמה בשלב הסיווג** (יש לה `HUMAN_REVIEW_REQUIRED` עם `state_before = Classifying`) ← `AppointmentPreparation` / `Unsupported` (`cases.intent`) ← **טרם סווגה** | `audit_log`, `cases.intent`. **לא** `cases.intent` לבדו: `RECORD_CLASSIFICATION` רץ רק על `INTENT_CLASSIFIED` ([fsm.py:82](../../../backend/hospital_agent/fsm.py)), ולכן לשאלה רפואית ולהסלמת בטיחות יש `intent = NULL` (אומת ב־prototype). הסלמה בשלב הסיווג לא מפוצלת ל־SafetyEscalation / ClassificationFailed / TemporalViolation — הסוג לא נשמר ב־Audit (החלטה 6). `safety_level` לא מוצג: HighRisk / CriticalRisk אף פעם לא נשמרים על הפנייה, ופילוח שלו היה מטעה |
 | A4 | זמן מקצה לקצה לפנייה שהושלמה — p50 / p95, בנפרד להשלמה אוטומטית (`CASE_RESOLVED`) ולסגירה אנושית (`HUMAN_RESOLVED_CASE`) | `cases.created_at` ← `recorded_at` של שורת ה־Transition עם `state_after = Completed` |
 
 ### 4.2 B — עומס על אנשים (אירוע)
@@ -66,7 +67,7 @@
 | מזהה | מדד | מקור |
 |---|---|---|
 | B1 | כניסות ל־AwaitingHumanReview | שורות `Transition` עם `state_after = AwaitingHumanReview` |
-| B2 | הסלמות לפי סוג | פתוחות: `cases.escalation_kind` כש־`state = AwaitingHumanReview`. הוכרעו: `approvals.escalation_kind` |
+| B2 | הסלמות לפי סוג: **הוכרעו בחלון** ו**פתוחות עכשיו** | הוכרעו: שורות `Transition` עם `event ∈ {HUMAN_APPROVED, HUMAN_RESOLVED_CASE, HUMAN_REJECTED}`, `JOIN approvals USING (approval_id)` ← `approvals.escalation_kind`. פתוחות: `cases.escalation_kind` כש־`state = AwaitingHumanReview` |
 | B3 | זמן עד החלטה אנושית — p50 / p95 / מקסימום | לכל כניסה ל־AwaitingHumanReview, שורת ה־Transition **הבאה** של אותה פנייה עם `state_before = AwaitingHumanReview` (`LEAD` לפי `audit_id`). רק כניסות שהוכרעו |
 | B4 | החלטות: אושרו (`HUMAN_APPROVED`) / נסגרו (`HUMAN_RESOLVED_CASE`) / נדחו ע״י צוות (`HUMAN_REJECTED`) | שורות `Transition` |
 | B5 | תור פתוח **עכשיו**: גודל, וגיל הפנייה הוותיקה ביותר | `cases`, לא תלוי בחלון |
@@ -78,7 +79,7 @@
 | C1 | קריאות לפי `action` × `status` (`succeeded` / `failed` / `unknown` / `started` שלא הסתיימה) | `executions` |
 | C2 | אחוז הצלחה לכל `action` | C1 |
 | C3 | latency לכל `action` — p50 / p95 / מקסימום, רק שורות שהסתיימו | `finished_at - started_at` |
-| C4 | כשלים: `TOOL_TRANSIENT_FAILURE`, `RETRY_EXHAUSTED`, `ExecutionUnknown`, ופילוח סיבות (`timeout` / `unavailable` / ...) | `audit_log.event`, `record_type`, `policy_reasons` של שורות ה־outcome |
+| C4 | כשלים: `TOOL_TRANSIENT_FAILURE`, `RETRY_EXHAUSTED`, ופילוח שורות `ExecutionFailed` / `ExecutionUnknown` לפי סיבה | `audit_log.event`; `record_type` + `policy_reasons` של שורות ה־outcome. הסיבה נשמרת בפורמט `tool:transient_failure:<code>` (אומת: `tool:transient_failure:timeout`); ה־API מחזיר את המחרוזת כמו שהיא, וה־UI מציג תווית ידידותית למחרוזות מוכרות |
 | C5 | ניסיונות חוזרים: קריאות עם `attempt_number > 1` | `executions` |
 | C6 | מקור מוגדר: `appointments` ו־`documents` — `mock` או השירות האמיתי | `app.state`, כמו `/health`. תצורה בלבד — **לא** ping חי |
 
@@ -89,15 +90,17 @@
 | מזהה | מדד | מקור |
 |---|---|---|
 | D1 | בקשות מסמך מהמטופל | שורות `Transition` עם `event = MISSING_INFORMATION_DETECTED` |
-| D2 | עמדו בזמן / חרגו / עדיין פתוחות | היציאה הבאה מ־AwaitingPatientInput של אותה פנייה: `DOCUMENT_UPLOADED` ← `Classifying` = עמדה; `TIMEOUT_EXPIRED` = חרגה; אין = פתוחה |
-| D3 | אחוז עמידה = עמדו / (עמדו + חרגו) | D2. פתוחות לא נספרות במכנה |
+| D2 | עמדו בזמן / חרגו / יצאו אחרת / עדיין פתוחות | שורת ה־Transition הבאה של אותה פנייה עם `state_before = AwaitingPatientInput` **ו־`state_after <> AwaitingPatientInput`**: `DOCUMENT_UPLOADED` = עמדה; `TIMEOUT_EXPIRED` = חרגה; כל אירוע אחר (`HUMAN_REVIEW_REQUIRED` / TemporalViolation) = יצאה אחרת; אין = פתוחה. התנאי על `state_after` נחוץ: העלאה שנדחתה היא self-loop (`DOCUMENT_UPLOADED`, `!DocumentValid`) ואינה סוף ההמתנה |
+| D3 | אחוז עמידה = עמדו / (עמדו + חרגו) | D2. פתוחות ו"יצאו אחרת" לא נספרות במכנה |
+
+המדד מדווח את **הכרעת המערכת עצמה** — איזה אירוע סיים את ההמתנה — ולא שופט מחדש מול `patient_deadline`. זה עקבי עם ה־Audit ולא תלוי ב־`cases.patient_deadline`, שמשתנה בסבב המתנה חדש.
 
 ### 4.5 E — מדיניות (אירוע)
 
 | מזהה | מדד | מקור |
 |---|---|---|
 | E1 | החלטות Policy: `POLICY_ALLOWED` / `POLICY_DENIED` / `POLICY_HUMAN_REVIEW_REQUIRED` | `audit_log.event` |
-| E2 | חסימות (`Blocked`), לפי ה־guard שנכשל | `record_type = Blocked`, מפתחות `false` ב־`guards` |
+| E2 | חסימות (`Blocked`), לפי סיבה ולפי אירוע | `record_type = Blocked`; הסיבה היא איבר ב־`policy_reasons` (`guard_failed`, `invalid_escalation_reason`, `system_owned_event`, ...). **לא** `guards`: אומת ב־prototype ששורת Blocked נכתבת עם `guards = {}` |
 | E3 | הסלמות של השכבות הפורמליות: `TemporalViolation`, `Z3Counterexample`, `PlanningFailed` | תת־קבוצה של B2 |
 
 ## 5. ה־API
@@ -179,7 +182,7 @@ GET /api/admin/metrics?from=<ISO-8601>&to=<ISO-8601>
 3. תקרת טווח 90 יום בשרת (§5).
 4. `statement_timeout` של 5 שניות ← `503`, אף פעם לא תשובה חלקית (§5).
 5. "נדחו ע״י צוות" = `Failed` = `HUMAN_REJECTED`, המסלול היחיד ל־`Failed` (§2).
-6. סוג הסלמה: פתוחות מ־`cases`, מוכרעות מ־`approvals`. **לאמת בשלב התוכנית** שכל החלטה אנושית (`HUMAN_APPROVED` / `HUMAN_RESOLVED_CASE` / `HUMAN_REJECTED`) כותבת שורת `approvals` עם `escalation_kind`. אם לא — B2 נגזר לשורות הקבועות מ־(event, state_before), ושורות `HUMAN_REVIEW_REQUIRED` שלא הוכרעו מסומנות "לא ידוע", לא מנוחשות.
+6. סוג הסלמה שהוכרעה: מ־`approvals`, **אבל רק דרך ה־`approval_id` של שורת ה־Transition שנכנסה** — לא ספירה ישירה של `approvals`. אומת בשלב התוכנית: `_grant` ([human_review.py](../../../backend/hospital_agent/human_review.py)) כותב את ה־WorkflowDecision בטרנזקציה **נפרדת** מהמעבר, כך שהחלטה שנחסמה משאירה שורה יתומה, ו־double-submit משאיר שתיים (ראו F1 ב־[repository.py](../../../backend/hospital_agent/repository.py)). ספירה ישירה הייתה מנפחת. כל שלוש ההחלטות וגם התשובה הקלינית (`/answer` ← `HUMAN_RESOLVED_CASE`) מעבירות `approval_id` ל־payload, ו־`_audit_entry` כותב אותו לשורה. סוג של **כניסה** להסלמה לא נמדד: בשורות `HUMAN_REVIEW_REQUIRED` הוא לא נשמר ב־Audit, ולא ננחש.
 7. אינדקסים במיגרציה בלבד, כמו הדפוס הקיים (§6).
 8. קוהורט מול אירוע, מסומן במסך (§4.0).
 9. percentile על קבוצה ריקה הוא `null` (§4.0).
