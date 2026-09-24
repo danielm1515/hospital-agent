@@ -110,9 +110,9 @@ GET /api/admin/metrics?from=<ISO-8601>&to=<ISO-8601>
 ```
 
 - **הרשאה:** `require_admin` חדש ב־`deps.py` — `principal.role == ADMIN_STAFF`, אחרת `403 admin_only`. ללא token: `401` כרגיל.
-- **ולידציה:** שני הפרמטרים חובה, ISO-8601 עם אזור זמן, `from < to`, `to - from ≤ 90 ימים`. אחרת `422 invalid_range` / `422 range_too_large`.
+- **ולידציה:** שני הפרמטרים חובה, ISO-8601 עם אזור זמן, `from < to`, `to - from ≤ 90 ימים`. פרמטר חסר הוא `422 invalid_body` — ה־handler הגלובלי של האפליקציה לכל כשל ולידציה ([app.py](../../../backend/hospital_agent/api/app.py)); ערך שלא נקרא, בלי אזור זמן או הפוך הוא `422 invalid_range`; ארוך מ־90 יום הוא `422 range_too_large`.
 - **טרנזקציה אחת**, `REPEATABLE READ`, `READ ONLY`, עם `statement_timeout = 5s`. כל השאילתות רואות אותו snapshot, כך שמספרים בין קבוצות מסכימים זה עם זה. חריגה מהזמן ← `503 metrics_unavailable`. **לעולם לא מספרים חלקיים.**
-- **התשובה:** אובייקט אחד — `range`, `generated_at`, ו־`flow` / `human_load` / `tools` / `patient_sla` / `policy`. סכמת Pydantic ב־`schemas.py`.
+- **התשובה:** אובייקט אחד — `window` (`start`, `end`), `generated_at`, ו־`flow` / `human_load` / `tools` / `patient_sla` / `policy`. סכמת Pydantic ב־`schemas.py`.
 - endpoint אחד ולא חמישה: המסך טוען הכול יחד, סבב אחד, snapshot אחד.
 
 ## 6. מסד הנתונים
