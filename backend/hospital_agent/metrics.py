@@ -352,6 +352,10 @@ def compute(engine: Engine, window: Window, sources: Mapping[str, str | None]) -
         with engine.connect() as raw:
             conn = raw.execution_options(isolation_level="REPEATABLE READ", postgresql_readonly=True)
             with conn.begin():
+                # Per statement, not per transaction - compute() runs about 14 of them, so the
+                # whole call can take longer than STATEMENT_TIMEOUT while still bounding each
+                # query individually. Postgres SET takes no bind parameters, which is why
+                # STATEMENT_TIMEOUT (a module constant, never request input) is interpolated here.
                 conn.execute(text(f"SET LOCAL statement_timeout = '{STATEMENT_TIMEOUT}'"))
                 generated_at = conn.execute(text("SELECT now()")).scalar_one()
                 return Metrics(
