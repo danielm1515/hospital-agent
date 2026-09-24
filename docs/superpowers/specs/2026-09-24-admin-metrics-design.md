@@ -129,7 +129,7 @@ GET /api/admin/metrics?from=<ISO-8601>&to=<ISO-8601>
 
 | קובץ | מה |
 |---|---|
-| `hospital_agent/metrics.py` (חדש) | פונקציות שאילתה טהורות לכל קבוצה, dataclasses, ו־`compute(conn, window, sources) -> Metrics` |
+| `hospital_agent/metrics.py` (חדש) | פונקציות שאילתה טהורות לכל קבוצה, dataclasses, ו־`compute(engine, window, sources) -> Metrics` — מקבלת Engine ולא חיבור, כי היא פותחת בעצמה חיבור `REPEATABLE READ, READ ONLY` משלה |
 | `hospital_agent/api/routes_admin.py` (חדש) | router עם `prefix="/api/admin"`, route אחד |
 | `hospital_agent/api/deps.py` | `require_admin` |
 | `hospital_agent/api/schemas.py` | `MetricsResponse` וסכמות המשנה |
