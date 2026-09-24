@@ -14,7 +14,7 @@ percentile over no rows is None, never 0.
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Any
 
@@ -192,3 +192,66 @@ def human_load(conn: Connection, window: Window) -> HumanLoad:
             WHERE c.state = 'AwaitingHumanReview' GROUP BY c.case_id) open_cases""")).one()
     return HumanLoad(int(entered), decisions, decided_by_kind, open_by_kind, time_to_decision,
                      int(open_now), oldest)
+
+
+# --- C: external tools (events in the window, by executions.started_at; design §4.3) ------
+
+FAILURE_EVENTS = ("TOOL_TRANSIENT_FAILURE", "RETRY_EXHAUSTED")
+FINISHED = ("succeeded", "failed", "unknown")
+_STARTED = "started_at >= :start AND started_at < :end"
+
+
+@dataclass(frozen=True)
+class ToolAction:
+    action: str
+    by_status: dict[str, int]
+    success_rate: float | None  # succeeded / finished; None when nothing finished
+    latency: Durations  # finished_at - started_at, the whole Tool Executor call
+
+
+@dataclass(frozen=True)
+class FailureReason:
+    outcome: str  # the audit record_type: ExecutionFailed | ExecutionUnknown
+    reason: str | None  # as recorded, e.g. tool:transient_failure:timeout
+    count: int
+
+
+@dataclass(frozen=True)
+class Tools:
+    actions: list[ToolAction]
+    failure_events: dict[str, int]
+    failure_reasons: list[FailureReason]
+    retried_calls: int
+    sources: dict[str, str | None] = field(default_factory=dict)  # compute() sets it from app.state
+
+
+def tools(conn: Connection, window: Window) -> Tools:
+    params = window.params
+    by_action: dict[str, dict[str, int]] = {}
+    for action, status, count in conn.execute(text(
+            f"SELECT action, status, count(*) FROM executions WHERE {_STARTED} GROUP BY 1, 2 ORDER BY 1, 2"),
+            params):
+        by_action.setdefault(action, {})[status] = int(count)
+    latency = {row[0]: _durations(row[1:]) for row in conn.execute(text(f"""
+        SELECT action, {_durations_sql('finished_at - started_at')} FROM executions
+        WHERE {_STARTED} AND finished_at IS NOT NULL GROUP BY 1"""), params)}
+    actions = []
+    for action in sorted(by_action):
+        statuses = by_action[action]
+        finished = sum(statuses.get(status, 0) for status in FINISHED)
+        actions.append(ToolAction(action, statuses, statuses.get("succeeded", 0) / finished if finished else None,
+                                  latency.get(action, EMPTY_DURATIONS)))
+    failure_events = dict.fromkeys(FAILURE_EVENTS, 0)
+    failure_events.update(_counts(conn, f"""
+        SELECT event, count(*) FROM audit_log
+        WHERE record_type = 'Transition' AND event IN ('TOOL_TRANSIENT_FAILURE', 'RETRY_EXHAUSTED')
+          AND {_EVENTS} GROUP BY 1""", params))
+    failure_reasons = [FailureReason(outcome, reason, int(count)) for outcome, reason, count in conn.execute(text("""
+        SELECT a.record_type, r.reason, count(*) FROM audit_log a
+        LEFT JOIN LATERAL jsonb_array_elements_text(a.policy_reasons) AS r(reason) ON true
+        WHERE a.record_type IN ('ExecutionFailed', 'ExecutionUnknown')
+          AND a.recorded_at >= :start AND a.recorded_at < :end
+        GROUP BY 1, 2 ORDER BY 1, 2"""), params)]
+    retried = conn.execute(text(f"SELECT count(*) FROM executions WHERE {_STARTED} AND attempt_number > 1"),
+                           params).scalar_one()
+    return Tools(actions, failure_events, failure_reasons, int(retried))
