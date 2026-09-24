@@ -2006,3 +2006,230 @@ img {
 .step-n {
   color: var(--ink-500);
 }
+
+/* --- Sub-project 14: the admin metrics screen (dataviz) ---------------------------------- */
+/* The bar/meter fill is the brand ramp's 500 step in both themes. validate_palette.js: light
+   vs #ffffff all PASS; dark vs #14212b all PASS. The dark theme's own --brand-500 (#2fabd3,
+   OKLCH L 0.693) is above the dark lightness band (0.48-0.67), and #0e6f8e is below 3:1. */
+.metrics-page {
+  --metrics-fill: #1189ae;
+}
+
+.metrics-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--space-3);
+  padding: var(--space-4);
+}
+
+.metrics-presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-inline-end: auto;
+}
+
+.metrics-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  font-size: 13px;
+  color: var(--ink-500);
+}
+
+.metrics-field input {
+  font: inherit;
+  font-size: 14px;
+  color: var(--ink-900);
+  background: var(--surface-000);
+  border: 1px solid var(--line-300);
+  border-radius: 8px;
+  padding: var(--space-2) var(--space-3);
+}
+
+.metrics-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+  transition: opacity 120ms ease;
+}
+
+.metrics-body.is-stale {
+  opacity: 0.55;
+}
+
+.metrics-window,
+.metrics-scope,
+.metrics-empty {
+  margin: 0;
+  font-size: 13px;
+  line-height: 20px;
+  color: var(--ink-500);
+}
+
+.metrics-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-5);
+}
+
+.metrics-sub {
+  margin: var(--space-2) 0 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ink-700);
+}
+
+.metrics-tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: var(--space-3);
+}
+
+.metrics-tile {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-3) var(--space-4);
+  background: var(--surface-100);
+  border-radius: 10px;
+}
+
+.metrics-tile-v {
+  font-family: var(--font-sans);
+  font-size: 28px;
+  line-height: 34px;
+  font-weight: 600;
+  color: var(--ink-900);
+}
+
+.metrics-tile-k {
+  font-size: 13px;
+  color: var(--ink-700);
+}
+
+.metrics-tile-note {
+  font-size: 12px;
+  color: var(--ink-500);
+}
+
+.metrics-bars {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.metrics-bar {
+  display: grid;
+  grid-template-columns: minmax(140px, 32%) 1fr auto;
+  align-items: center;
+  gap: var(--space-3);
+  padding: 2px var(--space-2);
+  border-radius: 6px;
+}
+
+.metrics-bar:hover {
+  background: var(--surface-100);
+}
+
+.metrics-bar-k {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  font-size: 14px;
+  color: var(--ink-900);
+}
+
+.metrics-code {
+  font-size: 12px;
+  color: var(--ink-500);
+}
+
+.metrics-bar-lane {
+  display: block;
+  min-inline-size: 0;
+}
+
+/* <= 24px thick, square at the baseline (inline-start), 4px rounded data-end (inline-end).
+   The width is set inline as a percentage; in RTL a block starts at the right, the baseline. */
+.metrics-bar-fill {
+  display: block;
+  block-size: 12px;
+  min-inline-size: 2px;
+  background: var(--metrics-fill);
+  border-start-end-radius: 4px;
+  border-end-end-radius: 4px;
+}
+
+.metrics-bar-v {
+  font-size: 14px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-900);
+}
+
+.metrics-meter {
+  display: inline-block;
+  inline-size: 72px;
+  block-size: 8px;
+  vertical-align: middle;
+  background: var(--brand-100);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.metrics-meter-fill {
+  display: block;
+  block-size: 100%;
+  background: var(--metrics-fill);
+}
+
+.metrics-rate {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.metrics-table td {
+  font-variant-numeric: tabular-nums;
+}
+
+.metrics-facts {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.metrics-fact {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: var(--space-3);
+  font-size: 14px;
+}
+
+.metrics-fact dt {
+  color: var(--ink-700);
+}
+
+.metrics-fact dd {
+  margin: 0;
+  color: var(--ink-900);
+}
+
+@media (max-width: 640px) {
+  .metrics-bar {
+    grid-template-columns: 1fr auto;
+  }
+
+  .metrics-bar-lane {
+    grid-column: 1 / -1;
+    grid-row: 2;
+  }
+}
