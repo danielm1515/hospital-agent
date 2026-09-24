@@ -109,6 +109,8 @@ describe('Metrics', () => {
     expect(cells.map((cell) => cell.textContent)).toEqual(['CheckDocuments', '5', '2', '3', '0', '40%', '8 ms', '9 ms', '9 ms'])
     expect(screen.getByText('שירות התורים')).toBeInTheDocument()
     expect(screen.getByText('appointment-service')).toHaveClass('mono')
+    const sourceDd = screen.getByText('appointment-service').closest('dd') as HTMLElement
+    expect(sourceDd.textContent?.replace(/\s+/g, ' ').trim()).toBe('שירות התורים appointment-service')
     expect(screen.getByText('לא דווח')).toBeInTheDocument()
   })
 

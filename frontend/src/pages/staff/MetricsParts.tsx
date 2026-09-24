@@ -28,6 +28,7 @@ export function Coded({ label, code }: { label: string; code: string }) {
   ) : (
     <>
       {label}
+      {' '}
       <span className="mono metrics-code">{code}</span>
     </>
   )
