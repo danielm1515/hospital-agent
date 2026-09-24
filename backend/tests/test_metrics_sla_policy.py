@@ -41,6 +41,21 @@ def test_each_wait_ends_met_breached_other_or_is_still_waiting(app_engine):
     assert sla == PatientSla(requests=7, met=3, breached=2, other=1, waiting=1, rate=approx(0.6))
 
 
+def test_human_approved_reopening_the_wait_counts_a_second_request(app_engine):
+    # HUMAN_APPROVED on a Z3Counterexample / PatientSlaExpired escalation re-enters
+    # AwaitingPatientInput with a new patient_deadline, without a MISSING_INFORMATION_DETECTED -
+    # that re-opened wait, and a second breach on the same case, must both be counted.
+    with app_engine.begin() as conn:
+        add_case(conn, "C-reopen", created_at=at(0))
+        add_row(conn, "C-reopen", "MISSING_INFORMATION_DETECTED", at=at(1), **ASK)
+        add_row(conn, "C-reopen", "TIMEOUT_EXPIRED", at=at(2), before=WAITING, after="AwaitingHumanReview")
+        add_row(conn, "C-reopen", "HUMAN_APPROVED", at=at(3), before="AwaitingHumanReview", after=WAITING)
+        add_row(conn, "C-reopen", "TIMEOUT_EXPIRED", at=at(4), before=WAITING, after="AwaitingHumanReview")
+    with app_engine.connect() as conn:
+        sla = metrics.patient_sla(conn, WINDOW)
+    assert sla == PatientSla(requests=2, met=0, breached=2, other=0, waiting=0, rate=approx(0.0))
+
+
 def test_no_waits_means_no_rate(app_engine):
     with app_engine.connect() as conn:
         assert metrics.patient_sla(conn, WINDOW) == PatientSla(0, 0, 0, 0, 0, None)

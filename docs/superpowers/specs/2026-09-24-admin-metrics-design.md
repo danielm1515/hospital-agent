@@ -89,7 +89,7 @@
 
 | מזהה | מדד | מקור |
 |---|---|---|
-| D1 | בקשות מסמך מהמטופל | שורות `Transition` עם `event = MISSING_INFORMATION_DETECTED` |
+| D1 | בקשות מסמך מהמטופל | שורות `Transition` עם `state_after = AwaitingPatientInput` ו־`state_before <> AwaitingPatientInput` — כל כניסה ל־AwaitingPatientInput שאינה self-loop — גם `MISSING_INFORMATION_DETECTED` וגם `HUMAN_APPROVED` עם deadline חדש (הסלמת `Z3Counterexample` / `PatientSlaExpired` שנפתחת מחדש) |
 | D2 | עמדו בזמן / חרגו / יצאו אחרת / עדיין פתוחות | שורת ה־Transition הבאה של אותה פנייה עם `state_before = AwaitingPatientInput` **ו־`state_after <> AwaitingPatientInput`**: `DOCUMENT_UPLOADED` = עמדה; `TIMEOUT_EXPIRED` = חרגה; כל אירוע אחר (`HUMAN_REVIEW_REQUIRED` / TemporalViolation) = יצאה אחרת; אין = פתוחה. התנאי על `state_after` נחוץ: העלאה שנדחתה היא self-loop (`DOCUMENT_UPLOADED`, `!DocumentValid`) ואינה סוף ההמתנה |
 | D3 | אחוז עמידה = עמדו / (עמדו + חרגו) | D2. פתוחות ו"יצאו אחרת" לא נספרות במכנה |
 

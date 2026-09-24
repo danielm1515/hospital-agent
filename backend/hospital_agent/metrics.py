@@ -273,14 +273,20 @@ class PatientSla:
 
 
 def patient_sla(conn: Connection, window: Window) -> PatientSla:
-    # Each wait is ended by the next transition that leaves AwaitingPatientInput. state_after
-    # must differ: a rejected upload is a DOCUMENT_UPLOADED self-loop that does not end it.
-    # The metric reports the system's own verdict - which event ended the wait - and never
+    # A wait begins with any Transition row that enters AwaitingPatientInput from somewhere
+    # else - not only MISSING_INFORMATION_DETECTED from AssessingReadiness, but also
+    # HUMAN_APPROVED on a Z3Counterexample / PatientSlaExpired escalation, which re-opens the
+    # wait with a new patient_deadline (fsm.py, AWAITING_HUMAN_REVIEW -> AWAITING_PATIENT_INPUT).
+    # state_before must differ too: a rejected upload is a DOCUMENT_UPLOADED self-loop and is
+    # not a new wait. Each wait is ended by the next transition that leaves
+    # AwaitingPatientInput; state_after must differ there for the same self-loop reason. The
+    # metric reports the system's own verdict - which event ended the wait - and never
     # re-judges it against cases.patient_deadline.
     exits: dict[str | None, int] = {exit_event: int(count) for exit_event, count in conn.execute(text(f"""
         WITH entries AS (
             SELECT case_id, audit_id FROM audit_log
-            WHERE record_type = 'Transition' AND event = 'MISSING_INFORMATION_DETECTED' AND {_EVENTS})
+            WHERE record_type = 'Transition' AND state_after = 'AwaitingPatientInput'
+              AND state_before <> 'AwaitingPatientInput' AND {_EVENTS})
         SELECT (SELECT x.event FROM audit_log x
                 WHERE x.case_id = e.case_id AND x.audit_id > e.audit_id AND x.record_type = 'Transition'
                   AND x.state_before = 'AwaitingPatientInput' AND x.state_after <> 'AwaitingPatientInput'
