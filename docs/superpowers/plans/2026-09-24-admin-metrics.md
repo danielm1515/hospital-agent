@@ -2935,6 +2935,8 @@ In the *Project status* paragraph, after the sentence that ends `… unset, `Che
 Sub-project 14 (`docs/superpowers/specs/2026-09-24-admin-metrics-design.md`, `docs/spec_corrections.md` row 82) is the owner's admin metrics screen: `GET /api/admin/metrics?from=&to=` (`admin_staff` only, `require_admin`; at most 90 days) aggregates the existing `audit_log`, `executions`, `cases` and `approvals` tables read-only in one `REPEATABLE READ` snapshot (`hospital_agent/metrics.py`), and `/staff/metrics` shows it; migration 0005 adds three indexes and is its only write.
 ```
 
+In *Working in the frontend*, the layout bullet lists the files without a co-located test. Change `the two `*Routes.tsx` files` to `` `PatientRoutes.tsx` `` (and `wire up routing only` stays true of it): `StaffRoutes.tsx` now has `StaffRoutes.test.tsx`, because it holds a role rule.
+
 - [ ] **Step 5: Commit**
 
 ```bash
