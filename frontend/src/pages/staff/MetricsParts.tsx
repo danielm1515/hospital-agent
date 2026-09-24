@@ -18,6 +18,22 @@ export function Tile({ label, value, note }: { label: string; value: string; not
 }
 
 /**
+ * A label beside the code it translates - or, when a code is its own label (the labels don't
+ * have anything to add), the code alone. Always inside `.mono`, so a Latin run is never left
+ * outside the isolation that keeps it from picking its own direction on this RTL page.
+ */
+export function Coded({ label, code }: { label: string; code: string }) {
+  return label === code ? (
+    <span className="mono metrics-code">{code}</span>
+  ) : (
+    <>
+      {label}
+      <span className="mono metrics-code">{code}</span>
+    </>
+  )
+}
+
+/**
  * One series, so one color for every bar - never a value ramp on nominal categories. Every
  * value is written at its bar's tip, so the list is its own table view and no tooltip is
  * needed to read anything; the bar itself is decoration for assistive technology.
@@ -30,14 +46,7 @@ export function Bars({ rows, empty }: { rows: BarRow[]; empty: string }) {
       {rows.map((row) => (
         <li key={row.key ?? row.code} className="metrics-bar">
           <span className="metrics-bar-k">
-            {row.label === row.code ? (
-              <span className="mono metrics-code">{row.code}</span>
-            ) : (
-              <>
-                {row.label}
-                <span className="mono metrics-code">{row.code}</span>
-              </>
-            )}
+            <Coded label={row.label} code={row.code} />
           </span>
           <span className="metrics-bar-lane" aria-hidden="true">
             <span className="metrics-bar-fill" style={{ width: `${top ? (row.count / top) * 100 : 0}%` }} />

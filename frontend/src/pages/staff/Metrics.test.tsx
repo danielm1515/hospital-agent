@@ -112,6 +112,22 @@ describe('Metrics', () => {
     expect(screen.getByText('לא דווח')).toBeInTheDocument()
   })
 
+  it('shows a source code that is its own label just once, inside .mono', async () => {
+    vi.mocked(api.getMetrics).mockResolvedValue({
+      ...FIXTURE,
+      tools: { ...FIXTURE.tools, sources: { appointments: 'mock', documents: 'document-service' } },
+    })
+    render(<Metrics />)
+    await screen.findByRole('heading', { name: 'זרימת פניות' })
+
+    const mockMatches = screen.getAllByText('mock')
+    expect(mockMatches).toHaveLength(1)
+    expect(mockMatches[0]).toHaveClass('mono')
+
+    expect(screen.getByText('שירות המסמכים')).toBeInTheDocument()
+    expect(screen.getByText('document-service')).toHaveClass('mono')
+  })
+
   it('refetches for a preset, keeping the previous numbers dimmed meanwhile', async () => {
     vi.mocked(api.getMetrics).mockResolvedValueOnce(FIXTURE).mockReturnValueOnce(new Promise(() => {}))
     const { container } = render(<Metrics />)

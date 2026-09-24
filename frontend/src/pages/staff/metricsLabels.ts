@@ -36,7 +36,6 @@ export const REASON_LABELS: Record<string, string> = {
 }
 
 export const SOURCE_LABELS: Record<string, string> = {
-  mock: 'mock',
   'appointment-service': 'שירות התורים',
   'document-service': 'שירות המסמכים',
 }

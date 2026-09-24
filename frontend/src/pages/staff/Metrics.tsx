@@ -23,7 +23,7 @@ import {
   toRows,
 } from './metricsLabels'
 import type { LocalRange } from './metricsLabels'
-import { Bars, Meter, Tile } from './MetricsParts'
+import { Bars, Coded, Meter, Tile } from './MetricsParts'
 
 const event = (code: string) => labelOf(EVENT_LABELS, code)
 
@@ -291,15 +291,7 @@ function ToolsGroup({ tools }: { tools: MetricsData['tools'] }) {
         {Object.entries(tools.sources).map(([system, source]) => (
           <div key={system} className="metrics-fact">
             <dt className="mono">{system}</dt>
-            <dd>
-              {source === null ? (
-                'לא דווח'
-              ) : (
-                <>
-                  {labelOf(SOURCE_LABELS, source)} <span className="mono metrics-code">{source}</span>
-                </>
-              )}
-            </dd>
+            <dd>{source === null ? 'לא דווח' : <Coded label={labelOf(SOURCE_LABELS, source)} code={source} />}</dd>
           </div>
         ))}
       </dl>
