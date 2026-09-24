@@ -302,3 +302,80 @@ export interface AnswerBody {
 export interface ErrorBody {
   detail: unknown
 }
+
+// ---- Admin metrics (sub-project 14) ---------------------------------------
+
+/** Seconds; every field but `count` is null when nothing was measured. */
+export interface Durations {
+  count: number
+  p50: number | null
+  p95: number | null
+  max: number | null
+}
+
+/** The cases opened in the window, in their current state. */
+export interface MetricsFlow {
+  opened: number
+  by_state: Record<string, number>
+  by_outcome: Record<string, number>
+  completion: Record<string, Durations>
+}
+
+export interface MetricsHumanLoad {
+  escalations_entered: number
+  decisions: Record<string, number>
+  decided_by_kind: Record<string, number>
+  /** The queue now, whatever the window - as are `open_now` and `oldest_open_seconds`. */
+  open_by_kind: Record<string, number>
+  time_to_decision: Durations
+  open_now: number
+  oldest_open_seconds: number | null
+}
+
+export interface MetricsToolAction {
+  action: string
+  by_status: Record<string, number>
+  success_rate: number | null
+  latency: Durations
+}
+
+export interface MetricsFailureReason {
+  outcome: string
+  reason: string | null
+  count: number
+}
+
+export interface MetricsTools {
+  actions: MetricsToolAction[]
+  failure_events: Record<string, number>
+  failure_reasons: MetricsFailureReason[]
+  retried_calls: number
+  sources: Record<string, string | null>
+}
+
+export interface MetricsPatientSla {
+  requests: number
+  met: number
+  breached: number
+  other: number
+  waiting: number
+  rate: number | null
+}
+
+export interface MetricsPolicy {
+  decisions: Record<string, number>
+  blocked: number
+  blocked_by_reason: Record<string, number>
+  blocked_by_event: Record<string, number>
+}
+
+/** `GET /api/admin/metrics?from=&to=` → 200 (`docs/api.md` §7). */
+export interface Metrics {
+  window: { start: IsoDateTime; end: IsoDateTime }
+  generated_at: IsoDateTime
+  flow: MetricsFlow
+  human_load: MetricsHumanLoad
+  tools: MetricsTools
+  patient_sla: MetricsPatientSla
+  policy: MetricsPolicy
+}
