@@ -28,11 +28,12 @@ export const EVENT_LABELS: Record<string, string> = {
 }
 
 export const REASON_LABELS: Record<string, string> = {
-  'tool:transient_failure:timeout': 'timeout',
+  'tool:transient_failure:timeout': 'פסק זמן',
   'tool:transient_failure:unavailable': 'השירות לא זמין',
   guard_failed: 'אין מעבר חוקי',
   invalid_escalation_reason: 'סיבת הסלמה לא תקינה',
   system_owned_event: 'אירוע מערכת ממקור חיצוני',
+  restart: 'הפעלה מחדש באמצע קריאה',
 }
 
 export const SOURCE_LABELS: Record<string, string> = {
@@ -98,6 +99,27 @@ export function toRows(counts: Record<string, number>, label: (code: string) => 
   return Object.entries(counts)
     .map(([code, count]) => ({ code, label: label(code), count }))
     .sort((a, b) => b.count - a.count || a.code.localeCompare(b.code))
+}
+
+/**
+ * A tool-failure row (one of `tools.failure_reasons`) as a pure-Hebrew label beside its code -
+ * never the code itself outside `.mono` (CLAUDE.md: a Hebrew label beside the code, never
+ * instead of it; an unknown code falls back to itself).
+ *
+ * `ExecutionFailed`'s code is known or unknown on its own. `ExecutionUnknown`'s reason (e.g.
+ * `exception:ValueError`, `restart`) is almost never in `REASON_LABELS`, so it falls back to the
+ * generic Hebrew "תוצאה לא ידועה" instead of repeating the unknown code as if it were a label.
+ */
+export function failureRow(failure: { outcome: string; reason: string | null; count: number }): BarRow {
+  const code = failure.reason ?? failure.outcome
+  const known = failure.reason ? REASON_LABELS[failure.reason] : undefined
+  const label =
+    failure.outcome === 'ExecutionUnknown'
+      ? known
+        ? `${known} (תוצאה לא ידועה)`
+        : 'תוצאה לא ידועה'
+      : (known ?? code)
+  return { key: `${failure.outcome}|${failure.reason ?? ''}`, code, label, count: failure.count }
 }
 
 /** Two `<input type="datetime-local">` values, in the browser's own time zone. */

@@ -41,7 +41,11 @@ const FIXTURE: MetricsData = {
       },
     ],
     failure_events: { TOOL_TRANSIENT_FAILURE: 2, RETRY_EXHAUSTED: 1 },
-    failure_reasons: [{ outcome: 'ExecutionFailed', reason: 'tool:transient_failure:timeout', count: 3 }],
+    failure_reasons: [
+      { outcome: 'ExecutionFailed', reason: 'tool:transient_failure:timeout', count: 3 },
+      { outcome: 'ExecutionUnknown', reason: 'restart', count: 1 },
+      { outcome: 'ExecutionUnknown', reason: 'exception:ValueError', count: 1 },
+    ],
     retried_calls: 2,
     sources: { appointments: 'appointment-service', documents: null },
   },
@@ -112,6 +116,23 @@ describe('Metrics', () => {
     const sourceDd = screen.getByText('appointment-service').closest('dd') as HTMLElement
     expect(sourceDd.textContent?.replace(/\s+/g, ' ').trim()).toBe('שירות התורים appointment-service')
     expect(screen.getByText('לא דווח')).toBeInTheDocument()
+  })
+
+  it('labels each failure reason in pure Hebrew, the code once inside .mono', async () => {
+    vi.mocked(api.getMetrics).mockResolvedValue(FIXTURE)
+    render(<Metrics />)
+    await screen.findByRole('heading', { name: 'זרימת פניות' })
+
+    const codeText = (text: string) => {
+      const matches = screen.getAllByText(text)
+      expect(matches).toHaveLength(1)
+      expect(matches[0]).toHaveClass('mono')
+      return matches[0].closest('.metrics-bar-k')?.textContent?.replace(/\s+/g, ' ').trim()
+    }
+
+    expect(codeText('tool:transient_failure:timeout')).toBe('פסק זמן tool:transient_failure:timeout')
+    expect(codeText('restart')).toBe('הפעלה מחדש באמצע קריאה (תוצאה לא ידועה) restart')
+    expect(codeText('exception:ValueError')).toBe('תוצאה לא ידועה exception:ValueError')
   })
 
   it('shows a source code that is its own label just once, inside .mono', async () => {

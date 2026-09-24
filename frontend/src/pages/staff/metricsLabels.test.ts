@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   OUTCOME_LABELS,
   durationsText,
+  failureRow,
   formatPercent,
   formatSeconds,
   fromLocalInput,
@@ -49,6 +50,50 @@ describe('toRows', () => {
       { code: 'AppointmentPreparation', label: 'הכנה לתור', count: 2 },
       { code: 'Unsupported', label: 'לא נתמכת', count: 2 },
     ])
+  })
+})
+
+describe('failureRow', () => {
+  it('labels a known ExecutionFailed reason in Hebrew, the code once in .mono', () => {
+    expect(failureRow({ outcome: 'ExecutionFailed', reason: 'tool:transient_failure:timeout', count: 3 })).toEqual({
+      key: 'ExecutionFailed|tool:transient_failure:timeout',
+      code: 'tool:transient_failure:timeout',
+      label: 'פסק זמן',
+      count: 3,
+    })
+  })
+
+  it('falls an unknown ExecutionFailed reason back to the code as its own label', () => {
+    expect(failureRow({ outcome: 'ExecutionFailed', reason: 'something_new', count: 1 })).toEqual({
+      key: 'ExecutionFailed|something_new',
+      code: 'something_new',
+      label: 'something_new',
+      count: 1,
+    })
+  })
+
+  it('marks an ExecutionUnknown reason as undetermined in Hebrew, never repeating the code as a label', () => {
+    expect(failureRow({ outcome: 'ExecutionUnknown', reason: 'restart', count: 1 })).toEqual({
+      key: 'ExecutionUnknown|restart',
+      code: 'restart',
+      label: 'הפעלה מחדש באמצע קריאה (תוצאה לא ידועה)',
+      count: 1,
+    })
+    expect(failureRow({ outcome: 'ExecutionUnknown', reason: 'exception:ValueError', count: 1 })).toEqual({
+      key: 'ExecutionUnknown|exception:ValueError',
+      code: 'exception:ValueError',
+      label: 'תוצאה לא ידועה',
+      count: 1,
+    })
+  })
+
+  it('falls a reasonless ExecutionUnknown back to the outcome as its code', () => {
+    expect(failureRow({ outcome: 'ExecutionUnknown', reason: null, count: 2 })).toEqual({
+      key: 'ExecutionUnknown|',
+      code: 'ExecutionUnknown',
+      label: 'תוצאה לא ידועה',
+      count: 2,
+    })
   })
 })
 

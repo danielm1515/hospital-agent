@@ -14,6 +14,7 @@ import {
   REASON_LABELS,
   SOURCE_LABELS,
   durationsText,
+  failureRow,
   formatCount,
   formatPercent,
   formatSeconds,
@@ -275,17 +276,7 @@ function ToolsGroup({ tools }: { tools: MetricsData['tools'] }) {
         </div>
       )}
       <h3 className="metrics-sub">סיבות כשל</h3>
-      <Bars
-        rows={tools.failure_reasons.map((failure) => ({
-          key: `${failure.outcome}|${failure.reason ?? ''}`,
-          code: failure.reason ?? failure.outcome,
-          label:
-            labelOf(REASON_LABELS, failure.reason ?? failure.outcome) +
-            (failure.outcome === 'ExecutionUnknown' ? ' (תוצאה לא ידועה)' : ''),
-          count: failure.count,
-        }))}
-        empty="אין כשלים בטווח."
-      />
+      <Bars rows={tools.failure_reasons.map(failureRow)} empty="אין כשלים בטווח." />
       <h3 className="metrics-sub">מקורות מוגדרים</h3>
       <dl className="metrics-facts">
         {Object.entries(tools.sources).map(([system, source]) => (
