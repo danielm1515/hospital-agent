@@ -8,9 +8,13 @@ from sqlalchemy import text
 from sqlalchemy.exc import DBAPIError
 
 from hospital_agent import metrics
+from hospital_agent.human_review import HumanReviewService
 from hospital_agent.metrics import MetricsUnavailable, Window
+from hospital_agent.naming import State
+from hospital_agent.session import SessionService
 from tests.driver import Driver
 from tests.metrics_seed import T0, add_case, at
+from tests.test_clinical_answer import answer_it, escalated
 
 WINDOW = Window(T0, T0 + timedelta(days=1))
 MEDICAL = "Should I stop taking my blood thinner?"
@@ -53,6 +57,24 @@ def test_a_statement_timeout_refuses_the_whole_answer(app_engine, monkeypatch):
     monkeypatch.setattr(metrics, "flow", lambda conn, window: conn.execute(text("SELECT pg_sleep(1)")))
     with pytest.raises(MetricsUnavailable):
         metrics.compute(app_engine, WINDOW, {})
+
+
+def test_a_clinical_answer_counts_as_a_medical_question_human_resolution(sm, app_engine):
+    """Pins the controller ruling (final review): a clinical answer counts under
+    MedicalQuestion in human_load.decided_by_kind, because HumanReviewService.answer() passes
+    the WorkflowDecision's id - not the ContentApproval's - as the transition's approval_id,
+    and decided_by_kind joins on that column (design decision 6)."""
+    d = escalated(sm, app_engine)
+    review = HumanReviewService(sm, SessionService(sm))
+
+    result = answer_it(review, d)
+
+    assert result.committed and result.state_after is State.COMPLETED
+    now = datetime.now(UTC)
+    computed = metrics.compute(app_engine, Window(now - timedelta(hours=1), now + timedelta(hours=1)), {})
+    assert computed.human_load.decided_by_kind == {"MedicalQuestion": 1}
+    assert computed.human_load.decisions["HUMAN_RESOLVED_CASE"] == 1
+    assert computed.flow.by_state == {"Completed": 1}
 
 
 def test_real_flows_show_up_as_the_seeded_shapes_assume(sm, app_engine):
