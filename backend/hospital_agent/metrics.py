@@ -255,3 +255,69 @@ def tools(conn: Connection, window: Window) -> Tools:
     retried = conn.execute(text(f"SELECT count(*) FROM executions WHERE {_STARTED} AND attempt_number > 1"),
                            params).scalar_one()
     return Tools(actions, failure_events, failure_reasons, int(retried))
+
+
+# --- D: the patient's SLA (events: the waits that began in the window; design §4.4) ------
+
+
+@dataclass(frozen=True)
+class PatientSla:
+    requests: int
+    met: int  # the wait ended in DOCUMENT_UPLOADED -> Classifying
+    breached: int  # the wait ended in TIMEOUT_EXPIRED
+    other: int  # the wait ended in any other way out (a TemporalViolation escalation)
+    waiting: int  # not ended yet
+    rate: float | None  # met / (met + breached); None when neither happened
+
+
+def patient_sla(conn: Connection, window: Window) -> PatientSla:
+    # Each wait is ended by the next transition that leaves AwaitingPatientInput. state_after
+    # must differ: a rejected upload is a DOCUMENT_UPLOADED self-loop that does not end it.
+    # The metric reports the system's own verdict - which event ended the wait - and never
+    # re-judges it against cases.patient_deadline.
+    exits: dict[str | None, int] = {exit_event: int(count) for exit_event, count in conn.execute(text(f"""
+        WITH entries AS (
+            SELECT case_id, audit_id FROM audit_log
+            WHERE record_type = 'Transition' AND event = 'MISSING_INFORMATION_DETECTED' AND {_EVENTS})
+        SELECT (SELECT x.event FROM audit_log x
+                WHERE x.case_id = e.case_id AND x.audit_id > e.audit_id AND x.record_type = 'Transition'
+                  AND x.state_before = 'AwaitingPatientInput' AND x.state_after <> 'AwaitingPatientInput'
+                ORDER BY x.audit_id LIMIT 1) AS exit_event,
+               count(*)
+        FROM entries e GROUP BY 1"""), window.params)}
+    requests = sum(exits.values())
+    met, breached, waiting = exits.get("DOCUMENT_UPLOADED", 0), exits.get("TIMEOUT_EXPIRED", 0), exits.get(None, 0)
+    return PatientSla(requests, met, breached, requests - met - breached - waiting, waiting,
+                      met / (met + breached) if met + breached else None)
+
+
+# --- E: the policy layers (events in the window; design §4.5) ----------------------------
+
+POLICY_EVENTS = ("POLICY_ALLOWED", "POLICY_DENIED", "POLICY_HUMAN_REVIEW_REQUIRED")
+
+
+@dataclass(frozen=True)
+class Policy:
+    decisions: dict[str, int]
+    blocked: int
+    blocked_by_reason: dict[str, int]
+    blocked_by_event: dict[str, int]
+
+
+def policy(conn: Connection, window: Window) -> Policy:
+    params = window.params
+    decisions = dict.fromkeys(POLICY_EVENTS, 0)
+    decisions.update(_counts(conn, f"""
+        SELECT event, count(*) FROM audit_log
+        WHERE record_type = 'Transition'
+          AND event IN ('POLICY_ALLOWED', 'POLICY_DENIED', 'POLICY_HUMAN_REVIEW_REQUIRED')
+          AND {_EVENTS} GROUP BY 1""", params))
+    blocked_by_event = _counts(conn, f"""
+        SELECT event, count(*) FROM audit_log WHERE record_type = 'Blocked' AND {_EVENTS} GROUP BY 1""", params)
+    # design §4.5 E2: a Blocked row is written with guards = {}; its reason is in policy_reasons.
+    blocked_by_reason = _counts(conn, """
+        SELECT r.reason, count(*) FROM audit_log a
+        CROSS JOIN LATERAL jsonb_array_elements_text(a.policy_reasons) AS r(reason)
+        WHERE a.record_type = 'Blocked' AND a.recorded_at >= :start AND a.recorded_at < :end
+        GROUP BY 1""", params)
+    return Policy(decisions, sum(blocked_by_event.values()), blocked_by_reason, blocked_by_event)
