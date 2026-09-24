@@ -14,12 +14,14 @@ percentile over no rows is None, never 0.
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
 from typing import Any
 
+from psycopg import errors as pg_errors
 from sqlalchemy import text
-from sqlalchemy.engine import Connection
+from sqlalchemy.engine import Connection, Engine
+from sqlalchemy.exc import OperationalError
 
 MAX_WINDOW = timedelta(days=90)
 STATEMENT_TIMEOUT = "5s"
@@ -321,3 +323,41 @@ def policy(conn: Connection, window: Window) -> Policy:
         WHERE a.record_type = 'Blocked' AND a.recorded_at >= :start AND a.recorded_at < :end
         GROUP BY 1""", params)
     return Policy(decisions, sum(blocked_by_event.values()), blocked_by_reason, blocked_by_event)
+
+
+# --- compute: every group, one snapshot (design §5) --------------------------------------
+
+
+@dataclass(frozen=True)
+class Metrics:
+    window: Window
+    generated_at: datetime
+    flow: Flow
+    human_load: HumanLoad
+    tools: Tools
+    patient_sla: PatientSla
+    policy: Policy
+
+
+def compute(engine: Engine, window: Window, sources: Mapping[str, str | None]) -> Metrics:
+    """All five groups in one REPEATABLE READ, READ ONLY transaction, so they agree with each
+    other; STATEMENT_TIMEOUT bounds every query, and a timeout refuses the whole answer."""
+    try:
+        with engine.connect() as raw:
+            conn = raw.execution_options(isolation_level="REPEATABLE READ", postgresql_readonly=True)
+            with conn.begin():
+                conn.execute(text(f"SET LOCAL statement_timeout = '{STATEMENT_TIMEOUT}'"))
+                generated_at = conn.execute(text("SELECT now()")).scalar_one()
+                return Metrics(
+                    window=window,
+                    generated_at=generated_at,
+                    flow=flow(conn, window),
+                    human_load=human_load(conn, window),
+                    tools=replace(tools(conn, window), sources=dict(sources)),
+                    patient_sla=patient_sla(conn, window),
+                    policy=policy(conn, window),
+                )
+    except OperationalError as exc:
+        if isinstance(exc.orig, pg_errors.QueryCanceled):
+            raise MetricsUnavailable("statement_timeout") from None
+        raise
