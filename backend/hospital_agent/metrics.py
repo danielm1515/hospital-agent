@@ -127,3 +127,68 @@ def flow(conn: Connection, window: Window) -> Flow:
     completion.update({row[0]: _durations(row[1:]) for row in rows})
     return Flow(opened=sum(by_state.values()), by_state=by_state,
                 by_outcome=_counts(conn, _OUTCOME, window.params), completion=completion)
+
+
+# --- B: human load (events in the window; design §4.2) -------------------------------------
+
+DECISION_EVENTS = ("HUMAN_APPROVED", "HUMAN_RESOLVED_CASE", "HUMAN_REJECTED")
+_DECISIONS = "('HUMAN_APPROVED', 'HUMAN_RESOLVED_CASE', 'HUMAN_REJECTED')"
+
+
+@dataclass(frozen=True)
+class HumanLoad:
+    escalations_entered: int
+    decisions: dict[str, int]
+    decided_by_kind: dict[str, int]  # decided in the window
+    open_by_kind: dict[str, int]  # open now, whatever the window
+    time_to_decision: Durations
+    open_now: int
+    oldest_open_seconds: float | None
+
+
+def human_load(conn: Connection, window: Window) -> HumanLoad:
+    params = window.params
+    entered = conn.execute(text(f"""
+        SELECT count(*) FROM audit_log
+        WHERE record_type = 'Transition' AND state_after = 'AwaitingHumanReview' AND {_EVENTS}"""),
+        params).scalar_one()
+    decisions = dict.fromkeys(DECISION_EVENTS, 0)
+    decisions.update(_counts(conn, f"""
+        SELECT event, count(*) FROM audit_log
+        WHERE record_type = 'Transition' AND event IN {_DECISIONS} AND {_EVENTS} GROUP BY 1""", params))
+    # design decision 6: the approval the committed transition actually used. Never a count of
+    # approvals rows - _grant writes one in its own transaction, and a blocked decision (or a
+    # double submit) leaves one behind.
+    decided_by_kind = _counts(conn, f"""
+        SELECT ap.escalation_kind, count(*) FROM audit_log a
+        JOIN approvals ap ON ap.approval_id = a.approval_id
+        WHERE a.record_type = 'Transition' AND a.event IN {_DECISIONS}
+          AND a.recorded_at >= :start AND a.recorded_at < :end AND ap.escalation_kind IS NOT NULL
+        GROUP BY 1""", params)
+    # Each entry into the review queue, paired with the next transition out of it for the same
+    # case - while a case waits, a human decision is the only way out (§3).
+    time_to_decision = _durations(conn.execute(text(f"""
+        WITH entries AS (
+            SELECT case_id, audit_id, recorded_at FROM audit_log
+            WHERE record_type = 'Transition' AND state_after = 'AwaitingHumanReview' AND {_EVENTS}),
+        decided AS (
+            SELECT e.recorded_at AS entered_at,
+                   (SELECT x.recorded_at FROM audit_log x
+                    WHERE x.case_id = e.case_id AND x.audit_id > e.audit_id
+                      AND x.record_type = 'Transition' AND x.state_before = 'AwaitingHumanReview'
+                    ORDER BY x.audit_id LIMIT 1) AS decided_at
+            FROM entries e)
+        SELECT {_durations_sql('decided_at - entered_at')} FROM decided WHERE decided_at IS NOT NULL"""),
+        params).one())
+    open_by_kind = _counts(conn, """
+        SELECT escalation_kind, count(*) FROM cases
+        WHERE state = 'AwaitingHumanReview' AND escalation_kind IS NOT NULL GROUP BY 1""", {})
+    # now() is the transaction's start, so the age agrees with every other number in the answer.
+    open_now, oldest = conn.execute(text("""
+        SELECT count(*), extract(epoch FROM now() - min(entered_at))::double precision FROM (
+            SELECT c.case_id, max(a.recorded_at) AS entered_at FROM cases c
+            JOIN audit_log a ON a.case_id = c.case_id AND a.record_type = 'Transition'
+                            AND a.state_after = 'AwaitingHumanReview'
+            WHERE c.state = 'AwaitingHumanReview' GROUP BY c.case_id) open_cases""")).one()
+    return HumanLoad(int(entered), decisions, decided_by_kind, open_by_kind, time_to_decision,
+                     int(open_now), oldest)
