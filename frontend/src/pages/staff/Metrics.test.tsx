@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, within } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import * as api from '../../api/client'
@@ -63,6 +63,15 @@ function spanOf(call: number): number {
   return end.getTime() - start.getTime()
 }
 
+/** A promise this test controls, to make two requests resolve out of send order. */
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  const promise = new Promise<T>((res) => {
+    resolve = res
+  })
+  return { promise, resolve }
+}
+
 beforeEach(() => {
   vi.mocked(api.getMetrics).mockReset()
 })
@@ -99,6 +108,7 @@ describe('Metrics', () => {
     const cells = within(row).getAllByRole('cell')
     expect(cells.map((cell) => cell.textContent)).toEqual(['CheckDocuments', '5', '2', '3', '0', '40%', '8 ms', '9 ms', '9 ms'])
     expect(screen.getByText('שירות התורים')).toBeInTheDocument()
+    expect(screen.getByText('appointment-service')).toHaveClass('mono')
     expect(screen.getByText('לא דווח')).toBeInTheDocument()
   })
 
@@ -111,6 +121,27 @@ describe('Metrics', () => {
     expect(spanOf(1)).toBe(24 * 3600_000)
     expect(container.querySelector('.metrics-body')).toHaveClass('is-stale')
     expect(tile('נפתחו')).toHaveTextContent('12')
+  })
+
+  it('lets only the most recently requested range land, even when an older request resolves later', async () => {
+    const d24 = deferred<MetricsData>()
+    const d30 = deferred<MetricsData>()
+    vi.mocked(api.getMetrics)
+      .mockResolvedValueOnce(FIXTURE)
+      .mockReturnValueOnce(d24.promise)
+      .mockReturnValueOnce(d30.promise)
+    const { container } = render(<Metrics />)
+    await screen.findByRole('heading', { name: 'זרימת פניות' })
+
+    await userEvent.click(screen.getByRole('button', { name: '24 שעות' }))
+    await userEvent.click(screen.getByRole('button', { name: '30 יום' }))
+
+    d30.resolve({ ...FIXTURE, flow: { ...FIXTURE.flow, opened: 30 } })
+    await waitFor(() => expect(tile('נפתחו')).toHaveTextContent('30'))
+
+    d24.resolve({ ...FIXTURE, flow: { ...FIXTURE.flow, opened: 24 } })
+    await waitFor(() => expect(container.querySelector('.metrics-body')).not.toHaveClass('is-stale'))
+    expect(tile('נפתחו')).toHaveTextContent('30')
   })
 
   it('shows a custom range when submitted', async () => {

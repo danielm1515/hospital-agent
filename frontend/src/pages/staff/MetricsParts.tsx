@@ -30,8 +30,14 @@ export function Bars({ rows, empty }: { rows: BarRow[]; empty: string }) {
       {rows.map((row) => (
         <li key={row.key ?? row.code} className="metrics-bar">
           <span className="metrics-bar-k">
-            {row.label}
-            {row.label !== row.code && <span className="mono metrics-code">{row.code}</span>}
+            {row.label === row.code ? (
+              <span className="mono metrics-code">{row.code}</span>
+            ) : (
+              <>
+                {row.label}
+                <span className="mono metrics-code">{row.code}</span>
+              </>
+            )}
           </span>
           <span className="metrics-bar-lane" aria-hidden="true">
             <span className="metrics-bar-fill" style={{ width: `${top ? (row.count / top) * 100 : 0}%` }} />

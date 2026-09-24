@@ -32,9 +32,11 @@ describe('Bars', () => {
     expect(fills[1].style.width).toBe('25%')
   })
 
-  it('does not repeat a code that is its own label', () => {
+  it('does not repeat a code that is its own label, and keeps it inside .mono', () => {
     render(<Bars rows={[{ code: 'guard_failed', label: 'guard_failed', count: 1 }]} empty="אין" />)
-    expect(screen.getAllByText('guard_failed')).toHaveLength(1)
+    const matches = screen.getAllByText('guard_failed')
+    expect(matches).toHaveLength(1)
+    expect(matches[0]).toHaveClass('mono')
   })
 
   it('says so when there is nothing to draw', () => {

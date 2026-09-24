@@ -39,21 +39,31 @@ export function Metrics() {
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
 
+  // Requests can overlap (mount, a preset click, submit, "נסה שוב") and are not guaranteed to
+  // resolve in the order they were sent; a sequence counter lets only the most recently sent
+  // request's result land, so a slower, older request can never overwrite the range the admin
+  // most recently asked for.
+  const requestSeq = useRef(0)
+
   const load = useCallback(async (next: LocalRange) => {
+    const seq = ++requestSeq.current
     const start = fromLocalInput(next.from)
     const end = fromLocalInput(next.to)
     if (!start || !end) {
-      setError('invalid_range')
+      if (seq === requestSeq.current) setError('invalid_range')
       return
     }
     setLoading(true)
     try {
-      setData(await api.getMetrics(start, end))
+      const result = await api.getMetrics(start, end)
+      if (seq !== requestSeq.current) return
+      setData(result)
       setError(null)
     } catch (caught) {
+      if (seq !== requestSeq.current) return
       setError(detailOf(caught))
     } finally {
-      setLoading(false)
+      if (seq === requestSeq.current) setLoading(false)
     }
   }, [])
 
@@ -281,7 +291,15 @@ function ToolsGroup({ tools }: { tools: MetricsData['tools'] }) {
         {Object.entries(tools.sources).map(([system, source]) => (
           <div key={system} className="metrics-fact">
             <dt className="mono">{system}</dt>
-            <dd>{source === null ? 'לא דווח' : labelOf(SOURCE_LABELS, source)}</dd>
+            <dd>
+              {source === null ? (
+                'לא דווח'
+              ) : (
+                <>
+                  {labelOf(SOURCE_LABELS, source)} <span className="mono metrics-code">{source}</span>
+                </>
+              )}
+            </dd>
           </div>
         ))}
       </dl>
