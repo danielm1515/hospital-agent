@@ -77,9 +77,10 @@ methods: `GET`, `POST`, `DELETE`, `OPTIONS`. Allowed headers: `Authorization`,
 | POST | `/api/staff/cases/{case_id}/decision` | staff | Approve / resolve / reject |
 | POST | `/api/staff/cases/{case_id}/answer` | staff | Answer a `MedicalQuestion` with an approved clinical message |
 | DELETE | `/api/staff/cases/{case_id}/data/{entry_id}` | staff | Delete one Data Log entry |
+| GET | `/api/admin/metrics` | admin_staff | System metrics over a window (sub-project 14) |
 
 Codes used everywhere: `401 not_authenticated` (no token, a malformed token, an expired or
-forged one), `403 patients_only` / `403 staff_only` (the wrong role), `404 case_not_found`
+forged one), `403 patients_only` / `403 staff_only` / `403 admin_only` (the wrong role), `404 case_not_found`
 (unknown, or not this patient's case), `422 invalid_body` (the body, a query parameter or a
 path parameter failed validation).
 
@@ -612,3 +613,64 @@ previous `shown_context_ref` is no longer valid.
   `404` → the case is gone or not the user's; `409` → show `detail`, re-fetch, try again;
   `422` → the form is invalid - validate locally against the rules listed above, since the
   body carries no field list; `503` on `/health` → the database is down.
+
+## 7. Admin routes
+
+Sub-project 14 (`docs/superpowers/specs/2026-09-24-admin-metrics-design.md`). Every route needs
+an `admin_staff` token; any other token gets `403 admin_only`.
+
+### GET /api/admin/metrics
+
+`?from=<ISO-8601>&to=<ISO-8601>` — `from` inclusive, `to` exclusive, both with a time zone, at
+most 90 days apart. A missing parameter is `422 invalid_body`; an unparsable, zone-less or
+reversed window is `422 invalid_range`; a longer one is `422 range_too_large`. Every query runs
+in one read-only snapshot with a 5 s statement timeout; past it the answer is
+`503 metrics_unavailable`, never a partial one. `200`:
+
+```json
+{
+  "window": {"start": "2026-09-01T00:00:00Z", "end": "2026-09-02T00:00:00Z"},
+  "generated_at": "2026-09-24T10:00:00.123456Z",
+  "flow": {
+    "opened": 3,
+    "by_state": {"Completed": 3},
+    "by_outcome": {"AppointmentPreparation": 2, "MedicalQuestion": 1},
+    "completion": {
+      "CASE_RESOLVED": {"count": 2, "p50": 2.64, "p95": 2.74, "max": 2.75},
+      "HUMAN_RESOLVED_CASE": {"count": 1, "p50": 0.03, "p95": 0.03, "max": 0.03}
+    }
+  },
+  "human_load": {
+    "escalations_entered": 2,
+    "decisions": {"HUMAN_APPROVED": 1, "HUMAN_RESOLVED_CASE": 1, "HUMAN_REJECTED": 0},
+    "decided_by_kind": {"MedicalQuestion": 1, "RetryExhausted": 1},
+    "open_by_kind": {},
+    "time_to_decision": {"count": 2, "p50": 0.011, "p95": 0.012, "max": 0.012},
+    "open_now": 0,
+    "oldest_open_seconds": null
+  },
+  "tools": {
+    "actions": [
+      {"action": "CheckDocuments", "by_status": {"failed": 3, "succeeded": 2}, "success_rate": 0.4,
+       "latency": {"count": 5, "p50": 0.008, "p95": 0.009, "max": 0.009}}
+    ],
+    "failure_events": {"TOOL_TRANSIENT_FAILURE": 2, "RETRY_EXHAUSTED": 1},
+    "failure_reasons": [{"outcome": "ExecutionFailed", "reason": "tool:transient_failure:timeout", "count": 3}],
+    "retried_calls": 2,
+    "sources": {"appointments": "appointment-service", "documents": "document-service"}
+  },
+  "patient_sla": {"requests": 2, "met": 2, "breached": 0, "other": 0, "waiting": 0, "rate": 1.0},
+  "policy": {
+    "decisions": {"POLICY_ALLOWED": 11, "POLICY_DENIED": 0, "POLICY_HUMAN_REVIEW_REQUIRED": 0},
+    "blocked": 0, "blocked_by_reason": {}, "blocked_by_event": {}
+  }
+}
+```
+
+`flow` counts the cases **opened** in the window, in their current state; every other group
+counts what **happened** in it. Durations are seconds; `p50` / `p95` / `max` are `null` when
+`count` is 0. `by_outcome` is one of `MedicalQuestion`, `EscalatedAtClassification`,
+`AppointmentPreparation`, `Unsupported`, `NotClassified`. `open_by_kind`, `open_now` and
+`oldest_open_seconds` describe the review queue **now**, whatever the window. `sources` is
+`null` for each system while the Agent Orchestrator is not running. The answer carries no
+`patient_id`, `case_id` or request text.

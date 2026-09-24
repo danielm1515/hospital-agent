@@ -184,3 +184,90 @@ class AnswerRequest(BaseModel):
 class DecisionResponse(BaseModel):
     case_id: str
     state: str
+
+
+# --- sub-project 14: the admin metrics screen (design 2026-09-24 §5) ----------------------
+# Built from hospital_agent.metrics' dataclasses (from_attributes). Aggregates only: no model
+# below has a patient_id, a case_id or any request content (§12.3).
+
+
+class _FromMetrics(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+
+class MetricsWindow(_FromMetrics):
+    start: datetime
+    end: datetime
+
+
+class DurationsView(_FromMetrics):
+    """Seconds; every field but count is null when nothing was measured."""
+
+    count: int
+    p50: float | None
+    p95: float | None
+    max: float | None
+
+
+class FlowView(_FromMetrics):
+    opened: int
+    by_state: dict[str, int]
+    by_outcome: dict[str, int]
+    completion: dict[str, DurationsView]
+
+
+class HumanLoadView(_FromMetrics):
+    escalations_entered: int
+    decisions: dict[str, int]
+    decided_by_kind: dict[str, int]
+    open_by_kind: dict[str, int]
+    time_to_decision: DurationsView
+    open_now: int
+    oldest_open_seconds: float | None
+
+
+class ToolActionView(_FromMetrics):
+    action: str
+    by_status: dict[str, int]
+    success_rate: float | None
+    latency: DurationsView
+
+
+class FailureReasonView(_FromMetrics):
+    outcome: str
+    reason: str | None
+    count: int
+
+
+class ToolsView(_FromMetrics):
+    actions: list[ToolActionView]
+    failure_events: dict[str, int]
+    failure_reasons: list[FailureReasonView]
+    retried_calls: int
+    sources: dict[str, str | None]
+
+
+class PatientSlaView(_FromMetrics):
+    requests: int
+    met: int
+    breached: int
+    other: int
+    waiting: int
+    rate: float | None
+
+
+class PolicyView(_FromMetrics):
+    decisions: dict[str, int]
+    blocked: int
+    blocked_by_reason: dict[str, int]
+    blocked_by_event: dict[str, int]
+
+
+class MetricsResponse(_FromMetrics):
+    window: MetricsWindow
+    generated_at: datetime
+    flow: FlowView
+    human_load: HumanLoadView
+    tools: ToolsView
+    patient_sla: PatientSlaView
+    policy: PolicyView
