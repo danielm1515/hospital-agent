@@ -844,7 +844,7 @@ or, for a document:
 |---|---|
 | `kind` | `"question"` or `"document"` |
 | `template_id` | A template of the right purpose (`question` or, for a document, `document_request` only - or omit it) |
-| `param` | The template's parameter, from its closed `options` list, when it takes one |
+| `param` | The template's parameter, from its closed `options` list, when it takes one - never for `kind: "document"`, whose message is rendered from `document_type` (`409 unexpected_param`) |
 | `text` | Clinical free text instead of a template - `question` only, and only from a `clinical_staff` token; exactly one of `template_id` / `text` |
 | `document_type` | A catalog type (`CBC`, `COAGULATION_TESTS`, `ECG`, `URINALYSIS`, `PREOP_SUMMARY`) - `kind: "document"` only |
 | `deadline` | Optional ISO datetime **with a timezone**; defaults to 24 hours ahead (never past the appointment); at most 7 days ahead and never past the appointment |
