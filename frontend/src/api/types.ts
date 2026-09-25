@@ -347,7 +347,7 @@ export interface ReplyRequest {
   message: string | null
   /** The requested catalog type for `kind: 'document'`, else `null`. */
   document_type: DocumentType | null
-  deadline: IsoDateTime | null
+  deadline: IsoDateTime
 }
 
 export interface ConversationEntry {

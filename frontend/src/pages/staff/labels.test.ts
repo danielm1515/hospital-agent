@@ -44,6 +44,7 @@ describe('sub-project 15 labels', () => {
       'clinical_staff_only',
       'context_changed',
       'not_in_review',
+      'reason_required',
     ]) {
       expect(REQUEST_ERROR_LABELS[code]).toBeTypeOf('string')
       expect(requestErrorLabel(code)).toBe(REQUEST_ERROR_LABELS[code])

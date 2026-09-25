@@ -159,16 +159,17 @@ export function returnedByLabel(code: string | null | undefined): string {
 export const REQUEST_ERROR_LABELS: Record<string, string> = {
   invalid_request: 'בקשה לא תקינה',
   invalid_template: 'התבנית אינה ידועה או אינה מתאימה לסוג הבקשה',
-  unexpected_param: 'התבנית הזו אינה מקבלת פרמטר',
+  unexpected_param: 'הבקשה כוללת פרמטר שהתבנית או סוג הבקשה אינם מקבלים',
   invalid_param: 'ערך הפרמטר אינו ברשימה הסגורה של התבנית',
   message_required: 'יש להזין טקסט להודעה',
   document_service_not_configured: 'שירות המסמכים אינו מוגדר במערכת',
   invalid_deadline: 'מועד היעד אינו תקין',
   message_not_allowed: 'לא ניתן לצרף הודעה לאישור המשך',
-  human_engaged: 'כבר נשלחה בקשה למטופל בפנייה זו',
+  human_engaged: 'לא ניתן לאשר המשך: כבר נשלחה בקשה למטופל בפנייה זו',
   clinical_staff_only: 'הפעולה מותרת לאיש צוות קליני בלבד',
   context_changed: 'המידע המוצג השתנה. יש לרענן ולנסות שוב',
   not_in_review: 'הפנייה אינה ממתינה להכרעת צוות',
+  reason_required: 'יש לציין סיבה',
 }
 
 /** The Hebrew label for a request/decision-message error code, or the code when it is unknown. */

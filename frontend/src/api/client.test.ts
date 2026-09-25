@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import * as api from './client'
 import { ApiError } from './client'
+import type { MessageBody, PatientRequestBody } from './types'
 
 type FetchMock = ReturnType<typeof vi.fn>
 
@@ -214,11 +215,13 @@ describe('staff routes', () => {
 
   it('sends a decision with a closing message, copying only its set fields (sub-project 15)', async () => {
     mockOnce(200, { case_id: 'CASE-1', state: 'Completed' })
+    // An extra, unrecognised key proves the client copies known fields, not the whole object.
+    const message = { template_id: 'close_out_of_scope', mode: 'template' } as MessageBody
     await api.decide('CASE-1', {
       decision: 'reject',
       reason: 'out of scope',
       shown_context_ref: 'ctx-abc',
-      message: { template_id: 'close_out_of_scope', param: undefined, text: undefined },
+      message,
     })
     const [url, init] = lastCall()
     expect(url).toBe('/api/staff/cases/CASE-1/decision')
@@ -229,6 +232,7 @@ describe('staff routes', () => {
       shown_context_ref: 'ctx-abc',
       message: { template_id: 'close_out_of_scope' },
     })
+    expect(body.message.mode).toBeUndefined()
   })
 
   it('tombstones a Data Log entry', async () => {
@@ -246,21 +250,26 @@ describe('patient requests (sub-project 15)', () => {
 
   it('posts a staff request to the case', async () => {
     mockOnce(200, { case_id: 'C-1', state: 'AwaitingPatientReply' })
-    await api.requestFromPatient('C-1', {
+    // An extra, unrecognised key proves the client copies known fields, not the whole object.
+    const body = {
       kind: 'question',
       template_id: 'clarify_general',
       reason: 'unclear',
       shown_context_ref: 'ref-1',
-    })
+      mode: 'template',
+    } as PatientRequestBody
+    await api.requestFromPatient('C-1', body)
     const [url, init] = lastCall()
     expect(url).toBe('/api/staff/cases/C-1/request')
     expect(init.method).toBe('POST')
-    expect(JSON.parse(init.body as string)).toEqual({
+    const sent = JSON.parse(init.body as string)
+    expect(sent).toEqual({
       kind: 'question',
       template_id: 'clarify_general',
       reason: 'unclear',
       shown_context_ref: 'ref-1',
     })
+    expect(sent.mode).toBeUndefined()
   })
 
   it('posts the patient text reply', async () => {

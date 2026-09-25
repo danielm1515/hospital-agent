@@ -154,10 +154,10 @@ const ERROR_DETAILS: Record<string, string> = {
   document_service_unavailable: 'שירות המסמכים אינו זמין כרגע. נסו שוב מאוחר יותר או פנו למוקד המטופלים.',
   file_upload_not_enabled: 'העלאת קובץ אינה זמינה כרגע. נסו שוב מאוחר יותר או פנו למוקד המטופלים.',
   // Sub-project 15 (`docs/api.md` §8): the patient's reply to a staff request.
-  not_waiting_for_reply: 'הפנייה כבר אינה ממתינה לתשובה. רעננו את המסך ונסו שוב.',
+  not_waiting_for_reply: 'הפנייה כבר אינה ממתינה לתשובה. רעננו את המסך כדי לראות את מצב הפנייה.',
   reply_kind_mismatch: 'לא ניתן להשיב בדרך זו לבקשה שנשלחה. רעננו את המסך ונסו שוב.',
   reply_not_accepted: 'לא הצלחנו לקלוט את התשובה. נסו שוב בעוד רגע או פנו למוקד המטופלים.',
-  reply_too_long: 'התשובה ארוכה מדי. יש לקצר אותה לעד 2000 תווים.',
+  reply_too_long: 'התשובה ארוכה מדי. יש לקצר אותה ל־2000 תווים לכל היותר.',
 }
 
 /**
