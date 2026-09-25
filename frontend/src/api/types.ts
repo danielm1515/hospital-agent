@@ -18,6 +18,7 @@ export const STATES = [
   'Ready',
   'Completed',
   'Failed',
+  'AwaitingPatientReply', // sub-project 15's extension (docs/api.md §8)
 ] as const
 export type State = (typeof STATES)[number]
 
@@ -75,6 +76,7 @@ export type PatientStatus =
   | 'received'
   | 'in_progress'
   | 'needs_document'
+  | 'needs_reply'
   | 'in_review'
   | 'completed'
   | 'closed'
@@ -96,7 +98,7 @@ export interface PatientView {
   missing_document_ids: string[]
   /** `'missing-document-v1'` iff `status === 'needs_document'` (D24). */
   missing_document_request_template_id: string | null
-  /** The delivered outgoing message iff `status === 'completed'`. */
+  /** The delivered message iff `status === 'completed'`; the closing message, if any, when `closed`. */
   message: string | null
   /**
    * Every status change, oldest first, with the time the case entered it. The last
@@ -110,6 +112,10 @@ export interface PatientView {
    * `POST .../documents` otherwise. The same for every case of a running server.
    */
   document_upload: 'file' | 'text'
+  /** Sub-project 15: what the staff asked for, iff `status === 'needs_reply'`. */
+  reply_request: ReplyRequest | null
+  /** Staff messages the patient may see and the patient's replies, oldest first. */
+  conversation: ConversationEntry[]
 }
 
 export interface CreateRequestBody {
@@ -146,10 +152,15 @@ export type UploadCode =
   | 'unreadable'
   | 'expired'
   | 'not_yours'
+  | 'wrong_document_type'
 
 export interface UploadResult {
   code: UploadCode
-  /** The catalog type for `accepted`, `not_required` and `already_received`; `null` otherwise. */
+  /**
+   * The catalog type for `accepted`, `not_required` and `already_received`, and (sub-project
+   * 15, `docs/api.md` §8) for `wrong_document_type` - the type the document actually was, not
+   * the one that was requested; `null` otherwise.
+   */
   document_type: DocumentType | null
 }
 
@@ -230,6 +241,10 @@ export interface ReviewItem {
   allowed_decisions: Decision[]
   required_fields: RequiredField[]
   updated_at: IsoDateTime
+  /** Sub-project 15: a person has written to the patient - `approve` is never offered again. */
+  human_engaged: boolean
+  /** How the case last came back to review. */
+  returned_by: 'patient_reply' | 'reply_timeout' | null
 }
 
 /** A non-tombstoned Data Log entry in the review context. */
@@ -279,6 +294,8 @@ export interface DecisionBody {
   verified_identity_ref?: string
   /** ISO datetime with a timezone offset. */
   patient_deadline?: IsoDateTime
+  /** Sub-project 15: a closing message, on resolve / reject only. */
+  message?: MessageBody
 }
 
 /** `POST /api/staff/cases/{case_id}/decision` → 200. */
@@ -294,6 +311,47 @@ export interface AnswerBody {
   /** Internal, like a decision's reason: recorded, never sent to the patient. */
   reason: string
   shown_context_ref: string
+}
+
+// ---- Staff requests to the patient (sub-project 15, docs/api.md §8) --------
+
+/** A fixed template (with its parameter) or clinical staff's free text - exactly one. */
+export interface MessageBody {
+  template_id?: string
+  param?: string
+  text?: string
+}
+
+export interface MessageTemplate {
+  template_id: string
+  purpose: 'question' | 'document' | 'closing'
+  text: string
+  /** The `{placeholder}` the text takes, if any. */
+  param: string | null
+  /** The closed list for `param`: code -> Hebrew. */
+  options: Record<string, string>
+}
+
+export interface PatientRequestBody extends MessageBody {
+  kind: 'question' | 'document'
+  reason: string
+  shown_context_ref: string
+  document_type?: string
+  /** ISO datetime with a timezone offset; the server defaults to 24 hours. */
+  deadline?: IsoDateTime
+}
+
+export interface ReplyRequest {
+  kind: 'question' | 'document'
+  message: string | null
+  document_type: string | null
+  deadline: IsoDateTime | null
+}
+
+export interface ConversationEntry {
+  sender: 'staff' | 'patient'
+  text: string
+  at: IsoDateTime
 }
 
 // ---- Errors ---------------------------------------------------------------

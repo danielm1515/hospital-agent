@@ -25,6 +25,8 @@ export function patientView(overrides: Partial<PatientView> = {}): PatientView {
     message: null,
     history: historyFor(status),
     document_upload: 'text',
+    reply_request: null,
+    conversation: [],
     ...overrides,
   }
 }

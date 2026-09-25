@@ -18,6 +18,8 @@ import type {
   LoginResponse,
   Me,
   Metrics,
+  MessageTemplate,
+  PatientRequestBody,
   PatientView,
   PdfUploadResponse,
   ReviewContext,
@@ -253,6 +255,26 @@ export function answer(caseId: string, body: AnswerBody): Promise<DecisionResult
 
 export async function tombstone(caseId: string, entryId: string): Promise<void> {
   await request<void>('DELETE', `/staff/cases/${id(caseId)}/data/${id(entryId)}`)
+}
+
+// ---- Staff requests to the patient (sub-project 15) ------------------------
+
+export function getMessageTemplates(): Promise<MessageTemplate[]> {
+  return request<MessageTemplate[]>('GET', '/staff/message-templates')
+}
+
+export function requestFromPatient(caseId: string, body: PatientRequestBody): Promise<DecisionResult> {
+  return request<DecisionResult>('POST', `/staff/cases/${id(caseId)}/request`, { body })
+}
+
+export function replyToRequest(caseId: string, text: string): Promise<PatientView> {
+  return request<PatientView>('POST', `/patient/requests/${id(caseId)}/reply`, { body: { text } })
+}
+
+export function replyWithFile(caseId: string, file: File): Promise<PdfUploadResponse> {
+  const form = new FormData()
+  form.append('file', file)
+  return request<PdfUploadResponse>('POST', `/patient/requests/${id(caseId)}/reply/file`, { body: form })
 }
 
 // ---- Admin (sub-project 14) ------------------------------------------------

@@ -100,6 +100,7 @@ const STATUS_TEXT: Record<PatientStatus, { title: string; note: string }> = {
   received: { title: 'הפנייה נקלטה', note: 'הפנייה התקבלה במערכת וממתינה לטיפול.' },
   in_progress: { title: 'הפנייה בטיפול', note: 'בדיקת התור, המסמכים הנדרשים והוראות ההכנה.' },
   needs_document: { title: 'ממתינה למסמך', note: 'כדי להמשיך נדרש מסמך שעדיין לא הועלה.' },
+  needs_reply: { title: 'ממתינה לתשובתך', note: 'איש צוות ביקש ממך פרט נוסף או מסמך.' },
   in_review: { title: 'הועברה לצוות', note: 'איש צוות בודק את הפנייה. מידע רפואי אינו נמסר אוטומטית.' },
   completed: { title: 'הפנייה הושלמה', note: 'נשלחה אליכם הודעת סטטוס.' },
   closed: { title: 'הפנייה נסגרה', note: 'הטיפול הסתיים בלי הודעה אוטומטית.' },

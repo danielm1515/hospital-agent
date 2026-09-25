@@ -5,6 +5,7 @@ export const STATUS_LABELS: Record<PatientStatus, string> = {
   received: 'התקבלה',
   in_progress: 'בטיפול',
   needs_document: 'ממתינה למסמך',
+  needs_reply: 'ממתינה לתשובתך',
   in_review: 'אצל צוות',
   completed: 'הושלמה',
   closed: 'נסגרה',

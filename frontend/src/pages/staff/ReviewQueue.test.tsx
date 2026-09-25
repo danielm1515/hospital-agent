@@ -20,6 +20,8 @@ const MEDICAL: ReviewItem = {
   allowed_decisions: ['resolve', 'reject'],
   required_fields: [],
   updated_at: '2026-09-19T22:12:39.693277Z',
+  human_engaged: false,
+  returned_by: null,
 }
 
 const Z3: ReviewItem = {
@@ -31,6 +33,8 @@ const Z3: ReviewItem = {
   allowed_decisions: ['approve', 'resolve', 'reject'],
   required_fields: ['patient_deadline'],
   updated_at: '2026-09-19T22:14:02.100000Z',
+  human_engaged: false,
+  returned_by: null,
 }
 
 function renderQueue(route = '/staff') {

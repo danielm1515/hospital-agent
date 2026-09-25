@@ -47,6 +47,7 @@ export const STATE_LABELS: Record<State, string> = {
   Ready: 'מוכנה למסירה',
   Completed: 'הושלמה',
   Failed: 'נכשלה',
+  AwaitingPatientReply: 'ממתינה לתשובת המטופל',
 }
 
 export function stateLabel(state: string | null | undefined): string {
@@ -130,10 +131,18 @@ export const DATA_KIND_LABELS: Record<string, string> = {
   uploaded_document: 'מסמכים שהועלו',
   instructions: 'הוראות שנטענו',
   outgoing_message: 'הודעה יוצאת',
+  staff_message: 'הודעת צוות למטופל',
+  patient_reply: 'תשובת המטופל',
 }
 
 export function dataKindLabel(kind: string): string {
   return DATA_KIND_LABELS[kind] ?? kind
+}
+
+/** Sub-project 15: how a case last came back to the review queue. */
+export const RETURNED_BY_LABELS: Record<'patient_reply' | 'reply_timeout', string> = {
+  patient_reply: 'התקבלה תשובת מטופל',
+  reply_timeout: 'לא נענתה בזמן',
 }
 
 /** Groups Data Log entries by kind, known kinds first, in API order inside a group. */

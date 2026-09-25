@@ -222,6 +222,46 @@ describe('staff routes', () => {
   })
 })
 
+describe('patient requests (sub-project 15)', () => {
+  beforeEach(() => api.setToken('tok-1'))
+
+  it('posts a staff request to the case', async () => {
+    mockOnce(200, { case_id: 'C-1', state: 'AwaitingPatientReply' })
+    await api.requestFromPatient('C-1', {
+      kind: 'question',
+      template_id: 'clarify_general',
+      reason: 'unclear',
+      shown_context_ref: 'ref-1',
+    })
+    const [url, init] = lastCall()
+    expect(url).toBe('/api/staff/cases/C-1/request')
+    expect(init.method).toBe('POST')
+    expect(JSON.parse(init.body as string)).toMatchObject({ kind: 'question', template_id: 'clarify_general' })
+  })
+
+  it('posts the patient text reply', async () => {
+    mockOnce(200, {})
+    await api.replyToRequest('C-1', 'כן')
+    const [url, init] = lastCall()
+    expect(url).toBe('/api/patient/requests/C-1/reply')
+    expect(JSON.parse(init.body as string)).toEqual({ text: 'כן' })
+  })
+
+  it('posts the requested PDF as multipart', async () => {
+    mockOnce(200, {})
+    await api.replyWithFile('C-1', new File(['%PDF'], 'a.pdf', { type: 'application/pdf' }))
+    const [url, init] = lastCall()
+    expect(url).toBe('/api/patient/requests/C-1/reply/file')
+    expect(init.body).toBeInstanceOf(FormData)
+  })
+
+  it('reads the message templates', async () => {
+    mockOnce(200, [])
+    await api.getMessageTemplates()
+    expect(lastCall()[0]).toBe('/api/staff/message-templates')
+  })
+})
+
 describe('getMetrics', () => {
   it('sends the window as ISO instants, URL-encoded', async () => {
     mockOnce(200, {})

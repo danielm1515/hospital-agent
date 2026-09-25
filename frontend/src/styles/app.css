@@ -432,6 +432,12 @@ img {
   color: var(--warning-500);
 }
 
+.pill-needs_reply {
+  background: var(--surface-000);
+  border-color: var(--warning-500);
+  color: var(--warning-500);
+}
+
 .pill-in_review {
   background: var(--teal-100);
   border-color: var(--teal-100);

@@ -26,6 +26,8 @@ const MEDICAL_ITEM: ReviewItem = {
   allowed_decisions: ['resolve', 'reject'],
   required_fields: [],
   updated_at: '2026-09-19T22:12:39.693277Z',
+  human_engaged: false,
+  returned_by: null,
 }
 
 const Z3_ITEM: ReviewItem = {
