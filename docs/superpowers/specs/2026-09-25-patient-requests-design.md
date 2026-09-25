@@ -96,6 +96,7 @@
    T13  G(AgentState -> ¬ O PATIENT_REPLY_REQUESTED)
    ```
    `AgentState` = `state_after` באחד המצבים שבהם רכיב AI או ה־Tool Executor פועלים: `Classifying`, `Classified`, `Planning`, `RetrievingData`, `Delivering`, `AssessingReadiness`, `Ready`. ה־Monitor בודק לפני כל commit; הפרה נחסמת ומוסלמת כ־`TemporalViolation`, כמו כל חוק. החוק קורא רק את `event` ו־`state_after` שכבר בשורות ה־Audit — אין ראיה חדשה לרשום.
+   **השכבה הראשונה היא ה־guard, ו־T13 הוא רשת ביטחון.** ה־prototype הראה ש־T13 לבדו חוסם את `HUMAN_APPROVED` כנדרש, אבל אז גם ניסיון ההסלמה `TemporalViolation` נחסם (אין שורה `AwaitingHumanReview → HUMAN_REVIEW_REQUIRED`), ונשארות שתי שורות `Blocked`. זה בטוח — הפנייה נשארת ב־`AwaitingHumanReview` — אבל לא סירוב נקי. ה־guard מסרב לפני כל זה, עם הסיבה `human_engaged`.
 3. **במבנה:** אף שורה (spec או הרחבה) לא יוצאת מ־`AwaitingPatientReply` למצב AI; `AwaitingPatientReply` לא ב־`ACTIVE_STATES`, כך שה־Orchestrator לא נוגע בו; תשובת המטופל נשמרת בסוג Data Log חדש (`patient_reply`) שה־Classifier לא קורא.
 
 ## 7. ההודעות
@@ -168,7 +169,9 @@
 
 ## 11. מסד הנתונים — מיגרציה 0006
 
-על `cases`: `human_engaged BOOLEAN NOT NULL DEFAULT false`, `reply_kind TEXT NULL`, `requested_document TEXT NULL`. `db.py` משקף אותה (`test_schema.py` בודק), ו־`CaseRecord` מקבל שלושה שדות עם ברירות מחדל. ל־`hospital_app` כבר יש `UPDATE` על `cases`. Additive בלבד; תרוץ על ה־RDS בעלייה הבאה.
+- על `cases`: `human_engaged BOOLEAN NOT NULL DEFAULT false`, `reply_kind TEXT NULL`, `requested_document TEXT NULL`. `db.py` משקף אותן (`test_schema.py` בודק), ו־`CaseRecord` מקבל שלושה שדות עם ברירות מחדל. ל־`hospital_app` כבר יש `UPDATE` על `cases`.
+- **שני CHECK constraints מורחבים** (נמצא ב־prototype — בלעדיהם ה־DB עצמו דוחה את הכתיבה): `ck_approvals_decision` מקבל גם `'request'`, ו־`ck_data_log_kind` מקבל גם `'staff_message'` ו־`'patient_reply'`. כל אחד נמחק ונוצר מחדש באותה מיגרציה; ה־downgrade מחזיר את הרשימה המקורית.
+- Additive בלבד; תרוץ על ה־RDS בעלייה הבאה.
 
 ## 12. ה־UI
 
