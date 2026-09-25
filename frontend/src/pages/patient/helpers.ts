@@ -93,7 +93,7 @@ export function elapsedBetween(from: string, to: string): string | null {
 
 /**
  * What each status means, in the patient's own words: a title for the timeline step,
- * and one line saying what it means for them. The patient sees only these six abstract
+ * and one line saying what it means for them. The patient sees only these seven abstract
  * statuses, so nothing here names a State, an event or a reason (§12.3).
  */
 const STATUS_TEXT: Record<PatientStatus, { title: string; note: string }> = {
@@ -142,15 +142,22 @@ export const FILE_TOO_LARGE_MESSAGE = 'הקובץ גדול מדי. אפשר לה
 export const MAX_UPLOAD_BYTES = 10 * 1024 * 1024
 
 /**
- * Hebrew for the sub-project 13 upload errors (`docs/api.md` §4), keyed by `detail`.
- * Checked before the generic status-based fallbacks below, since a `404` here
- * (`file_upload_not_enabled`) is not the same as the generic "case not found" `404`.
+ * Hebrew for the sub-project 13 upload errors and the sub-project 15 reply errors
+ * (`docs/api.md` §4, §8), keyed by `detail`. Checked before the generic status-based
+ * fallbacks below, since a `404` here (`file_upload_not_enabled`) is not the same as
+ * the generic "case not found" `404`. A code not listed here still falls back to the
+ * generic sentence below, never to the raw code (§12.3).
  */
 const ERROR_DETAILS: Record<string, string> = {
   not_waiting_for_document: 'הפנייה כבר אינה ממתינה למסמך. רעננו את המסך ונסו שוב.',
   too_large: FILE_TOO_LARGE_MESSAGE,
   document_service_unavailable: 'שירות המסמכים אינו זמין כרגע. נסו שוב מאוחר יותר או פנו למוקד המטופלים.',
   file_upload_not_enabled: 'העלאת קובץ אינה זמינה כרגע. נסו שוב מאוחר יותר או פנו למוקד המטופלים.',
+  // Sub-project 15 (`docs/api.md` §8): the patient's reply to a staff request.
+  not_waiting_for_reply: 'הפנייה כבר אינה ממתינה לתשובה. רעננו את המסך ונסו שוב.',
+  reply_kind_mismatch: 'לא ניתן להשיב בדרך זו לבקשה שנשלחה. רעננו את המסך ונסו שוב.',
+  reply_not_accepted: 'לא הצלחנו לקלוט את התשובה. נסו שוב בעוד רגע או פנו למוקד המטופלים.',
+  reply_too_long: 'התשובה ארוכה מדי. יש לקצר אותה לעד 2000 תווים.',
 }
 
 /**

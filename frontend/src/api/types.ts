@@ -336,7 +336,8 @@ export interface PatientRequestBody extends MessageBody {
   kind: 'question' | 'document'
   reason: string
   shown_context_ref: string
-  document_type?: string
+  /** A catalog type - `kind: 'document'` only. */
+  document_type?: DocumentType
   /** ISO datetime with a timezone offset; the server defaults to 24 hours. */
   deadline?: IsoDateTime
 }
@@ -344,7 +345,8 @@ export interface PatientRequestBody extends MessageBody {
 export interface ReplyRequest {
   kind: 'question' | 'document'
   message: string | null
-  document_type: string | null
+  /** The requested catalog type for `kind: 'document'`, else `null`. */
+  document_type: DocumentType | null
   deadline: IsoDateTime | null
 }
 

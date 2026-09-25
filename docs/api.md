@@ -355,7 +355,7 @@ Optional `?state=<State>`; an unknown state is `422 invalid_body`. `200`:
 
 States: `Received`, `Classifying`, `Classified`, `Planning`, `RetrievingData`,
 `Delivering`, `AssessingReadiness`, `AwaitingPatientInput`, `AwaitingHumanReview`, `Ready`,
-`Completed`, `Failed`.
+`Completed`, `Failed`, `AwaitingPatientReply` (sub-project 15, §8).
 
 ### GET /api/staff/cases/{case_id}
 
@@ -501,8 +501,9 @@ Everything the reviewer is shown, plus the reference that binds the decision to 
 ```
 
 - `data` is the Data Log (§12.3) - the only place content lives. `kind` is `request_text`,
-  `uploaded_document`, `instructions` or `outgoing_message`. Deleted entries and uploads
-  the case never accepted are not listed at all.
+  `uploaded_document`, `instructions`, `outgoing_message`, `staff_message` or `patient_reply`
+  (the last two, sub-project 15, §8). Deleted entries and uploads the case never accepted
+  are not listed at all.
 - `trace` is the same audit rows as `/audit`, with the content-free subset above.
 - `shown_context_ref` **must be sent back with the decision**. Fetch the context, show it,
   and post the decision with the `shown_context_ref` that came with what the reviewer read.
@@ -664,7 +665,8 @@ in one read-only snapshot with a 5 s statement timeout; past it the answer is
   },
   "human_load": {
     "escalations_entered": 2,
-    "decisions": {"HUMAN_APPROVED": 1, "HUMAN_RESOLVED_CASE": 1, "HUMAN_REJECTED": 0},
+    "decisions": {"HUMAN_APPROVED": 1, "HUMAN_RESOLVED_CASE": 1, "HUMAN_REJECTED": 0,
+                  "PATIENT_REPLY_REQUESTED": 0},
     "decided_by_kind": {"MedicalQuestion": 1, "RetryExhausted": 1},
     "open_by_kind": {},
     "time_to_decision": {"count": 2, "p50": 0.011, "p95": 0.012, "max": 0.012},

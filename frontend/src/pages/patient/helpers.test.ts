@@ -61,6 +61,15 @@ describe('patient helpers', () => {
     expect(errorMessage(new ApiError(503, 'document_service_unavailable'))).toMatch(/שירות המסמכים אינו זמין/)
   })
 
+  it('gives Hebrew for the sub-project 15 reply errors, never the raw code', () => {
+    expect(errorMessage(new ApiError(409, 'not_waiting_for_reply'))).toMatch(/אינה ממתינה לתשובה/)
+    expect(errorMessage(new ApiError(409, 'reply_kind_mismatch'))).toMatch(/לא ניתן להשיב בדרך זו/)
+    expect(errorMessage(new ApiError(409, 'reply_not_accepted'))).toMatch(/לא הצלחנו לקלוט את התשובה/)
+    expect(errorMessage(new ApiError(422, 'reply_too_long'))).toMatch(/ארוכה מדי/)
+    // An unknown code still falls back to the generic sentence, never the code itself.
+    expect(errorMessage(new ApiError(409, 'some_future_code'))).not.toMatch(/some_future_code/)
+  })
+
   it('prints the time to the second, so two steps in the same minute differ', () => {
     expect(formatClock('2026-09-19T22:12:47Z')).toMatch(/\d{2}:\d{2}:\d{2}/)
     expect(formatClock('2026-09-19T22:12:47Z')).not.toBe(formatClock('2026-09-19T22:12:49Z'))

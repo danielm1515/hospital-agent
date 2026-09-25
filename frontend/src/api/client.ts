@@ -18,6 +18,7 @@ import type {
   LoginResponse,
   Me,
   Metrics,
+  MessageBody,
   MessageTemplate,
   PatientRequestBody,
   PatientView,
@@ -155,6 +156,15 @@ async function request<T>(method: Method, path: string, options: RequestOptions 
 
 const id = encodeURIComponent
 
+/** Copies only the `MessageBody` fields that are actually set. */
+function messagePayload(message: MessageBody): MessageBody {
+  const payload: MessageBody = {}
+  if (message.template_id !== undefined) payload.template_id = message.template_id
+  if (message.param !== undefined) payload.param = message.param
+  if (message.text !== undefined) payload.text = message.text
+  return payload
+}
+
 // ---- Auth -----------------------------------------------------------------
 
 /** Logs in and stores the token. A 401 here is `invalid_credentials`, not an ended session. */
@@ -240,6 +250,7 @@ export function decide(caseId: string, body: DecisionBody): Promise<DecisionResu
   }
   if (body.verified_identity_ref !== undefined) payload.verified_identity_ref = body.verified_identity_ref
   if (body.patient_deadline !== undefined) payload.patient_deadline = body.patient_deadline
+  if (body.message !== undefined) payload.message = messagePayload(body.message)
   return request<DecisionResult>('POST', `/staff/cases/${id(caseId)}/decision`, { body: payload })
 }
 
@@ -263,8 +274,19 @@ export function getMessageTemplates(): Promise<MessageTemplate[]> {
   return request<MessageTemplate[]>('GET', '/staff/message-templates')
 }
 
+/** Sends only the fields of `PatientRequestBody`; the reviewer comes from the token. */
 export function requestFromPatient(caseId: string, body: PatientRequestBody): Promise<DecisionResult> {
-  return request<DecisionResult>('POST', `/staff/cases/${id(caseId)}/request`, { body })
+  const payload: PatientRequestBody = {
+    kind: body.kind,
+    reason: body.reason,
+    shown_context_ref: body.shown_context_ref,
+  }
+  if (body.template_id !== undefined) payload.template_id = body.template_id
+  if (body.param !== undefined) payload.param = body.param
+  if (body.text !== undefined) payload.text = body.text
+  if (body.document_type !== undefined) payload.document_type = body.document_type
+  if (body.deadline !== undefined) payload.deadline = body.deadline
+  return request<DecisionResult>('POST', `/staff/cases/${id(caseId)}/request`, { body: payload })
 }
 
 export function replyToRequest(caseId: string, text: string): Promise<PatientView> {

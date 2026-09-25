@@ -212,6 +212,25 @@ describe('staff routes', () => {
     expect(body.patient_id).toBeUndefined()
   })
 
+  it('sends a decision with a closing message, copying only its set fields (sub-project 15)', async () => {
+    mockOnce(200, { case_id: 'CASE-1', state: 'Completed' })
+    await api.decide('CASE-1', {
+      decision: 'reject',
+      reason: 'out of scope',
+      shown_context_ref: 'ctx-abc',
+      message: { template_id: 'close_out_of_scope', param: undefined, text: undefined },
+    })
+    const [url, init] = lastCall()
+    expect(url).toBe('/api/staff/cases/CASE-1/decision')
+    const body = JSON.parse(init.body as string)
+    expect(body).toEqual({
+      decision: 'reject',
+      reason: 'out of scope',
+      shown_context_ref: 'ctx-abc',
+      message: { template_id: 'close_out_of_scope' },
+    })
+  })
+
   it('tombstones a Data Log entry', async () => {
     // jsdom's Response refuses status 204, so stand in for an empty response.
     fetchMock.mockResolvedValueOnce({ ok: true, status: 204, text: async () => '' } as Response)
@@ -236,7 +255,12 @@ describe('patient requests (sub-project 15)', () => {
     const [url, init] = lastCall()
     expect(url).toBe('/api/staff/cases/C-1/request')
     expect(init.method).toBe('POST')
-    expect(JSON.parse(init.body as string)).toMatchObject({ kind: 'question', template_id: 'clarify_general' })
+    expect(JSON.parse(init.body as string)).toEqual({
+      kind: 'question',
+      template_id: 'clarify_general',
+      reason: 'unclear',
+      shown_context_ref: 'ref-1',
+    })
   })
 
   it('posts the patient text reply', async () => {
@@ -247,12 +271,20 @@ describe('patient requests (sub-project 15)', () => {
     expect(JSON.parse(init.body as string)).toEqual({ text: 'כן' })
   })
 
-  it('posts the requested PDF as multipart', async () => {
+  it('posts the requested PDF as multipart form data, with the file and the bearer token', async () => {
     mockOnce(200, {})
-    await api.replyWithFile('C-1', new File(['%PDF'], 'a.pdf', { type: 'application/pdf' }))
+    const file = new File(['%PDF'], 'a.pdf', { type: 'application/pdf' })
+    await api.replyWithFile('C-1', file)
     const [url, init] = lastCall()
     expect(url).toBe('/api/patient/requests/C-1/reply/file')
+    expect(init.method).toBe('POST')
+    expect((init.headers as Record<string, string>).Authorization).toBe('Bearer tok-1')
+    // The browser sets the multipart boundary itself: no Content-Type is set by hand.
+    expect((init.headers as Record<string, string>)['Content-Type']).toBeUndefined()
     expect(init.body).toBeInstanceOf(FormData)
+    const sent = (init.body as FormData).get('file')
+    expect(sent).toBeInstanceOf(File)
+    expect((sent as File).name).toBe('a.pdf')
   })
 
   it('reads the message templates', async () => {

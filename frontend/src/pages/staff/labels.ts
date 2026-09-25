@@ -31,8 +31,9 @@ export function escalationLabel(kind: string | null | undefined): string {
 }
 
 /**
- * The 12 States (§2.1) in Hebrew. Shown next to the State itself, never instead of
- * it - the code is what the spec, the Audit and the guards all use.
+ * The 13 States (§2.1, plus sub-project 15's `AwaitingPatientReply`) in Hebrew. Shown
+ * next to the State itself, never instead of it - the code is what the spec, the Audit
+ * and the guards all use.
  */
 export const STATE_LABELS: Record<State, string> = {
   Received: 'התקבלה',
@@ -143,6 +144,36 @@ export function dataKindLabel(kind: string): string {
 export const RETURNED_BY_LABELS: Record<'patient_reply' | 'reply_timeout', string> = {
   patient_reply: 'התקבלה תשובת מטופל',
   reply_timeout: 'לא נענתה בזמן',
+}
+
+/** The Hebrew label for `returned_by`, or the raw code when it is unknown. */
+export function returnedByLabel(code: string | null | undefined): string {
+  if (!code) return '—'
+  return RETURNED_BY_LABELS[code as 'patient_reply' | 'reply_timeout'] ?? code
+}
+
+/**
+ * Sub-project 15: the error codes from the staff request/decision-message routes
+ * (`docs/api.md` §5, §8) - a Hebrew sentence beside the code, never instead of it.
+ */
+export const REQUEST_ERROR_LABELS: Record<string, string> = {
+  invalid_request: 'בקשה לא תקינה',
+  invalid_template: 'התבנית אינה ידועה או אינה מתאימה לסוג הבקשה',
+  unexpected_param: 'התבנית הזו אינה מקבלת פרמטר',
+  invalid_param: 'ערך הפרמטר אינו ברשימה הסגורה של התבנית',
+  message_required: 'יש להזין טקסט להודעה',
+  document_service_not_configured: 'שירות המסמכים אינו מוגדר במערכת',
+  invalid_deadline: 'מועד היעד אינו תקין',
+  message_not_allowed: 'לא ניתן לצרף הודעה לאישור המשך',
+  human_engaged: 'כבר נשלחה בקשה למטופל בפנייה זו',
+  clinical_staff_only: 'הפעולה מותרת לאיש צוות קליני בלבד',
+  context_changed: 'המידע המוצג השתנה. יש לרענן ולנסות שוב',
+  not_in_review: 'הפנייה אינה ממתינה להכרעת צוות',
+}
+
+/** The Hebrew label for a request/decision-message error code, or the code when it is unknown. */
+export function requestErrorLabel(code: string): string {
+  return REQUEST_ERROR_LABELS[code] ?? code
 }
 
 /** Groups Data Log entries by kind, known kinds first, in API order inside a group. */
