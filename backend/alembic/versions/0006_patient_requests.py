@@ -35,10 +35,15 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    # NOT VALID, not op.create_check_constraint's validated form: the project never deletes
+    # data (§18.4), so a downgrade must not refuse to run just because rows already use the
+    # values this migration added (an approval with decision 'request', a data_log row of kind
+    # 'staff_message' or 'patient_reply'). NOT VALID still refuses any new write of a removed
+    # value; it only skips checking rows that are already there.
     op.drop_constraint("ck_data_log_kind", "data_log", type_="check")
-    op.create_check_constraint("ck_data_log_kind", "data_log", KINDS)
+    op.execute(f"ALTER TABLE data_log ADD CONSTRAINT ck_data_log_kind CHECK ({KINDS}) NOT VALID")
     op.drop_constraint("ck_approvals_decision", "approvals", type_="check")
-    op.create_check_constraint("ck_approvals_decision", "approvals", DECISIONS)
+    op.execute(f"ALTER TABLE approvals ADD CONSTRAINT ck_approvals_decision CHECK ({DECISIONS}) NOT VALID")
     op.drop_column("cases", "requested_document")
     op.drop_column("cases", "reply_kind")
     op.drop_column("cases", "human_engaged")
