@@ -126,3 +126,29 @@ def test_spec_7_deviations(deviation, trace, candidate, rule):
     assert TemporalMonitor().check(trace, candidate) == rule
     # the sixth deviation, "a State change without a matching Event", is the State Manager's
     # §3 table check: tests/test_fsm.py and tests/test_state_manager.py (guard_failed).
+
+
+# --- T13, sub-project 15's extension (docs/spec_corrections.md row 84) -----------------------
+
+REQUEST_THEN_REPLY = [
+    row("RETRY_EXHAUSTED", "AwaitingHumanReview"),
+    row("PATIENT_REPLY_REQUESTED", "AwaitingPatientReply"),
+    row("PATIENT_REPLY_SUBMITTED", "AwaitingHumanReview"),
+]
+
+
+@pytest.mark.parametrize("state", ["Classifying", "Classified", "Planning", "RetrievingData", "Delivering",
+                                   "AssessingReadiness", "Ready"])
+def test_t13_no_agent_state_after_a_request(state):
+    found = [(v.rule, v.index) for v in violations([*REQUEST_THEN_REPLY, row("HUMAN_APPROVED", state)])]
+    assert ("T13", 3) in found
+
+
+def test_t13_holds_while_the_case_stays_with_people():
+    trace = [*REQUEST_THEN_REPLY, row("HUMAN_RESOLVED_CASE", "Completed")]
+    assert "T13" not in {v.rule for v in violations(trace)}
+
+
+def test_t13_holds_without_a_request():
+    trace = [row("RETRY_EXHAUSTED", "AwaitingHumanReview"), row("HUMAN_APPROVED", "Planning")]
+    assert "T13" not in {v.rule for v in violations(trace)}
