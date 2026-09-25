@@ -277,7 +277,14 @@ class HumanReviewService:
         else:
             raise DecisionRejected("invalid_request")
         now = self.sm.clock()
-        deadline = deadline or now + DEFAULT_REPLY_WINDOW
+        if deadline is not None and deadline.tzinfo is None:
+            raise DecisionRejected("invalid_deadline")
+        if deadline is None:
+            # Design decision (fix round 1): default to the request window, but never past a
+            # known appointment - the same ceiling an explicit deadline is held to below.
+            deadline = now + DEFAULT_REPLY_WINDOW
+            if case.appointment_at is not None:
+                deadline = min(deadline, case.appointment_at)
         if not now < deadline <= now + MAX_REPLY_WINDOW or (
                 case.appointment_at is not None and deadline > case.appointment_at):
             raise DecisionRejected("invalid_deadline")
@@ -342,8 +349,16 @@ class HumanReviewService:
         return payload, entry.entry_id
 
     def _apply(self, case_id: str, event: Event, payload: dict[str, Any], entry_id: str | None) -> TransitionResult:
-        """Apply a human event; a blocked one leaves no readable message behind (§12.3)."""
-        result = self.sm.apply(case_id, event, payload, Component.EXTERNAL)
+        """Apply a human event; a blocked - or raising - one leaves no readable message behind
+        (§12.3), the same fail-closed pattern as `answer()`: `sm.apply()` can also raise instead
+        of returning a not-committed result (ReprocessLimitExceeded, or the Temporal Monitor
+        being unavailable, which by design lets its exception through uncaught)."""
+        try:
+            result = self.sm.apply(case_id, event, payload, Component.EXTERNAL)
+        except Exception:
+            if entry_id is not None:
+                self._tombstone_unauthorised(entry_id)
+            raise
         if not result.committed:
             if entry_id is not None:
                 self._tombstone_unauthorised(entry_id)

@@ -8,6 +8,7 @@ from hospital_agent import data_log, repository
 from hospital_agent.human_review import DecisionRejected, HumanReviewService
 from hospital_agent.naming import Component, Event, State
 from hospital_agent.session import SessionService
+from hospital_agent.state_manager import TransitionResult
 from tests.test_patient_request_fsm import escalated
 
 NURSE = dict(reviewer_id="coordinator_nurse", reviewer_role="clinical_staff")
@@ -52,7 +53,17 @@ def test_free_text_needs_clinical_staff(sm, app_engine):
         ask(reviews, d, text="נא לפרט")
     assert refused.value.reason == "clinical_staff_only"
     assert staff_messages(d) == []
-    assert ask(reviews, d, NURSE, text="נא לפרט באיזו מחלקה התור").committed
+    result = ask(reviews, d, NURSE, text="נא לפרט באיזו מחלקה התור")
+    assert result.committed
+    # The clinical free text is bound the same way the clinical answer is (design §7.3): the
+    # Transition row's content_hash is the staff message's, and the AnswerClinicalQuestion
+    # ContentApproval it rode in on is consumed in the same transaction.
+    [message] = staff_messages(d)
+    requested = [r for r in d.trace() if r.event == "PATIENT_REPLY_REQUESTED" and r.record_type == "Transition"]
+    assert requested[-1].content_hash == message.content_hash
+    with d.engine.connect() as conn:
+        [approval] = list(repository.content_approvals_for(conn, d.case_id, "AnswerClinicalQuestion"))
+    assert approval.consumed_at is not None
 
 
 def test_a_document_request_uses_its_template_and_needs_the_document_service(sm, app_engine):
@@ -152,3 +163,125 @@ def test_a_request_that_runs_out_of_time_is_marked_in_the_queue(sm, app_engine):
 def test_the_templates_are_served(sm):
     ids = {t["template_id"] for t in service(sm).templates()}
     assert {"clarify_general", "document_request", "close_no_reply"} <= ids
+
+
+# --- fail-closed on a message: the two exits _apply() must tombstone (fix round 1) ----------
+# Modelled on tests/test_clinical_answer.py:333 and :359 (`test_a_blocked_transition_...` /
+# `test_a_raising_transition_...`): sm.apply() can either return a not-committed result, or
+# raise (ReprocessLimitExceeded, the Temporal Monitor unavailable). Either way, a staff
+# message that rode a ContentApproval must not stay readable if its event never committed.
+
+def test_a_blocked_request_tombstones_the_free_text_message(sm, app_engine, monkeypatch):
+    d = escalated(sm, app_engine)
+    reviews = service(sm)
+    real_apply = sm.apply
+
+    def blocked_request(case_id, event, payload=None, source=Component.EXTERNAL, **kwargs):
+        if event is Event.PATIENT_REPLY_REQUESTED and (payload or {}).get("message_approval_id"):
+            case = sm.load(case_id)
+            return TransitionResult(case_id=case_id, committed=False, state_before=case.state,
+                                    state_after=case.state, reason="test_blocked")
+        return real_apply(case_id, event, payload, source, **kwargs)
+
+    monkeypatch.setattr(sm, "apply", blocked_request)
+
+    with pytest.raises(DecisionRejected) as refused:
+        ask(reviews, d, NURSE, text="נא לפרט באיזו מחלקה התור")
+    assert refused.value.reason == "test_blocked"
+    [message] = staff_messages(d)
+    assert message.content is None
+    assert message.deleted_at is not None
+
+
+def test_a_raising_request_tombstones_the_free_text_message_too(sm, app_engine, monkeypatch):
+    d = escalated(sm, app_engine)
+    reviews = service(sm)
+    real_apply = sm.apply
+
+    class _MonitorUnavailable(RuntimeError):
+        pass
+
+    def raising_request(case_id, event, payload=None, source=Component.EXTERNAL, **kwargs):
+        if event is Event.PATIENT_REPLY_REQUESTED and (payload or {}).get("message_approval_id"):
+            raise _MonitorUnavailable("temporal monitor unavailable")
+        return real_apply(case_id, event, payload, source, **kwargs)
+
+    monkeypatch.setattr(sm, "apply", raising_request)
+
+    with pytest.raises(_MonitorUnavailable):
+        ask(reviews, d, NURSE, text="נא לפרט באיזו מחלקה התור")
+    [message] = staff_messages(d)
+    assert message.content is None
+    assert message.deleted_at is not None
+
+
+def test_a_blocked_closing_message_tombstones_the_free_text_message(sm, app_engine, monkeypatch):
+    d = escalated(sm, app_engine)
+    reviews = service(sm)
+    real_apply = sm.apply
+
+    def blocked_reject(case_id, event, payload=None, source=Component.EXTERNAL, **kwargs):
+        if event is Event.HUMAN_REJECTED and (payload or {}).get("message_approval_id"):
+            case = sm.load(case_id)
+            return TransitionResult(case_id=case_id, committed=False, state_before=case.state,
+                                    state_after=case.state, reason="test_blocked")
+        return real_apply(case_id, event, payload, source, **kwargs)
+
+    monkeypatch.setattr(sm, "apply", blocked_reject)
+
+    with pytest.raises(DecisionRejected) as refused:
+        reviews.decide(case_id=d.case_id, decision="reject", reason="not ours",
+                       shown_context_ref=reviews.context(d.case_id).shown_context_ref,
+                       message={"text": "נא לפנות ישירות למרפאה"}, **NURSE)
+    assert refused.value.reason == "test_blocked"
+    [message] = staff_messages(d)
+    assert message.content is None
+    assert message.deleted_at is not None
+
+
+def test_a_raising_closing_message_tombstones_the_free_text_message_too(sm, app_engine, monkeypatch):
+    d = escalated(sm, app_engine)
+    reviews = service(sm)
+    real_apply = sm.apply
+
+    class _MonitorUnavailable(RuntimeError):
+        pass
+
+    def raising_reject(case_id, event, payload=None, source=Component.EXTERNAL, **kwargs):
+        if event is Event.HUMAN_REJECTED and (payload or {}).get("message_approval_id"):
+            raise _MonitorUnavailable("temporal monitor unavailable")
+        return real_apply(case_id, event, payload, source, **kwargs)
+
+    monkeypatch.setattr(sm, "apply", raising_reject)
+
+    with pytest.raises(_MonitorUnavailable):
+        reviews.decide(case_id=d.case_id, decision="reject", reason="not ours",
+                       shown_context_ref=reviews.context(d.case_id).shown_context_ref,
+                       message={"text": "נא לפנות ישירות למרפאה"}, **NURSE)
+    [message] = staff_messages(d)
+    assert message.content is None
+    assert message.deleted_at is not None
+
+
+# --- the deadline (fix round 1) --------------------------------------------------------------
+
+def test_a_naive_deadline_is_refused_not_a_typeerror(sm, app_engine):
+    d = escalated(sm, app_engine)
+    reviews = service(sm)
+    naive = datetime.now() + timedelta(hours=5)  # no tzinfo
+    with pytest.raises(DecisionRejected) as refused:
+        ask(reviews, d, template_id="clarify_general", deadline=naive)
+    assert refused.value.reason == "invalid_deadline"
+
+
+def test_the_default_deadline_respects_a_close_appointment(sm, app_engine):
+    from sqlalchemy import text
+    d = escalated(sm, app_engine)
+    appointment = datetime.now(UTC) + timedelta(hours=10)
+    with app_engine.begin() as conn:
+        conn.execute(text("UPDATE cases SET appointment_at = :a WHERE case_id = :c"),
+                     {"a": appointment, "c": d.case_id})
+    reviews = service(sm)
+    result = ask(reviews, d, template_id="clarify_general")  # no deadline given
+    assert result.committed
+    assert datetime.now(UTC) < d.case.patient_deadline <= appointment
