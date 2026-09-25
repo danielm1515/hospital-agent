@@ -288,10 +288,12 @@ def executions_with_status(conn: Connection, status: str) -> list[ExecutionRecor
 
 
 def expired_patient_deadlines(conn: Connection, now: datetime) -> list[CaseRecord]:
-    """Cases waiting for the patient whose deadline has passed - the SLA Worker's scan (§18.2 index)."""
+    """Cases waiting for the patient - a document, or a reply to a staff request (sub-project 15) -
+    whose deadline has passed: the SLA Worker's scan (§18.2 index)."""
     rows = conn.execute(
         select(cases)
-        .where(cases.c.state == State.AWAITING_PATIENT_INPUT.value, cases.c.patient_deadline <= now)
+        .where(cases.c.state.in_((State.AWAITING_PATIENT_INPUT.value, State.AWAITING_PATIENT_REPLY.value)),
+               cases.c.patient_deadline <= now)
         .order_by(cases.c.patient_deadline)
     ).mappings()
     return [_case_from_row(row) for row in rows]

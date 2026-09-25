@@ -2,6 +2,8 @@
 
 41 rows. tests/test_fsm.py compares (source, event, spec_guard, target) of every
 row with docs/spec/03-transitions-guards.md, so the code cannot drift from the spec.
+EXTENSION_TRANSITIONS holds sub-project 15's three rows (docs/spec_corrections.md
+rows 83-85), outside that table; resolve() searches both.
 
 A guard name starting with "!" is negated ("לא ReadinessInProgress").
 """
@@ -33,6 +35,8 @@ class Effect(StrEnum):
     CLEAR_ESCALATION = "ClearEscalation"
     CONSUME_APPROVAL = "ConsumeApproval"
     RECORD_EXECUTION_INTENT = "RecordExecutionIntent"  # Execution design §3.1 - written by the State Manager
+    RECORD_REPLY_REQUEST = "RecordReplyRequest"  # sub-project 15
+    CLEAR_REPLY_REQUEST = "ClearReplyRequest"  # sub-project 15
 
 
 @dataclass(frozen=True)
@@ -197,6 +201,21 @@ TRANSITIONS: tuple[Transition, ...] = (
                ("WorkflowDecisionValid",), effects=(Effect.CONSUME_APPROVAL,)),
 )
 
+# Sub-project 15 (docs/spec_corrections.md rows 83-85; design §5.2): the owner's extension, kept out
+# of TRANSITIONS so that table stays §3 row for row. No row here sets an escalation kind - the case
+# goes back to review with the escalation it came with (a PatientSlaExpired kind would be resumable,
+# and its HUMAN_APPROVED row leads back to the agent).
+EXTENSION_TRANSITIONS: tuple[Transition, ...] = (
+    Transition(S.AWAITING_HUMAN_REVIEW, E.PATIENT_REPLY_REQUESTED, S.AWAITING_PATIENT_REPLY,
+               "WorkflowDecisionValid (decision = request), reply_request_valid",
+               ("WorkflowDecisionValid", "reply_request_valid"),
+               effects=(Effect.RECORD_REPLY_REQUEST, Effect.CONSUME_APPROVAL)),
+    Transition(S.AWAITING_PATIENT_REPLY, E.PATIENT_REPLY_SUBMITTED, S.AWAITING_HUMAN_REVIEW,
+               "patient_reply_valid", ("patient_reply_valid",), effects=(Effect.CLEAR_REPLY_REQUEST,)),
+    Transition(S.AWAITING_PATIENT_REPLY, E.TIMEOUT_EXPIRED, S.AWAITING_HUMAN_REVIEW,
+               "PatientSlaExpired", ("PatientSlaExpired",), effects=(Effect.CLEAR_REPLY_REQUEST,)),
+)
+
 
 class AmbiguousTransition(RuntimeError):
     """More than one row matched - a bug in the table. Fail closed."""
@@ -227,7 +246,7 @@ def _evaluate(row: Transition, ctx: GuardContext) -> tuple[str | None, dict[str,
 
 def resolve(state: S | None, event: E, ctx: GuardContext) -> Resolution:
     """Find the one row for (state, event) whose guards all hold (§3, note 8)."""
-    candidates = [row for row in TRANSITIONS if row.source == state and row.event == event]
+    candidates = [row for row in (*TRANSITIONS, *EXTENSION_TRANSITIONS) if row.source == state and row.event == event]
     matched: list[tuple[Transition, dict[str, bool]]] = []
     reasons: list[str] = []
     for row in candidates:
@@ -293,6 +312,12 @@ def apply_effects(case: CaseRecord, row: Transition, ctx: GuardContext) -> CaseR
                 changes["patient_deadline"] = ctx.approval.patient_deadline
             case Effect.CLEAR_ESCALATION:
                 changes.update(escalation_kind=None, escalated_from_state=None)
+            case Effect.RECORD_REPLY_REQUEST:
+                changes.update(human_engaged=True, reply_kind=p["reply_kind"],
+                               requested_document=p.get("requested_document"),
+                               patient_deadline=ctx.approval.patient_deadline)
+            case Effect.CLEAR_REPLY_REQUEST:
+                changes.update(reply_kind=None, requested_document=None, patient_deadline=None)
             case Effect.CONSUME_APPROVAL | Effect.RECORD_EXECUTION_INTENT:
                 pass  # written by the State Manager (approvals / executions), in the same transaction
     return replace(case, **changes)
