@@ -1,4 +1,4 @@
-"""Temporal Monitor - the twelve past-time rules of spec §6.2 over a case's audit trace.
+"""Temporal Monitor - the twelve past-time rules of spec §6.2 over a case's audit trace. T13 is sub-project 15's extension (docs/spec_corrections.md row 84), not a §6.2 rule.
 
 It implements the Core's TraceMonitor port: check(trace, candidate) runs before every
 commit (§7) and returns the id of a rule the candidate would newly violate, or None.
@@ -124,9 +124,21 @@ def _t12(rows: Rows, i: int) -> bool:  # G(Execute(e) -> AttemptsAvailable)
     return not _execute(rows[i]) or _guard(rows[i], "AttemptsAvailable")
 
 
+# Sub-project 15 (docs/spec_corrections.md row 84): the states in which an AI component or the
+# Tool Executor acts. A case a person has written to (PATIENT_REPLY_REQUESTED) never enters one.
+AGENT_STATES = frozenset({"Classifying", "Classified", "Planning", "RetrievingData", "Delivering",
+                          "AssessingReadiness", "Ready"})
+
+
+def _t13(rows: Rows, i: int) -> bool:  # extension: G(AgentState -> ¬ O PATIENT_REPLY_REQUESTED)
+    return rows[i].state_after not in AGENT_STATES or not any(
+        r.event == "PATIENT_REPLY_REQUESTED" for r in rows[: i + 1])
+
+
 RULES: tuple[tuple[str, Callable[[Rows, int], bool]], ...] = (
     ("T1", _t1), ("T2", _t2), ("T3", _t3), ("T4", _t4), ("T5", _t5), ("T6", _t6),
     ("T7", _t7), ("T8", _t8), ("T9", _t9), ("T10", _t10), ("T11", _t11), ("T12", _t12),
+    ("T13", _t13),
 )
 
 

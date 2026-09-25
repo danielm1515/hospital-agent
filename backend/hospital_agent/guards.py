@@ -18,15 +18,21 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 
 from .case import MAX_ATTEMPTS, ApprovalRecord, CaseRecord, ExecutionRecord, compute_plan_hash
+from .documents import CATALOG_LABELS
 from .naming import AUTOMATIC_ACTIONS, RETRIEVAL_ACTIONS, Action, Component, EscalationKind, Event, SafetyLevel, State
 
 GUARD_FAILED = "guard_failed"
 INVALID_ESCALATION_REASON = "invalid_escalation_reason"
 WORKFLOW_DECISION_INVALID = "workflow_decision_invalid"
+HUMAN_ENGAGED = "human_engaged"  # sub-project 15 (row 84): a person has written to the patient
+
+# Sub-project 15 (design §5.3, §8): what a staff request may ask for, and for how long.
+REPLY_KINDS = frozenset({"question", "document"})
+MAX_REPLY_WINDOW = timedelta(days=7)
 
 SUPPORTED_DOCUMENT_FORMATS = frozenset({"pdf", "jpg", "png"})
 REVIEWER_ROLES = frozenset({"clinical_staff", "admin_staff"})
@@ -34,6 +40,7 @@ DECISION_FOR_EVENT = {
     Event.HUMAN_APPROVED: "approve",
     Event.HUMAN_REJECTED: "reject",
     Event.HUMAN_RESOLVED_CASE: "resolve",
+    Event.PATIENT_REPLY_REQUESTED: "request",
 }
 
 
@@ -239,6 +246,10 @@ def workflow_decision_valid(ctx: GuardContext) -> str | None:
         return WORKFLOW_DECISION_INVALID
     if approval.decision != DECISION_FOR_EVENT.get(ctx.event):
         return "approval_decision_mismatch"
+    if ctx.event is Event.HUMAN_APPROVED and case.human_engaged:
+        # Sub-project 15 (row 84): once a person has written to the patient the case never goes
+        # back to the agent - a fail-closed tightening of this guard; no §3 row changed.
+        return HUMAN_ENGAGED
     if ctx.event is Event.HUMAN_APPROVED:
         kind = case.escalation_kind
         if kind is EscalationKind.PATIENT_VERIFICATION_FAILED and not _nonempty(approval.verified_identity_ref):
@@ -260,7 +271,7 @@ def patient_sla_expired(ctx: GuardContext) -> str | None:
     case = ctx.case
     return _check(
         case is not None
-        and case.state is State.AWAITING_PATIENT_INPUT
+        and case.state in (State.AWAITING_PATIENT_INPUT, State.AWAITING_PATIENT_REPLY)  # + sub-project 15
         and case.patient_deadline is not None
         and case.patient_deadline <= ctx.now
         and ctx.payload.get("registered_state_version") == case.state_version
@@ -357,6 +368,36 @@ def deadline_registered(ctx: GuardContext) -> str | None:
     return None if valid else "patient_deadline_missing"
 
 
+def reply_request_valid(ctx: GuardContext) -> str | None:
+    """Sub-project 15 (design §5.3, §8): what the staff asked for, and until when. The deadline is
+    the one on the reviewer's approval row - never a payload value."""
+    case, approval, payload = ctx.case, ctx.approval, ctx.payload
+    if case is None or approval is None:
+        return GUARD_FAILED
+    kind, document, deadline = payload.get("reply_kind"), payload.get("requested_document"), approval.patient_deadline
+    return _check(
+        kind in REPLY_KINDS
+        and (document in CATALOG_LABELS if kind == "document" else document is None)
+        and isinstance(deadline, datetime) and deadline.tzinfo is not None
+        and ctx.now < deadline <= ctx.now + MAX_REPLY_WINDOW
+        and (case.appointment_at is None or deadline <= case.appointment_at)
+    )
+
+
+def patient_reply_valid(ctx: GuardContext) -> str | None:
+    """Sub-project 15 (design §5.3, §9): the reply comes through the Session Service - the one
+    component that checks the patient and runs the document intake - and answers what was asked."""
+    case, payload = ctx.case, ctx.payload
+    if case is None or ctx.source is not Component.SESSION_SERVICE or not _nonempty(payload.get("content_hash")):
+        return GUARD_FAILED
+    if case.reply_kind == "question":
+        return _check(payload.get("reply_kind") == "question")
+    if case.reply_kind == "document":
+        return _check(payload.get("reply_kind") == "document"
+                      and payload.get("document_type") == case.requested_document)
+    return GUARD_FAILED
+
+
 # PascalCase keys are §3.1 guard names (tests/test_guards.py checks them against the
 # spec); snake_case keys are the prose conditions above.
 GUARDS: dict[str, Guard] = {
@@ -387,4 +428,6 @@ GUARDS: dict[str, Guard] = {
     "valid_classification": valid_classification,
     "valid_tool_result": valid_tool_result,
     "deadline_registered": deadline_registered,
+    "reply_request_valid": reply_request_valid,  # sub-project 15
+    "patient_reply_valid": patient_reply_valid,  # sub-project 15
 }

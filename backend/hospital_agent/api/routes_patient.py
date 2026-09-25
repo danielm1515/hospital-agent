@@ -15,9 +15,16 @@ from starlette.concurrency import run_in_threadpool
 
 from ..auth import DEMO_USERS, Principal
 from ..document_intake import IntakeUnavailable
-from ..session import CaseNotFound, EventRejected, NotWaitingForDocument, SessionService
+from ..session import (
+    CaseNotFound,
+    EventRejected,
+    NotWaitingForDocument,
+    NotWaitingForReply,
+    ReplyKindMismatch,
+    SessionService,
+)
 from .deps import get_session, require_patient
-from .schemas import DocumentUpload, NewRequest, PatientCaseView, PdfUploadResponse, UploadResult
+from .schemas import DocumentUpload, NewRequest, PatientCaseView, PdfUploadResponse, ReplyBody, UploadResult
 
 router = APIRouter(prefix="/api/patient", tags=["patient"])
 logger = logging.getLogger(__name__)
@@ -95,18 +102,7 @@ async def upload_pdf(case_id: str, request: Request, principal: Principal = Depe
     """
     if session.document_intake is None:
         raise HTTPException(status_code=404, detail="file_upload_not_enabled")
-    body = bytearray()
-    async for chunk in request.stream():
-        body += chunk
-        if len(body) > UPLOAD_BODY_LIMIT:
-            raise HTTPException(status_code=413, detail="too_large")
-    # Off the event loop: up to 10 MB of parsing must not stall every other request.
-    part = await run_in_threadpool(_file_part, request.headers.get("content-type", ""), bytes(body))
-    if part is None:
-        raise HTTPException(status_code=422, detail="invalid_body")
-    filename, data = part
-    if len(data) > MAX_PDF_BYTES:
-        raise HTTPException(status_code=413, detail="too_large")
+    filename, data = await _read_pdf_part(request)
     try:
         # Off the event loop: the document-service may take up to 70 s to answer.
         outcome = await run_in_threadpool(session.upload_pdf, principal.patient_id, case_id, data, filename)
@@ -119,6 +115,76 @@ async def upload_pdf(case_id: str, request: Request, principal: Principal = Depe
         raise HTTPException(status_code=503, detail="document_service_unavailable") from None
     return PdfUploadResponse(upload=UploadResult.model_validate(outcome),
                              request=PatientCaseView.model_validate(view))
+
+
+@router.post("/requests/{case_id}/reply", response_model=PatientCaseView)
+def reply(case_id: str, body: ReplyBody, principal: Principal = Depends(require_patient),
+          session: SessionService = Depends(get_session)) -> PatientCaseView:
+    """Sub-project 15 (design §9): the patient's text answer to a staff question."""
+    try:
+        session.reply_text(principal.patient_id, case_id, body.text)
+    except CaseNotFound:
+        raise HTTPException(status_code=404, detail="case_not_found") from None
+    except NotWaitingForReply:
+        raise HTTPException(status_code=409, detail="not_waiting_for_reply") from None
+    except ReplyKindMismatch:
+        raise HTTPException(status_code=409, detail="reply_kind_mismatch") from None
+    except EventRejected as rejected:
+        # reply_too_long (ReplyBody already caps text at 2000, a 422 invalid_body; this is
+        # defence for a length the service counts differently) is a form error, not a state
+        # refusal - answered like the schema's own 422, never the generic 409.
+        if rejected.reason == "reply_too_long":
+            raise HTTPException(status_code=422, detail="reply_too_long") from None
+        # Every other reason (e.g. reply_required, defensive now that the schema trims and
+        # requires non-blank text) is internal, exactly like submit_request's: logged, never
+        # echoed to the patient (§12.3).
+        logger.info("reply rejected: %s", rejected.reason)
+        raise HTTPException(status_code=409, detail="reply_not_accepted") from None
+    return PatientCaseView.model_validate(session.patient_view(case_id))
+
+
+@router.post("/requests/{case_id}/reply/file", response_model=PdfUploadResponse)
+async def reply_pdf(case_id: str, request: Request, principal: Principal = Depends(require_patient),
+                    session: SessionService = Depends(get_session)) -> PdfUploadResponse:
+    """Sub-project 15 (design §9): the requested document, as the sub-project 13 upload does it."""
+    if session.document_intake is None:
+        raise HTTPException(status_code=404, detail="file_upload_not_enabled")
+    filename, data = await _read_pdf_part(request)
+    try:
+        outcome = await run_in_threadpool(session.reply_pdf, principal.patient_id, case_id, data, filename)
+        view = await run_in_threadpool(session.patient_view, case_id)
+    except CaseNotFound:
+        raise HTTPException(status_code=404, detail="case_not_found") from None
+    except NotWaitingForReply:
+        raise HTTPException(status_code=409, detail="not_waiting_for_reply") from None
+    except ReplyKindMismatch:
+        raise HTTPException(status_code=409, detail="reply_kind_mismatch") from None
+    except IntakeUnavailable:
+        raise HTTPException(status_code=503, detail="document_service_unavailable") from None
+    return PdfUploadResponse(upload=UploadResult.model_validate(outcome),
+                             request=PatientCaseView.model_validate(view))
+
+
+async def _read_pdf_part(request: Request) -> tuple[str, bytes]:
+    """The multipart PDF read shared by the sub-project 13 upload route and the sub-project 15
+    reply route: stream the body (capped at UPLOAD_BODY_LIMIT - the UploadSizeLimit middleware
+    has already refused a larger one by its Content-Length, but the read is capped the same way
+    regardless), parse its one `file` part off the event loop, and cap the file itself at
+    MAX_PDF_BYTES. Raises exactly the HTTPExceptions the two routes raised inline before this
+    was extracted (413 too_large, 422 invalid_body) - never a 500."""
+    body = bytearray()
+    async for chunk in request.stream():
+        body += chunk
+        if len(body) > UPLOAD_BODY_LIMIT:
+            raise HTTPException(status_code=413, detail="too_large")
+    # Off the event loop: up to 10 MB of parsing must not stall every other request.
+    part = await run_in_threadpool(_file_part, request.headers.get("content-type", ""), bytes(body))
+    if part is None:
+        raise HTTPException(status_code=422, detail="invalid_body")
+    filename, data = part
+    if len(data) > MAX_PDF_BYTES:
+        raise HTTPException(status_code=413, detail="too_large")
+    return filename, data
 
 
 def _file_part(content_type: str, body: bytes) -> tuple[str, bytes] | None:

@@ -25,6 +25,7 @@ export const EVENT_LABELS: Record<string, string> = {
   POLICY_ALLOWED: 'המדיניות אישרה',
   POLICY_DENIED: 'המדיניות דחתה',
   POLICY_HUMAN_REVIEW_REQUIRED: 'המדיניות העבירה לאדם',
+  PATIENT_REPLY_REQUESTED: 'נשלחה בקשה למטופל',
 }
 
 export const REASON_LABELS: Record<string, string> = {

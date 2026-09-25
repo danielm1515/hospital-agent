@@ -20,6 +20,8 @@ const MEDICAL: ReviewItem = {
   allowed_decisions: ['resolve', 'reject'],
   required_fields: [],
   updated_at: '2026-09-19T22:12:39.693277Z',
+  human_engaged: false,
+  returned_by: null,
 }
 
 const Z3: ReviewItem = {
@@ -31,6 +33,8 @@ const Z3: ReviewItem = {
   allowed_decisions: ['approve', 'resolve', 'reject'],
   required_fields: ['patient_deadline'],
   updated_at: '2026-09-19T22:14:02.100000Z',
+  human_engaged: false,
+  returned_by: null,
 }
 
 function renderQueue(route = '/staff') {
@@ -55,6 +59,16 @@ describe('ReviewQueue', () => {
     expect(screen.getByText('Classifying')).toBeInTheDocument()
     expect(screen.getByText('hours_until:20')).toBeInTheDocument()
     expect(screen.getAllByRole('row')).toHaveLength(3) // header + two cases
+  })
+
+  it('shows the returned_by mark with its Hebrew label and the code', async () => {
+    vi.mocked(api.listReviews).mockResolvedValue([{ ...MEDICAL, returned_by: 'patient_reply' }])
+    renderQueue()
+
+    expect(await screen.findByText('התקבלה תשובת מטופל')).toBeInTheDocument()
+    const code = screen.getByText('patient_reply')
+    expect(code).toBeInTheDocument()
+    expect(code.className).toContain('mono')
   })
 
   it('opens the case when its row is clicked', async () => {

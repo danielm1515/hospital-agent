@@ -97,7 +97,7 @@ def test_a_patient_submits_a_request_and_lists_it(client):
     assert view["missing_document_ids"] == [] and view["missing_document_request_template_id"] is None
     assert set(view) == {"case_id", "status", "created_at", "updated_at", "request_text",
                          "missing_document_ids", "missing_document_request_template_id", "message",
-                         "history", "document_upload"}
+                         "history", "document_upload", "reply_request", "conversation"}
     assert view["document_upload"] == "text"  # no document-service client in this test app
     assert [step["status"] for step in view["history"]] == ["received", "in_progress"]
     assert all(set(step) == {"status", "at"} for step in view["history"])
@@ -198,6 +198,8 @@ def test_a_rejected_upload_still_answers_200_with_the_patient_view(client):
     ("POST", "/api/staff/cases/CASE-1/decision",
      {"decision": "resolve", "reason": "x", "shown_context_ref": "ctx-x"}),
     ("DELETE", "/api/staff/cases/CASE-1/data/DATA-1", None),
+    ("POST", "/api/staff/cases/CASE-1/request",
+     {"kind": "question", "template_id": "clarify_general", "reason": "x", "shown_context_ref": "ctx-x"}),
 ])
 def test_a_patient_is_forbidden_on_staff_routes(client, method, path, body):
     response = client.request(method, path, json=body, headers=auth(client, PATIENT))

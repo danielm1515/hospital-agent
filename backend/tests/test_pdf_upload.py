@@ -334,16 +334,20 @@ def _guard():
     return UploadSizeLimit(inner), tripwire
 
 
+@pytest.mark.parametrize("path", [
+    "/api/patient/requests/CASE-1/documents/file",
+    "/api/patient/requests/CASE-1/reply/file",  # sub-project 15: the same middleware guards it
+])
 @pytest.mark.parametrize("headers, status, code", [
     ({}, 411, "length_required"),
     ({"Content-Length": "abc"}, 411, "length_required"),
     ({"Content-Length": "-1"}, 411, "length_required"),
     ({"Content-Length": str(10 * 1024 * 1024 + 64 * 1024 + 1)}, 413, "too_large"),
 ])
-def test_the_middleware_refuses_before_the_body_is_read(headers, status, code):
+def test_the_middleware_refuses_before_the_body_is_read(path, headers, status, code):
     import json
     guard, tripwire = _guard()
-    sent, received = _run(guard, "POST", "/api/patient/requests/CASE-1/documents/file", headers)
+    sent, received = _run(guard, "POST", path, headers)
     assert not tripwire.ran and received == []
     assert sent[0]["status"] == status
     assert (b"content-type", b"application/json") in sent[0]["headers"]
@@ -352,9 +356,11 @@ def test_the_middleware_refuses_before_the_body_is_read(headers, status, code):
 
 @pytest.mark.parametrize("method, path, headers", [
     ("POST", "/api/patient/requests/CASE-1/documents/file", {"Content-Length": str(UPLOAD_BODY_LIMIT)}),
+    ("POST", "/api/patient/requests/CASE-1/reply/file", {"Content-Length": str(UPLOAD_BODY_LIMIT)}),
     ("POST", "/api/patient/requests/CASE-1/documents", {}),          # the text upload: not this middleware's
     ("POST", "/api/patient/requests", {"Content-Length": str(UPLOAD_BODY_LIMIT + 1)}),
     ("GET", "/api/patient/requests/CASE-1/documents/file", {}),
+    ("GET", "/api/patient/requests/CASE-1/reply/file", {}),
 ])
 def test_the_middleware_passes_everything_else(method, path, headers):
     guard, tripwire = _guard()

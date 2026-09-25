@@ -66,6 +66,9 @@ def _case_from_row(row: RowMapping) -> CaseRecord:
         escalated_from_state=State(row["escalated_from_state"]) if row["escalated_from_state"] else None,
         patient_deadline=row["patient_deadline"],
         appointment_at=row["appointment_at"],
+        human_engaged=row["human_engaged"],
+        reply_kind=row["reply_kind"],
+        requested_document=row["requested_document"],
     )
 
 
@@ -89,6 +92,9 @@ def _case_values(case: CaseRecord) -> dict[str, Any]:
         "escalated_from_state": case.escalated_from_state.value if case.escalated_from_state else None,
         "patient_deadline": case.patient_deadline,
         "appointment_at": case.appointment_at,
+        "human_engaged": case.human_engaged,
+        "reply_kind": case.reply_kind,
+        "requested_document": case.requested_document,
         "updated_at": case.updated_at,
     }
 
@@ -282,10 +288,12 @@ def executions_with_status(conn: Connection, status: str) -> list[ExecutionRecor
 
 
 def expired_patient_deadlines(conn: Connection, now: datetime) -> list[CaseRecord]:
-    """Cases waiting for the patient whose deadline has passed - the SLA Worker's scan (§18.2 index)."""
+    """Cases waiting for the patient - a document, or a reply to a staff request (sub-project 15) -
+    whose deadline has passed: the SLA Worker's scan (§18.2 index)."""
     rows = conn.execute(
         select(cases)
-        .where(cases.c.state == State.AWAITING_PATIENT_INPUT.value, cases.c.patient_deadline <= now)
+        .where(cases.c.state.in_((State.AWAITING_PATIENT_INPUT.value, State.AWAITING_PATIENT_REPLY.value)),
+               cases.c.patient_deadline <= now)
         .order_by(cases.c.patient_deadline)
     ).mappings()
     return [_case_from_row(row) for row in rows]

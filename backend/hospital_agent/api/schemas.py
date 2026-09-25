@@ -100,6 +100,25 @@ class PatientStatusChange(BaseModel):
     at: datetime
 
 
+class ReplyRequestView(BaseModel):
+    """Sub-project 15: what the staff asked for (design §10). Never a reason or an escalation kind."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    kind: Literal["question", "document"]
+    message: str | None
+    document_type: str | None
+    deadline: datetime | None
+
+
+class ConversationEntryView(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    sender: Literal["staff", "patient"]
+    text: str
+    at: datetime
+
+
 class PatientCaseView(BaseModel):
     """What a patient may see (design decision 8): never an escalation kind, a reason or Audit."""
 
@@ -115,6 +134,8 @@ class PatientCaseView(BaseModel):
     message: str | None
     history: list[PatientStatusChange]
     document_upload: Literal["file", "text"]
+    reply_request: ReplyRequestView | None
+    conversation: list[ConversationEntryView]
 
 
 class UploadResult(BaseModel):
@@ -123,7 +144,7 @@ class UploadResult(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     code: Literal["accepted", "not_required", "already_received", "not_medical", "unreadable", "expired",
-                  "not_yours"]
+                  "not_yours", "wrong_document_type"]
     document_type: str | None
 
 
@@ -145,6 +166,8 @@ class ReviewItem(BaseModel):
     allowed_decisions: list[str]
     required_fields: list[str]
     updated_at: datetime
+    human_engaged: bool
+    returned_by: Literal["patient_reply", "reply_timeout"] | None
 
 
 class ReviewContext(BaseModel):
@@ -161,6 +184,15 @@ class ReviewContext(BaseModel):
     shown_context_ref: str
 
 
+class MessageBody(BaseModel):
+    """Sub-project 15 (design §7.2): a template (with its parameter) or clinical free text -
+    the Human Review Service judges which, so the reason code reaches the reviewer."""
+
+    template_id: str | None = Field(default=None, max_length=64)
+    param: str | None = Field(default=None, max_length=64)
+    text: str | None = Field(default=None, max_length=2000)
+
+
 class DecisionRequest(BaseModel):
     """`decision` and `reason` are strings, not an enum: the Human Review Service is the one
     that judges them, and its reason code (invalid_decision, reason_required) reaches the
@@ -171,6 +203,7 @@ class DecisionRequest(BaseModel):
     shown_context_ref: str = Field(max_length=200)
     verified_identity_ref: str | None = Field(default=None, max_length=200)
     patient_deadline: AwareDatetime | None = None
+    message: MessageBody | None = None  # sub-project 15: a closing message on resolve / reject
 
 
 class AnswerRequest(BaseModel):
@@ -184,6 +217,28 @@ class AnswerRequest(BaseModel):
 class DecisionResponse(BaseModel):
     case_id: str
     state: str
+
+
+class PatientRequestBody(MessageBody):
+    """Sub-project 15 (design §10): POST /api/staff/cases/{id}/request."""
+
+    kind: str = Field(max_length=16)
+    reason: str = Field(max_length=2000)
+    shown_context_ref: str = Field(max_length=200)
+    document_type: str | None = Field(default=None, max_length=64)
+    deadline: AwareDatetime | None = None
+
+
+class MessageTemplateView(BaseModel):
+    template_id: str
+    purpose: Literal["question", "document", "closing"]
+    text: str
+    param: str | None
+    options: dict[str, str]
+
+
+class ReplyBody(BaseModel):
+    text: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=2000)]
 
 
 # --- sub-project 14: the admin metrics screen (design 2026-09-24 §5) ----------------------

@@ -16,14 +16,16 @@ import hashlib
 import json
 import logging
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any
 
-from . import data_log, repository
+from . import data_log, patient_messages, repository
 from .auth import CLINICAL_STAFF
 from .case import ApprovalRecord, CaseRecord, ExecutionRecord
+from .documents import CATALOG_LABELS
+from .guards import MAX_REPLY_WINDOW
 from .naming import Action, Component, EscalationKind, Event, State
 from .session import CaseNotFound, EventRejected, SessionService
 from .state_manager import CaseNotFound as _UnknownCase
@@ -46,6 +48,10 @@ DECISION_EVENT = {
     "reject": Event.HUMAN_REJECTED,
 }
 DEFAULT_APPROVAL_TTL = timedelta(hours=1)  # design decision 4: consumed at once by the event
+
+# Sub-project 15 (design §8): a request's default deadline, and the longest a staff message may be.
+DEFAULT_REPLY_WINDOW = timedelta(hours=24)
+MAX_MESSAGE_LENGTH = 2000
 
 
 class NotInReview(Exception):
@@ -78,6 +84,8 @@ class ReviewItem:
     allowed_decisions: list[str]
     required_fields: list[str]
     updated_at: datetime
+    human_engaged: bool = False  # sub-project 15: a person has written to the patient - no approve
+    returned_by: str | None = None  # "patient_reply" | "reply_timeout": how the case last came back
 
 
 @dataclass(frozen=True)
@@ -96,6 +104,23 @@ class ReviewContext:
 def allowed_decisions(kind: EscalationKind | None) -> list[str]:
     """approve only where a §3 HUMAN_APPROVED row exists; resolve and reject always."""
     return ["approve", "resolve", "reject"] if kind in RESUMABLE else ["resolve", "reject"]
+
+
+def _allowed(case: CaseRecord) -> list[str]:
+    """Sub-project 15 (design §6): once a person has written to the patient, approve is gone."""
+    return [d for d in allowed_decisions(case.escalation_kind) if not (d == "approve" and case.human_engaged)]
+
+
+def _returned_by(trace: list[repository.AuditEntry]) -> str | None:
+    """How the case last came back to review - a patient's reply, or a request that ran out of time."""
+    back = [r for r in trace if r.record_type == "Transition" and r.state_after == State.AWAITING_HUMAN_REVIEW.value]
+    if not back:
+        return None
+    if back[-1].event == Event.PATIENT_REPLY_SUBMITTED.value:
+        return "patient_reply"
+    if back[-1].event == Event.TIMEOUT_EXPIRED.value and back[-1].state_before == State.AWAITING_PATIENT_REPLY.value:
+        return "reply_timeout"
+    return None
 
 
 class HumanReviewService:
@@ -125,9 +150,11 @@ class HumanReviewService:
                 escalation_kind=case.escalation_kind.value if case.escalation_kind else "",
                 escalated_from_state=case.escalated_from_state.value if case.escalated_from_state else None,
                 reasons=_escalation_reasons(traces[case.case_id]),
-                allowed_decisions=allowed_decisions(case.escalation_kind),
-                required_fields=list(RESUMABLE.get(case.escalation_kind, ())),
+                allowed_decisions=_allowed(case),
+                required_fields=[] if case.human_engaged else list(RESUMABLE.get(case.escalation_kind, ())),
                 updated_at=case.updated_at,
+                human_engaged=case.human_engaged,
+                returned_by=_returned_by(traces[case.case_id]),
             )
             for case in cases
         ]
@@ -168,13 +195,17 @@ class HumanReviewService:
 
     def decide(self, *, reviewer_id: str, reviewer_role: str, case_id: str, decision: str, reason: str,
                shown_context_ref: str, verified_identity_ref: str | None = None,
-               patient_deadline: datetime | None = None) -> TransitionResult:
+               patient_deadline: datetime | None = None, message: Mapping[str, Any] | None = None) -> TransitionResult:
         """Record the reviewer's decision and apply its human event (§3, §12.5).
 
         Refuses before anything is written: an unknown or not-escalated case, invalid input,
         a context that has changed, or a blocked event (no approval row is left behind in
         the first three). Once the event commits the decision is never reported as an error -
         a case that cannot then be revalidated simply stays in Received for the staff.
+
+        Sub-project 15: `resolve` and `reject` may carry a closing message for the patient
+        (a closing template, or clinical free text); `approve` never does, and is refused
+        once a person has written to the patient (design §6).
         """
         case = self._load(case_id)
         if case.state is not State.AWAITING_HUMAN_REVIEW:
@@ -184,6 +215,10 @@ class HumanReviewService:
             raise DecisionRejected("invalid_decision")
         if not (reason or "").strip():
             raise DecisionRejected("reason_required")
+        if decision == "approve" and message is not None:
+            raise DecisionRejected("message_not_allowed")
+        if decision == "approve" and case.human_engaged:
+            raise DecisionRejected("human_engaged")
         given = {"verified_identity_ref": verified_identity_ref, "patient_deadline": patient_deadline}
         if decision == "approve":
             if case.escalation_kind not in RESUMABLE:
@@ -192,15 +227,16 @@ class HumanReviewService:
                 value = given[name]
                 if value is None or (isinstance(value, str) and not value.strip()):
                     raise DecisionRejected(f"{name}_required")
+        text = None if message is None else self._message(reviewer_role, "closing", message)
 
         if shown_context_ref != self.context(case_id).shown_context_ref:
             raise ContextChanged(case_id)
 
+        payload, entry_id = ({}, None) if text is None else self._record_message(
+            case, reviewer_id, reviewer_role, reason, shown_context_ref, text, free=bool(message.get("text")))
         approval_id = self._grant(case, reviewer_id, reviewer_role, decision, reason, shown_context_ref,
                                   verified_identity_ref, patient_deadline)
-        result = self.sm.apply(case_id, DECISION_EVENT[decision], {"approval_id": approval_id}, Component.EXTERNAL)
-        if not result.committed:
-            raise DecisionRejected(result.reason or "blocked")
+        result = self._apply(case_id, DECISION_EVENT[decision], {"approval_id": approval_id, **payload}, entry_id)
 
         if (decision == "approve" and case.escalation_kind is EscalationKind.PATIENT_VERIFICATION_FAILED
                 and result.state_after is State.RECEIVED):
@@ -213,6 +249,128 @@ class HumanReviewService:
             except EventRejected as rejected:
                 logger.info("case not revalidated after an identity approval: %s", rejected.reason)
         self.wake()
+        return result
+
+    def request(self, *, reviewer_id: str, reviewer_role: str, case_id: str, kind: str, reason: str,
+                shown_context_ref: str, template_id: str | None = None, param: str | None = None,
+                text: str | None = None, document_type: str | None = None,
+                deadline: datetime | None = None) -> TransitionResult:
+        """Sub-project 15 (design §5, §7, §8): ask the patient a question or for one catalog document.
+
+        Everything that cannot be a legal request is refused before anything is written; the
+        guards (WorkflowDecisionValid with decision = request, reply_request_valid) judge the rest.
+        """
+        case = self._load(case_id)
+        if case.state is not State.AWAITING_HUMAN_REVIEW:
+            raise NotInReview(case_id)
+        if not (reason or "").strip():
+            raise DecisionRejected("reason_required")
+        if kind == "document":
+            if text is not None or template_id not in (None, patient_messages.DOCUMENT_REQUEST) \
+                    or document_type not in CATALOG_LABELS:
+                raise DecisionRejected("invalid_request")
+            if param is not None:  # design §7.2: document_request takes no parameter of its own
+                raise DecisionRejected("unexpected_param")
+            if self.session.document_intake is None:  # configuration, so here and not in a guard (§9)
+                raise DecisionRejected("document_service_not_configured")
+            body = patient_messages.render(patient_messages.DOCUMENT_REQUEST, document_type)
+        elif kind == "question" and document_type is None:
+            body = self._message(reviewer_role, "question", {"template_id": template_id, "param": param, "text": text})
+        else:
+            raise DecisionRejected("invalid_request")
+        now = self.sm.clock()
+        if case.appointment_at is not None and case.appointment_at <= now:
+            # An appointment that has already passed refuses the request outright, distinctly
+            # from invalid_deadline - even the default deadline could never be legal (it would
+            # have to sit before the appointment, i.e. in the past), so staff are not told a
+            # deadline they never entered was the problem.
+            raise DecisionRejected("appointment_passed")
+        if deadline is not None and deadline.tzinfo is None:
+            raise DecisionRejected("invalid_deadline")
+        if deadline is None:
+            # Design decision (fix round 1): default to the request window, but never past a
+            # known appointment - the same ceiling an explicit deadline is held to below.
+            deadline = now + DEFAULT_REPLY_WINDOW
+            if case.appointment_at is not None:
+                deadline = min(deadline, case.appointment_at)
+        if not now < deadline <= now + MAX_REPLY_WINDOW or (
+                case.appointment_at is not None and deadline > case.appointment_at):
+            raise DecisionRejected("invalid_deadline")
+        if shown_context_ref != self.context(case_id).shown_context_ref:
+            raise ContextChanged(case_id)
+
+        payload, entry_id = self._record_message(case, reviewer_id, reviewer_role, reason, shown_context_ref, body,
+                                                 free=text is not None)
+        approval_id = self._grant(case, reviewer_id, reviewer_role, "request", reason, shown_context_ref, None, deadline)
+        result = self._apply(case_id, Event.PATIENT_REPLY_REQUESTED,
+                             {"approval_id": approval_id, "reply_kind": kind,
+                              "requested_document": document_type if kind == "document" else None, **payload},
+                             entry_id)
+        self.wake()
+        return result
+
+    def templates(self) -> list[dict]:
+        return patient_messages.as_dicts()
+
+    @staticmethod
+    def _message(reviewer_role: str, purpose: str, message: Mapping[str, Any]) -> str:
+        """The exact text a staff message will carry (design §7.2): a template of `purpose`, or
+        clinical staff's free text - exactly one of the two."""
+        template_id, text = message.get("template_id"), message.get("text")
+        if (template_id is None) == (text is None):
+            raise DecisionRejected("invalid_request")
+        if text is not None:
+            if reviewer_role != CLINICAL_STAFF:
+                raise DecisionRejected("clinical_staff_only")  # §12.4
+            body = text.strip()
+            if not body or len(body) > MAX_MESSAGE_LENGTH:
+                raise DecisionRejected("message_required")
+            return body
+        if patient_messages.purpose_of(template_id) != purpose:
+            raise DecisionRejected("invalid_template")
+        try:
+            return patient_messages.render(template_id, message.get("param"))
+        except patient_messages.InvalidMessage as invalid:
+            raise DecisionRejected(invalid.code) from None
+
+    def _record_message(self, case: CaseRecord, reviewer_id: str, reviewer_role: str, reason: str,
+                        shown_context_ref: str, text: str, *, free: bool) -> tuple[dict[str, Any], str]:
+        """The message in the Data Log; free text also gets the clinical answer's binding - an
+        execution row and a ContentApproval on its content_hash (design §7.3). Returns the event
+        payload's message fields and the entry's id (tombstoned if the event is blocked)."""
+        now = self.sm.clock()
+        with self.engine.begin() as conn:
+            entry = data_log.record(conn, case.case_id, case.patient_id, data_log.DataKind.STAFF_MESSAGE, text, now)
+            execution_id = None
+            if free:
+                execution_id = f"EXEC-{uuid.uuid4().hex[:12]}"
+                repository.insert_execution(conn, ExecutionRecord(
+                    execution_id=execution_id, case_id=case.case_id, patient_id=case.patient_id,
+                    action=Action.ANSWER_CLINICAL_QUESTION.value, step=case.current_step or 0,
+                    retry_cycle=case.retry_cycle, attempt_number=0,
+                    idempotency_key=f"{case.case_id}:message:{execution_id}", status="succeeded",
+                    state_version=case.state_version, content_hash=entry.content_hash, medical_content_flag=True))
+        payload: dict[str, Any] = {"content_hash": entry.content_hash}
+        if free:
+            payload["message_approval_id"] = self._grant_content_approval(
+                case, reviewer_id, reviewer_role, reason, shown_context_ref, execution_id, entry.content_hash)
+        return payload, entry.entry_id
+
+    def _apply(self, case_id: str, event: Event, payload: dict[str, Any], entry_id: str | None) -> TransitionResult:
+        """Apply a human event; a blocked - or raising - one leaves no readable message behind
+        (§12.3), the same fail-closed pattern as `answer()`: `sm.apply()` can also raise instead
+        of returning a not-committed result (ReprocessLimitExceeded, or the Temporal Monitor
+        being unavailable, which by design lets its exception through uncaught)."""
+        try:
+            result = self.sm.apply(case_id, event, payload, Component.EXTERNAL)
+        except Exception:
+            if entry_id is not None:
+                self._tombstone_unauthorised(entry_id)
+            raise
+        if not result.committed:
+            if entry_id is not None:
+                self._tombstone_unauthorised(entry_id)
+            raise DecisionRejected(result.reason or "blocked")
         return result
 
     def answer(self, *, reviewer_id: str, reviewer_role: str, case_id: str, answer: str,

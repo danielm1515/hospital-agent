@@ -18,14 +18,16 @@ DOCUMENT_UPLOADED - DocumentValid (§3.1) accepts a document only from it.
 from __future__ import annotations
 
 import logging
+import re
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Literal, Protocol
 
-from . import auth, data_log, naming, repository
+from . import auth, data_log, naming, patient_messages, repository
 from .case import CaseRecord
 from .document_intake import IntakeAnswer, IntakeUnavailable
+from .documents import CATALOG_LABELS, document_label
 from .naming import Component, Event, State
 from .state_manager import CaseNotFound as _UnknownCase
 from .state_manager import StateManager, TransitionResult
@@ -77,6 +79,65 @@ class EventRejected(Exception):
         self.reason = reason
 
 
+class NotWaitingForReply(Exception):
+    """Sub-project 15: the case is not waiting for a reply (API 409 "not_waiting_for_reply")."""
+
+
+class ReplyKindMismatch(Exception):
+    """Sub-project 15: a text for a document request, or a file for a question (409 "reply_kind_mismatch")."""
+
+
+@dataclass(frozen=True)
+class ReplyRequest:
+    """What the staff asked for, while the case waits for the patient (design §10)."""
+
+    kind: str  # "question" | "document"
+    message: str | None
+    document_type: str | None
+    deadline: datetime | None
+
+
+@dataclass(frozen=True)
+class ConversationEntry:
+    sender: str  # "staff" | "patient"
+    text: str
+    at: datetime
+
+
+MAX_REPLY_LENGTH = 2000
+# The exact reference line reply_pdf writes (§9): a document-service id in the same shape
+# document_intake._ID accepts (1-64 letters/digits/_/-, so a 1-character id is possible), a
+# known catalog type, and the literal suffix. This is used only to *render* a reply already
+# known to be a document reply (from what was asked, not from this shape) - never to decide
+# whether it is one, since a patient's own text can share this exact shape by coincidence.
+_DOCUMENT_REPLY = re.compile(r"^([A-Za-z0-9_-]{1,64}) ([A-Za-z0-9_-]{1,64}) ACCEPTED$")
+_GENERIC_DOCUMENT_LABEL = "הועלה מסמך"  # a recognised reference line whose type this version does not know
+_STAFF_MESSAGE_EVENTS = frozenset({Event.PATIENT_REPLY_REQUESTED.value, Event.HUMAN_RESOLVED_CASE.value,
+                                   Event.HUMAN_REJECTED.value})
+# Every text a document request can ever render (§7.1, §7.2: document_request is the only
+# template a document request uses) - what _proven_question_hashes checks a request's staff
+# message against, to prove a reply answers a question by what was asked.
+_DOCUMENT_REQUEST_TEXTS = frozenset(
+    patient_messages.render(patient_messages.DOCUMENT_REQUEST, doc_type) for doc_type in CATALOG_LABELS)
+
+
+@dataclass(frozen=True)
+class _Message:
+    content_hash: str
+    text: str
+    at: datetime
+
+
+def _approved_hashes(conn, case_id: str) -> set[str]:
+    """content_hash of every consumed ContentApproval clinical_staff was granted for
+    AnswerClinicalQuestion (§12.4) - shared by the clinical answer and the staff-message read,
+    both of which trust exactly this approval, and nothing else, to authorise free text."""
+    return {a.content_hash for a in repository.content_approvals_for(
+                conn, case_id, naming.Action.ANSWER_CLINICAL_QUESTION.value)
+            if a.approval_type == "ContentApproval" and a.reviewer_role == auth.CLINICAL_STAFF
+            and a.consumed_at is not None and a.content_hash}
+
+
 @dataclass(frozen=True)
 class StatusChange:
     """One entry of the case's history: the abstract status, and when the case entered it."""
@@ -97,6 +158,8 @@ class PatientView:
     message: str | None
     history: list[StatusChange]
     document_upload: Literal["file", "text"] = "text"
+    reply_request: ReplyRequest | None = None  # sub-project 15, while status is needs_reply
+    conversation: list[ConversationEntry] = field(default_factory=list)  # staff messages and replies
 
 
 _STATUS: dict[State, str] = {
@@ -104,6 +167,7 @@ _STATUS: dict[State, str] = {
     State.AWAITING_PATIENT_INPUT: "needs_document",
     State.AWAITING_HUMAN_REVIEW: "in_review",
     State.FAILED: "closed",
+    State.AWAITING_PATIENT_REPLY: "needs_reply",  # sub-project 15
 }
 
 
@@ -275,6 +339,73 @@ class SessionService:
             raise NotWaitingForDocument(case_id)
         return case
 
+    # --- sub-project 15: the patient's reply to a staff request (design §9) ----------------
+
+    def reply_text(self, patient_id: str, case_id: str, text: str) -> TransitionResult:
+        case = self._replying_case(patient_id, case_id, "question")
+        body = (text or "").strip()
+        if not body:
+            raise EventRejected("reply_required")
+        if len(body) > MAX_REPLY_LENGTH:
+            raise EventRejected("reply_too_long")
+        entry = self._record(case, data_log.DataKind.PATIENT_REPLY, body)
+        return self._submit_reply(case_id, entry, {"reply_kind": "question"})
+
+    def reply_pdf(self, patient_id: str, case_id: str, data: bytes, filename: str) -> UploadOutcome:
+        """The requested document, through the sub-project 13 intake; it counts only when its type
+        is the one asked for. The PDF stays in the document-service; the log gets only the code."""
+        self._replying_case(patient_id, case_id, "document")
+        if self.document_intake is None:
+            raise IntakeUnavailable("not_configured")
+        try:
+            answer = self.document_intake.submit(patient_id, filename, data)
+        except IntakeUnavailable as unavailable:
+            logger.info("pdf reply: document_service_unavailable (%s)", unavailable)
+            raise
+        document_type, document_ref = _effective(answer)
+        if document_type is None or document_ref is None:
+            outcome = UploadOutcome(_REJECTION_CODES.get(answer.result, _UNREADABLE), None)
+        else:
+            case = self._replying_case(patient_id, case_id, "document")  # it may have moved meanwhile
+            if document_type != case.requested_document:
+                outcome = UploadOutcome("wrong_document_type", document_type)
+            else:
+                entry = self._record(case, data_log.DataKind.PATIENT_REPLY, f"{document_ref} {document_type} ACCEPTED")
+                self._submit_reply(case_id, entry, {"reply_kind": "document", "document_type": document_type})
+                outcome = UploadOutcome("accepted", document_type)
+        logger.info("pdf reply: %s", outcome.code)
+        return outcome
+
+    def _replying_case(self, patient_id: str, case_id: str, kind: str) -> CaseRecord:
+        case = self.case_for_patient(patient_id, case_id)
+        if case.state is not State.AWAITING_PATIENT_REPLY:
+            raise NotWaitingForReply(case_id)
+        if case.reply_kind != kind:
+            raise ReplyKindMismatch(case_id)
+        return case
+
+    def _submit_reply(self, case_id: str, entry: data_log.DataEntry, payload: dict) -> TransitionResult:
+        """Apply PATIENT_REPLY_SUBMITTED; a reply that never committed must not leave the entry
+        readable (§12.3) - the same fail-closed pattern as human_review._apply, on both exits:
+        a blocked commit (a lost race - a concurrent reply, or the SLA timeout firing first -
+        is `not_waiting_for_reply`, design §10, never a validation error) and a raising one
+        (`sm.apply()` can also raise instead of returning a not-committed result)."""
+        try:
+            result = self.sm.apply(case_id, Event.PATIENT_REPLY_SUBMITTED,
+                                   {**payload, "content_hash": entry.content_hash}, Component.SESSION_SERVICE)
+        except Exception:
+            self._tombstone_reply(entry.entry_id)
+            raise
+        if not result.committed:
+            self._tombstone_reply(entry.entry_id)
+            logger.info("reply: not_waiting_for_reply (%s)", result.reason)
+            raise NotWaitingForReply(case_id)
+        return result
+
+    def _tombstone_reply(self, entry_id: str) -> None:
+        with self.engine.begin() as conn:
+            data_log.tombstone(conn, entry_id, self.sm.clock())
+
     # --- what the patient sees --------------------------------------------------------------
 
     def case_for_patient(self, patient_id: str, case_id: str) -> CaseRecord:
@@ -303,8 +434,22 @@ class SessionService:
             history = status_history(trace, delivered=bool(resolved) or answer is not None)
             message = (self._delivered_message(conn, case.case_id, resolved[-1]) if resolved
                        else answer) if status == "completed" else None
+            staff = self._staff_messages(conn, case.case_id, trace)
+            replies = self._patient_replies(conn, case.case_id, trace)
         needs_document = status == "needs_document"
         missing = sorted(set(case.required_documents or []) - set(case.held_documents)) if needs_document else []
+        committed = [r for r in trace if r.record_type == "Transition"]
+        reply_request = None
+        if case.state is State.AWAITING_PATIENT_REPLY:
+            asked = [r.content_hash for r in committed if r.event == Event.PATIENT_REPLY_REQUESTED.value]
+            text = next((m.text for m in reversed(staff) if asked and m.content_hash == asked[-1]), None)
+            reply_request = ReplyRequest(case.reply_kind, text, case.requested_document, case.patient_deadline)
+        if status == "closed" and message is None:
+            closing = [r.content_hash for r in committed if r.content_hash and r.event in
+                       (Event.HUMAN_RESOLVED_CASE.value, Event.HUMAN_REJECTED.value)]
+            message = next((m.text for m in reversed(staff) if closing and m.content_hash == closing[-1]), None)
+        conversation = sorted([ConversationEntry("staff", m.text, m.at) for m in staff]
+                              + [ConversationEntry("patient", r.text, r.at) for r in replies], key=lambda e: e.at)
         return PatientView(
             case_id=case.case_id,
             status=status,
@@ -316,6 +461,8 @@ class SessionService:
             message=message,
             history=history,
             document_upload="file" if self.document_intake is not None else "text",
+            reply_request=reply_request,
+            conversation=conversation,
         )
 
     @staticmethod
@@ -336,21 +483,81 @@ class SessionService:
         and its content_hash must match an outgoing message whose content is still there.
         This is what T6 does for the Tool Executor's path, applied where the patient reads.
         """
-        approved = {
-            approval.content_hash
-            for approval in repository.content_approvals_for(
-                conn, case_id, naming.Action.ANSWER_CLINICAL_QUESTION.value)
-            if approval.approval_type == "ContentApproval"
-            and approval.reviewer_role == auth.CLINICAL_STAFF
-            and approval.consumed_at is not None
-            and approval.content_hash
-        }
+        approved = _approved_hashes(conn, case_id)
         if not approved:
             return None
         answers = [entry.content for entry
                    in data_log.entries(conn, case_id, data_log.DataKind.OUTGOING_MESSAGE)
                    if entry.content is not None and entry.content_hash in approved]
         return answers[-1] if answers else None
+
+    def _staff_messages(self, conn, case_id: str, trace) -> list[_Message]:
+        """Staff messages the patient may read (design §7.5): the hash is on a committed request /
+        resolve / reject row, and the text is a template's or has a consumed clinical approval."""
+        committed = {r.content_hash for r in trace
+                     if r.record_type == "Transition" and r.content_hash and r.event in _STAFF_MESSAGE_EVENTS}
+        approved = _approved_hashes(conn, case_id)
+        return [_Message(e.content_hash, e.content, e.created_at)
+                for e in data_log.entries(conn, case_id, data_log.DataKind.STAFF_MESSAGE)
+                if e.content is not None and e.content_hash in committed
+                and (patient_messages.is_template_text(e.content) or e.content_hash in approved)]
+
+    def _patient_replies(self, conn, case_id: str, trace) -> list[_Message]:
+        """The patient's own replies whose PATIENT_REPLY_SUBMITTED committed. Fail-closed
+        (design §7.5's read side, applied to this direction too): rather than assert a reply
+        is a document reply from what was asked, this proves the opposite - a reply is a
+        *proven question reply* only when the request before it is still readable and is not
+        the document_request template - and shows it verbatim. Everything else (an unproven
+        reply, because the request was deleted or never existed to check) falls to the
+        reference-line shape: a document reply is shown as the document's label (or a generic
+        one, for a type this version does not know), never its reference line; anything that
+        does not match that shape is shown verbatim regardless. A §18.4 deletion of the
+        request's own staff message can therefore never turn a genuine document reply's
+        reference line into raw, readable text - it can only ever fall toward hiding it."""
+        proven_question = self._proven_question_hashes(conn, case_id, trace)
+        committed = {r.content_hash for r in trace if r.record_type == "Transition"
+                     and r.event == Event.PATIENT_REPLY_SUBMITTED.value and r.content_hash}
+        replies = []
+        for e in data_log.entries(conn, case_id, data_log.DataKind.PATIENT_REPLY):
+            if e.content is None or e.content_hash not in committed:
+                continue
+            if e.content_hash in proven_question:
+                text = e.content  # proven: shown verbatim, whatever it looks like
+            else:
+                match = _DOCUMENT_REPLY.match(e.content)
+                if match is None:
+                    text = e.content  # not proven, and not shaped like a reference line either
+                elif match.group(2) in CATALOG_LABELS:
+                    text = f"הועלה המסמך: {document_label(match.group(2))}"
+                else:
+                    text = _GENERIC_DOCUMENT_LABEL  # a reference line, but of an unknown type
+            replies.append(_Message(e.content_hash, text, e.created_at))
+        return replies
+
+    @staticmethod
+    def _proven_question_hashes(conn, case_id: str, trace) -> set[str]:
+        """content_hash of every PATIENT_REPLY_SUBMITTED PROVEN to answer a question: the
+        committed PATIENT_REPLY_REQUESTED immediately before it (read off the trace's own
+        chronological order - only one request is ever open at a time) has a staff message
+        that is still present (not tombstoned) and is not a document_request template text.
+        Anything not provable this way - the message was deleted, or there was no preceding
+        request at all - is left for _patient_replies' own reference-line check, never assumed
+        to be a question just because it cannot be shown to be a document."""
+        staff_text = {m.content_hash: m.content for m in
+                     data_log.entries(conn, case_id, data_log.DataKind.STAFF_MESSAGE) if m.content is not None}
+        pending: str | None = None
+        hashes: set[str] = set()
+        for row in trace:
+            if row.record_type != "Transition" or not row.content_hash:
+                continue
+            if row.event == Event.PATIENT_REPLY_REQUESTED.value:
+                pending = row.content_hash
+            elif row.event == Event.PATIENT_REPLY_SUBMITTED.value:
+                text = staff_text.get(pending) if pending is not None else None
+                if text is not None and text not in _DOCUMENT_REQUEST_TEXTS:
+                    hashes.add(row.content_hash)
+                pending = None
+        return hashes
 
     def _request_text(self, case_id: str) -> str | None:
         with self.engine.connect() as conn:

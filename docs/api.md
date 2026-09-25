@@ -69,6 +69,8 @@ methods: `GET`, `POST`, `DELETE`, `OPTIONS`. Allowed headers: `Authorization`,
 | GET | `/api/patient/requests/{case_id}` | patient | One of my requests |
 | POST | `/api/patient/requests/{case_id}/documents` | patient | Upload a document |
 | POST | `/api/patient/requests/{case_id}/documents/file` | patient | Upload a PDF, forwarded to the document-service (sub-project 13) |
+| POST | `/api/patient/requests/{case_id}/reply` | patient | Answer a staff question (sub-project 15) |
+| POST | `/api/patient/requests/{case_id}/reply/file` | patient | Upload the PDF a staff member asked for (sub-project 15) |
 | GET | `/api/staff/cases` | staff | All cases (`?state=`) |
 | GET | `/api/staff/cases/{case_id}` | staff | One case, in full |
 | GET | `/api/staff/cases/{case_id}/audit` | staff | The case's audit trace |
@@ -76,6 +78,8 @@ methods: `GET`, `POST`, `DELETE`, `OPTIONS`. Allowed headers: `Authorization`,
 | GET | `/api/staff/cases/{case_id}/context` | staff | What the reviewer is shown |
 | POST | `/api/staff/cases/{case_id}/decision` | staff | Approve / resolve / reject |
 | POST | `/api/staff/cases/{case_id}/answer` | staff | Answer a `MedicalQuestion` with an approved clinical message |
+| GET | `/api/staff/message-templates` | staff | The fixed staff messages (sub-project 15) |
+| POST | `/api/staff/cases/{case_id}/request` | staff | Ask the patient a question or for a document (sub-project 15) |
 | DELETE | `/api/staff/cases/{case_id}/data/{entry_id}` | staff | Delete one Data Log entry |
 | GET | `/api/admin/metrics` | admin_staff | System metrics over a window (sub-project 14) |
 
@@ -142,7 +146,7 @@ Request:
 
 ## 4. Patient routes
 
-All five routes work on the patient the token names. Another patient's case is `404
+Every route below works on the patient the token names. Another patient's case is `404
 case_not_found`, exactly like a case that does not exist.
 
 ### The patient view
@@ -165,9 +169,14 @@ Every patient route answers with this object, and nothing else (the PDF upload w
     {"status": "in_progress", "at": "2026-09-19T22:12:47.812004Z"},
     {"status": "needs_document", "at": "2026-09-19T22:12:47.898132Z"}
   ],
-  "document_upload": "text"
+  "document_upload": "text",
+  "reply_request": null,
+  "conversation": []
 }
 ```
+
+`reply_request` and `conversation` are sub-project 15 (§8 below documents them); every other
+patient route already returned everything else shown here.
 
 | `status` | Meaning | What the UI shows |
 |---|---|---|
@@ -175,18 +184,22 @@ Every patient route answers with this object, and nothing else (the PDF upload w
 | `in_progress` | The agent is working (classifying, planning, retrieving) | A spinner; keep polling |
 | `needs_document` | A document is missing | The upload form for `missing_document_ids` |
 | `in_review` | A human is handling it | "A staff member is reviewing your request" - **no** reason, no kind |
+| `needs_reply` | Sub-project 15: a staff member asked a question or for a document | `reply_request` - the question or the requested document, and the deadline |
 | `completed` | An answer was delivered | `message` - either the status update the agent sent, or a clinical answer a `clinical_staff` reviewer wrote and approved |
-| `closed` | Finished without a delivered message (a reviewer resolved or rejected it) | "Your request was closed. The clinic will contact you." |
+| `closed` | Finished without a delivered message (a reviewer resolved or rejected it) | `message` when the reviewer sent a closing message (sub-project 15), otherwise "Your request was closed. The clinic will contact you." |
 
 - `request_text` is the text the patient submitted; `null` once a staff member has deleted
   it from the Data Log (§18.4).
 - `missing_document_ids` is non-empty only in `needs_document`;
   `missing_document_request_template_id` is then `"missing-document-v1"` (D24) - the UI
   renders the request for the document itself, the system never sends one.
-- `message` is non-null only in `completed`: the exact text that was delivered.
+- `message` is non-null in `completed` (the exact text that was delivered) and, since
+  sub-project 15, in `closed` when the reviewer sent a closing message with the decision
+  (`POST .../decision`'s optional `message`, §8 below); otherwise `null`.
 - `history` is the case's abstract status over time, oldest first: one entry each time the
-  status actually changed, with the time the case entered it. It holds the same six values
-  as `status` and nothing else - never a State, an event, an escalation kind or a reason
+  status actually changed, with the time the case entered it. It holds the same seven values
+  as `status` (since sub-project 15 added `needs_reply`) and nothing else - never a State, an
+  event, an escalation kind or a reason
   (§12.3) - and a status the case entered twice appears twice. The last entry's `status`
   always equals `status`, and the first is the submission. It is `[]` only for a case with
   no committed transition, which the patient routes never return.
@@ -342,7 +355,7 @@ Optional `?state=<State>`; an unknown state is `422 invalid_body`. `200`:
 
 States: `Received`, `Classifying`, `Classified`, `Planning`, `RetrievingData`,
 `Delivering`, `AssessingReadiness`, `AwaitingPatientInput`, `AwaitingHumanReview`, `Ready`,
-`Completed`, `Failed`.
+`Completed`, `Failed`, `AwaitingPatientReply` (sub-project 15, §8).
 
 ### GET /api/staff/cases/{case_id}
 
@@ -426,7 +439,9 @@ The queue of cases in `AwaitingHumanReview`, oldest update first. `200`:
     "reasons": [],
     "allowed_decisions": ["resolve", "reject"],
     "required_fields": [],
-    "updated_at": "2026-09-19T22:12:39.693277Z"
+    "updated_at": "2026-09-19T22:12:39.693277Z",
+    "human_engaged": false,
+    "returned_by": null
   }
 ]
 ```
@@ -435,6 +450,7 @@ The queue of cases in `AwaitingHumanReview`, oldest update first. `200`:
   `ClassificationFailed`, `TemporalViolation`, `PlanningFailed`, `PolicyDenied`,
   `PolicyReview`, `RetryExhausted`, `NonIdempotentFailure`, `ExecutionUnknown`,
   `Z3Counterexample`, `PatientSlaExpired`, `DeliveryStepMissing`.
+- `human_engaged` / `returned_by` (sub-project 15) - see §8 below.
 - `reasons`: the `policy_reasons` of the row that escalated the case (e.g.
   `["medical_answer_attempt"]`, `["hours_until:20"]`). May be empty.
 - `allowed_decisions`: **render exactly these buttons.** `approve` appears only for the
@@ -485,8 +501,9 @@ Everything the reviewer is shown, plus the reference that binds the decision to 
 ```
 
 - `data` is the Data Log (§12.3) - the only place content lives. `kind` is `request_text`,
-  `uploaded_document`, `instructions` or `outgoing_message`. Deleted entries and uploads
-  the case never accepted are not listed at all.
+  `uploaded_document`, `instructions`, `outgoing_message`, `staff_message` or `patient_reply`
+  (the last two, sub-project 15, §8). Deleted entries and uploads the case never accepted
+  are not listed at all.
 - `trace` is the same audit rows as `/audit`, with the content-free subset above.
 - `shown_context_ref` **must be sent back with the decision**. Fetch the context, show it,
   and post the decision with the `shown_context_ref` that came with what the reviewer read.
@@ -515,6 +532,7 @@ Request:
 | `shown_context_ref` | The value from the context just shown |
 | `verified_identity_ref` | Only for `approve` on `PatientVerificationFailed`: how the identity was established, e.g. `"ID-DESK-17"` |
 | `patient_deadline` | Only for `approve` on `Z3Counterexample` / `PatientSlaExpired`: the new deadline, an ISO datetime **with a timezone**, e.g. `"2026-09-24T09:00:00+00:00"` |
+| `message` | Only for `resolve` / `reject` (sub-project 15): an optional closing message for the patient - see §8 below |
 
 `reviewer_id` and `reviewer_role` are taken from the token; sending them changes nothing.
 
@@ -529,7 +547,7 @@ automatically. What to expect:
 
 | Decision | Kind | Resulting state |
 |---|---|---|
-| `resolve` | any | `Completed` (the patient sees `closed` - this route never carries a message; for a `MedicalQuestion`, answering it through `POST .../answer` instead leaves the patient seeing `completed`) |
+| `resolve` | any | `Completed` (the patient sees `closed`, with an optional closing message - see §8; for a `MedicalQuestion`, answering it through `POST .../answer` instead leaves the patient seeing `completed`) |
 | `reject` | any | `Failed` (the patient sees `closed`) |
 | `approve` | `PatientVerificationFailed` | `Classifying` - the request is re-validated automatically and goes on; or `Received` if the request text had been deleted: the decision stands and the case waits for staff |
 | `approve` | `RetryExhausted` | `Planning` (a new retry cycle) |
@@ -551,6 +569,11 @@ Errors - all of them leave the case exactly as it was:
 | 409 | `workflow_decision_invalid` | The state machine refused the approval record (e.g. a non-staff reviewer role) |
 | 409 | other codes | Any other guard that refused the human event; show `detail` and re-fetch the case |
 | 422 | `invalid_body` | A field is over its length limit, or `patient_deadline` has no timezone |
+
+Sub-project 15's optional `message` field adds three more codes to this route - `403
+clinical_staff_only`, `409 message_not_allowed` and `409 human_engaged` - documented in §8
+below, along with `message`'s other validation codes (`invalid_request`, `message_required`,
+`invalid_template`, `unexpected_param`, `invalid_param`).
 
 ### POST /api/staff/cases/{case_id}/answer
 
@@ -642,7 +665,8 @@ in one read-only snapshot with a 5 s statement timeout; past it the answer is
   },
   "human_load": {
     "escalations_entered": 2,
-    "decisions": {"HUMAN_APPROVED": 1, "HUMAN_RESOLVED_CASE": 1, "HUMAN_REJECTED": 0},
+    "decisions": {"HUMAN_APPROVED": 1, "HUMAN_RESOLVED_CASE": 1, "HUMAN_REJECTED": 0,
+                  "PATIENT_REPLY_REQUESTED": 0},
     "decided_by_kind": {"MedicalQuestion": 1, "RetryExhausted": 1},
     "open_by_kind": {},
     "time_to_decision": {"count": 2, "p50": 0.011, "p95": 0.012, "max": 0.012},
@@ -674,3 +698,213 @@ counts what **happened** in it. Durations are seconds; `p50` / `p95` / `max` are
 `oldest_open_seconds` describe the review queue **now**, whatever the window. `sources` is
 `null` for each system while the Agent Orchestrator is not running. The answer carries no
 `patient_id`, `case_id` or request text.
+
+## 8. Staff requests to the patient (sub-project 15)
+
+While a case is in `AwaitingHumanReview`, a reviewer may ask the patient a question or for one
+catalog document instead of (or before) approving, resolving or rejecting it. The case then
+waits in `AwaitingPatientReply` until the patient answers or the deadline passes (the SLA
+Worker returns it to the queue), and comes back to review with the same escalation it left
+with - it never resumes automatically (design decision: never back to the agent after a
+human has engaged).
+
+### The patient view's new fields
+
+- `status` gains `needs_reply`: a staff member is waiting for the patient's answer.
+- `reply_request` is non-null only while `status` is `needs_reply` - what was asked, never a
+  reason or an escalation kind:
+
+  ```json
+  {"kind": "question", "message": "לא הצלחנו להבין את פנייתך...", "document_type": null,
+   "deadline": "2026-09-26T09:00:00Z"}
+  ```
+
+  `kind` is `"question"` or `"document"`; `message` is the exact text sent (a template's
+  rendering, or a `clinical_staff` member's free text) - `null` only if it was later deleted
+  (§18.4); `document_type` is the requested catalog type for `"document"`, else `null`;
+  `deadline` is when the request expires.
+- `conversation` is the staff messages and the patient's replies, oldest first, shown only
+  by design §7.5's fail-closed rule (a template's own text, or clinical free text with a
+  consumed `ContentApproval`; a document reply is shown as its document's label, never its
+  raw reference line):
+
+  ```json
+  [
+    {"sender": "staff", "text": "לא הצלחנו להבין את פנייתך...", "at": "2026-09-25T09:00:00Z"},
+    {"sender": "patient", "text": "תור לאורתופדיה", "at": "2026-09-25T09:05:00Z"}
+  ]
+  ```
+- `message` is now also non-null in `closed` when the reviewer sent a closing message with
+  the decision (below); otherwise it stays `null` there as before.
+
+### POST /api/patient/requests/{case_id}/reply
+
+The patient's text answer to a staff question. Request:
+
+```json
+{"text": "תור לאורתופדיה"}
+```
+
+`text` is trimmed, and must then be 1-2000 characters. `200`: the patient view, now `in_review`
+(back with the reviewer, `returned_by: "patient_reply"`).
+
+- `404 case_not_found`
+- `409 not_waiting_for_reply` - the case is not in `needs_reply` (already answered, timed
+  out, or never asked)
+- `409 reply_kind_mismatch` - the staff member asked for a document, not text
+- `409 reply_not_accepted` - the state machine refused the reply for an internal reason; the
+  exact reason stays on the server (application log, §12.3), the same pattern as
+  `POST /api/patient/requests`' `request_rejected` - not reachable through a conforming
+  client today (a trimmed, non-blank, ≤2000-character `text` is always accepted or refused
+  with a more specific code above), kept as the safe default for a guard failure the service
+  does not otherwise name
+- `422 invalid_body` - empty, whitespace-only or over 2000 characters
+- `422 reply_too_long` - defence only: the schema already caps `text` at 2000, so this is not
+  reachable through a conforming client; kept in case the service ever counts length
+  differently, so it can never surface as a 500
+
+### POST /api/patient/requests/{case_id}/reply/file
+
+Exactly like `POST /api/patient/requests/{case_id}/documents/file` (sub-project 13: same
+multipart contract, same size limits, same 411/413 body-size checks in front of the route) -
+offered only while `reply_request.kind` is `"document"`. `200`:
+
+```json
+{"upload": {"code": "accepted", "document_type": "URINALYSIS"}, "request": {"...": "the patient view"}}
+```
+
+`upload.code` is one of §4's codes reachable here - `accepted`, `not_medical`, `unreadable`,
+`expired`, `not_yours` - plus one more:
+
+| `upload.code` | Meaning | The case |
+|---|---|---|
+| `accepted` | A readable, valid document of the type requested (or a re-sent copy already accepted) | Leaves `needs_reply`, back to `in_review` |
+| `wrong_document_type` | Readable and valid, but not the catalog type the staff member asked for | Unchanged |
+| `not_medical`, `unreadable`, `expired`, `not_yours` | As in §4 | Unchanged |
+
+`upload.document_type` is the catalog type the document-service classified the file as, for
+`accepted` and also for `wrong_document_type` (the type it actually was, not the one that was
+requested); `null` for every other code.
+
+- `404 file_upload_not_enabled`, `404 case_not_found`
+- `409 not_waiting_for_reply`, `409 reply_kind_mismatch`
+- `411 length_required`, `413 too_large`, `422 invalid_body` - as in §4
+- `503 document_service_unavailable` - as in §4
+
+### GET /api/staff/message-templates
+
+The fixed messages a staff member may send without a `ContentApproval` (design §7.1) - the UI
+keeps no copy of them. `200`:
+
+```json
+[
+  {"template_id": "clarify_general", "purpose": "question",
+   "text": "לא הצלחנו להבין את פנייתך. נשמח אם תפרט/י במה נוכל לעזור.", "param": null, "options": {}},
+  {"template_id": "clarify_did_you_mean", "purpose": "question",
+   "text": "האם התכוונת ל{topic}? נשמח לאישור או לפירוט.", "param": "topic",
+   "options": {"appointment_time": "מועד התור", "required_documents": "המסמכים הנדרשים לתור",
+               "preparation": "הוראות ההכנה לתור"}},
+  {"template_id": "document_request", "purpose": "document", "text": "נא להעלות את המסמך: {document}.",
+   "param": "document", "options": {"CBC": "ספירת דם מלאה", "COAGULATION_TESTS": "בדיקות קרישה",
+   "ECG": "תרשים פעילות חשמלית של הלב", "URINALYSIS": "בדיקת שתן", "PREOP_SUMMARY": "סיכום טרום ניתוח"}},
+  {"template_id": "close_out_of_scope", "purpose": "closing",
+   "text": "פנייתך אינה בתחום שהמערכת מטפלת בו. לשאלות אחרות ניתן לפנות למוקד.", "param": null, "options": {}}
+]
+```
+
+This example shows 4 of the server's 7 templates (`clarify_general`, `clarify_did_you_mean`,
+`document_request`, `close_out_of_scope`); `clarify_appointment`, `close_handled` and
+`close_no_reply` follow the same shape, each with `param: null` and `options: {}`.
+
+`purpose` is `"question"`, `"document"` or `"closing"` - which route(s) may use that template.
+`options` is `{}` exactly when `param` is `null`: a template takes a parameter if and only if
+it lists one or more options for it.
+
+- `403 staff_only` - a patient token.
+
+### POST /api/staff/cases/{case_id}/request
+
+Ask the patient a question, or for one catalog document. Request:
+
+```json
+{"kind": "question", "template_id": "clarify_general", "reason": "unclear", "shown_context_ref": "ctx-..."}
+```
+
+or, for clinical free text:
+
+```json
+{"kind": "question", "text": "מהו התאריך המדויק?", "reason": "unclear", "shown_context_ref": "ctx-..."}
+```
+
+or, for a document:
+
+```json
+{"kind": "document", "document_type": "URINALYSIS", "reason": "need a urine test", "shown_context_ref": "ctx-..."}
+```
+
+| Field | Rule |
+|---|---|
+| `kind` | `"question"` or `"document"` |
+| `template_id` | A template of the right purpose (`question` or, for a document, `document_request` only - or omit it) |
+| `param` | The template's parameter, from its closed `options` list, when it takes one - never for `kind: "document"`, whose message is rendered from `document_type` (`409 unexpected_param`) |
+| `text` | Clinical free text instead of a template - `question` only, and only from a `clinical_staff` token; exactly one of `template_id` / `text` |
+| `document_type` | A catalog type (`CBC`, `COAGULATION_TESTS`, `ECG`, `URINALYSIS`, `PREOP_SUMMARY`) - `kind: "document"` only |
+| `deadline` | Optional ISO datetime **with a timezone**; defaults to 24 hours ahead (never past the appointment); at most 7 days ahead and never past the appointment |
+| `reason` | Required, non-blank, up to 2000 characters - internal, like a decision's reason |
+| `shown_context_ref` | The value from the context just shown |
+
+`200`: `{"case_id": "...", "state": "AwaitingPatientReply"}`.
+
+Errors - all of them leave the case exactly as it was:
+
+| Status | `detail` | When |
+|---|---|---|
+| 404 | `case_not_found` | Unknown case |
+| 409 | `not_in_review` | The case is not in `AwaitingHumanReview` |
+| 409 | `context_changed` | `shown_context_ref` is not the current one |
+| 409 | `reason_required` | `reason` is empty or blank |
+| 409 | `invalid_request` | `kind` is neither `question` nor `document`; a `question` request also sets `document_type`; a `document` request carries `text`, an unrelated `template_id` or an unknown `document_type`; or neither/both of `template_id` and `text` are given |
+| 403 | `clinical_staff_only` | `text` from a non-`clinical_staff` token |
+| 409 | `message_required` | `text` is empty or blank once trimmed (over 2000 characters is the same defence as `reply_too_long` above - the schema already caps `text` at 2000) |
+| 409 | `invalid_template` | `kind: "question"` with a `template_id` that is unknown, or is not a `question` template (a `document` request's `template_id` is checked as part of `invalid_request` above, never this code) |
+| 409 | `unexpected_param` | `param` given for a template that takes none, or `param` given at all for `kind: "document"` (a document request never takes one) |
+| 409 | `invalid_param` | `param` is not one of the template's `options` |
+| 409 | `document_service_not_configured` | `kind: "document"` with no document-service configured |
+| 409 | `invalid_deadline` | `deadline` is in the past, more than 7 days ahead, or after the appointment |
+| 409 | `appointment_passed` | `appointment_at` is known and is already in the past - refused before the deadline is even computed, so a default deadline never masquerades as `invalid_deadline` |
+| 409 | other codes | Any other guard that refused the `PATIENT_REPLY_REQUESTED` transition; show `detail` and re-fetch the case |
+| 422 | `invalid_body` | A field is over its length limit, `kind`/`reason`/`shown_context_ref` missing, or `deadline` has no timezone |
+
+### POST /api/staff/cases/{case_id}/decision: the optional closing message
+
+`resolve` and `reject` (never `approve`) may now carry a closing message for the patient, in
+the same shape as the request route's `template_id`/`param` or `text`:
+
+```json
+{"decision": "reject", "reason": "out of scope", "shown_context_ref": "ctx-...",
+ "message": {"template_id": "close_out_of_scope"}}
+```
+
+`message` is optional; when given, it is validated exactly like the request route's message
+(`invalid_request`, `clinical_staff_only`, `message_required`, `invalid_template`,
+`unexpected_param`, `invalid_param` - all `409`, except `clinical_staff_only` which is `403`).
+Two more codes are sub-project 15's own:
+
+| Status | `detail` | When |
+|---|---|---|
+| 409 | `message_not_allowed` | `message` given with `decision: "approve"` |
+| 409 | `human_engaged` | `decision: "approve"` on a case a staff request has already been sent in - `approve` is gone for good once a person has written to the patient (`allowed_decisions` already omits it) |
+
+### ReviewItem: `human_engaged` and `returned_by`
+
+`GET /api/staff/reviews` and the review queue now also carry:
+
+```json
+{"...": "...", "human_engaged": true, "returned_by": "patient_reply"}
+```
+
+- `human_engaged`: `true` once any staff request has been sent on this case - `approve` is
+  then removed from `allowed_decisions` (never sent by the server).
+- `returned_by`: how the case last came back to `AwaitingHumanReview` - `"patient_reply"`
+  (the patient answered), `"reply_timeout"` (the deadline passed, the SLA Worker returned
+  it), or `null` (it came from elsewhere, e.g. it just escalated).

@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import * as api from './client'
 import { ApiError } from './client'
+import type { MessageBody, PatientRequestBody } from './types'
 
 type FetchMock = ReturnType<typeof vi.fn>
 
@@ -212,6 +213,28 @@ describe('staff routes', () => {
     expect(body.patient_id).toBeUndefined()
   })
 
+  it('sends a decision with a closing message, copying only its set fields (sub-project 15)', async () => {
+    mockOnce(200, { case_id: 'CASE-1', state: 'Completed' })
+    // An extra, unrecognised key proves the client copies known fields, not the whole object.
+    const message = { template_id: 'close_out_of_scope', mode: 'template' } as MessageBody
+    await api.decide('CASE-1', {
+      decision: 'reject',
+      reason: 'out of scope',
+      shown_context_ref: 'ctx-abc',
+      message,
+    })
+    const [url, init] = lastCall()
+    expect(url).toBe('/api/staff/cases/CASE-1/decision')
+    const body = JSON.parse(init.body as string)
+    expect(body).toEqual({
+      decision: 'reject',
+      reason: 'out of scope',
+      shown_context_ref: 'ctx-abc',
+      message: { template_id: 'close_out_of_scope' },
+    })
+    expect(body.message.mode).toBeUndefined()
+  })
+
   it('tombstones a Data Log entry', async () => {
     // jsdom's Response refuses status 204, so stand in for an empty response.
     fetchMock.mockResolvedValueOnce({ ok: true, status: 204, text: async () => '' } as Response)
@@ -219,6 +242,64 @@ describe('staff routes', () => {
     const [url, init] = lastCall()
     expect(url).toBe('/api/staff/cases/CASE-1/data/entry-7')
     expect(init.method).toBe('DELETE')
+  })
+})
+
+describe('patient requests (sub-project 15)', () => {
+  beforeEach(() => api.setToken('tok-1'))
+
+  it('posts a staff request to the case', async () => {
+    mockOnce(200, { case_id: 'C-1', state: 'AwaitingPatientReply' })
+    // An extra, unrecognised key proves the client copies known fields, not the whole object.
+    const body = {
+      kind: 'question',
+      template_id: 'clarify_general',
+      reason: 'unclear',
+      shown_context_ref: 'ref-1',
+      mode: 'template',
+    } as PatientRequestBody
+    await api.requestFromPatient('C-1', body)
+    const [url, init] = lastCall()
+    expect(url).toBe('/api/staff/cases/C-1/request')
+    expect(init.method).toBe('POST')
+    const sent = JSON.parse(init.body as string)
+    expect(sent).toEqual({
+      kind: 'question',
+      template_id: 'clarify_general',
+      reason: 'unclear',
+      shown_context_ref: 'ref-1',
+    })
+    expect(sent.mode).toBeUndefined()
+  })
+
+  it('posts the patient text reply', async () => {
+    mockOnce(200, {})
+    await api.replyToRequest('C-1', 'כן')
+    const [url, init] = lastCall()
+    expect(url).toBe('/api/patient/requests/C-1/reply')
+    expect(JSON.parse(init.body as string)).toEqual({ text: 'כן' })
+  })
+
+  it('posts the requested PDF as multipart form data, with the file and the bearer token', async () => {
+    mockOnce(200, {})
+    const file = new File(['%PDF'], 'a.pdf', { type: 'application/pdf' })
+    await api.replyWithFile('C-1', file)
+    const [url, init] = lastCall()
+    expect(url).toBe('/api/patient/requests/C-1/reply/file')
+    expect(init.method).toBe('POST')
+    expect((init.headers as Record<string, string>).Authorization).toBe('Bearer tok-1')
+    // The browser sets the multipart boundary itself: no Content-Type is set by hand.
+    expect((init.headers as Record<string, string>)['Content-Type']).toBeUndefined()
+    expect(init.body).toBeInstanceOf(FormData)
+    const sent = (init.body as FormData).get('file')
+    expect(sent).toBeInstanceOf(File)
+    expect((sent as File).name).toBe('a.pdf')
+  })
+
+  it('reads the message templates', async () => {
+    mockOnce(200, [])
+    await api.getMessageTemplates()
+    expect(lastCall()[0]).toBe('/api/staff/message-templates')
   })
 })
 

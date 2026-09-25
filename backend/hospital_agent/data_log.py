@@ -30,6 +30,8 @@ class DataKind(StrEnum):
     UPLOADED_DOCUMENT = "uploaded_document"
     INSTRUCTIONS = "instructions"
     OUTGOING_MESSAGE = "outgoing_message"
+    STAFF_MESSAGE = "staff_message"  # sub-project 15: a request or closing message a staff member sent
+    PATIENT_REPLY = "patient_reply"  # sub-project 15: the patient's answer - never read by the Classifier
 
 
 @dataclass(frozen=True)

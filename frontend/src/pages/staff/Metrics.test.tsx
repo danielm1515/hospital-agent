@@ -17,8 +17,8 @@ const FIXTURE: MetricsData = {
   window: { start: '2026-09-17T00:00:00Z', end: '2026-09-24T00:00:00Z' },
   generated_at: '2026-09-24T10:00:00Z',
   flow: {
-    opened: 12,
-    by_state: { Completed: 7, Failed: 1, AwaitingHumanReview: 2, AwaitingPatientInput: 1, Planning: 1 },
+    opened: 13,
+    by_state: { Completed: 7, Failed: 1, AwaitingHumanReview: 2, AwaitingPatientInput: 1, AwaitingPatientReply: 1, Planning: 1 },
     by_outcome: { AppointmentPreparation: 8, MedicalQuestion: 3, SomethingNew: 1 },
     completion: { CASE_RESOLVED: { count: 6, p50: 2.6, p95: 3.1, max: 3.4 }, HUMAN_RESOLVED_CASE: NONE },
   },
@@ -90,9 +90,10 @@ describe('Metrics', () => {
     for (const heading of ['עומס על הצוות', 'כלים חיצוניים', 'SLA מטופל', 'מדיניות']) {
       expect(screen.getByRole('heading', { name: heading })).toBeInTheDocument()
     }
-    expect(tile('נפתחו')).toHaveTextContent('12')
+    expect(tile('נפתחו')).toHaveTextContent('13')
     expect(tile('נדחו ע״י צוות')).toHaveTextContent('1')
-    expect(tile('בטיפול')).toHaveTextContent('1') // 12 - 7 - 1 - 2 - 1
+    expect(tile('בטיפול')).toHaveTextContent('1') // 13 - 7 - 1 - 2 - 1 - 1
+    expect(tile('ממתינות לתשובת מטופל')).toHaveTextContent('1')
     expect(tile('פתוחות עכשיו')).toHaveTextContent('2')
     expect(tile('פתוחות עכשיו')).toHaveTextContent('2.0 h')
     expect(tile('עמידה בזמן')).toHaveTextContent('60%')
@@ -159,7 +160,7 @@ describe('Metrics', () => {
     await userEvent.click(screen.getByRole('button', { name: '24 שעות' }))
     expect(spanOf(1)).toBe(24 * 3600_000)
     expect(container.querySelector('.metrics-body')).toHaveClass('is-stale')
-    expect(tile('נפתחו')).toHaveTextContent('12')
+    expect(tile('נפתחו')).toHaveTextContent('13')
   })
 
   it('lets only the most recently requested range land, even when an older request resolves later', async () => {

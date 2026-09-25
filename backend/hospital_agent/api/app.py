@@ -54,16 +54,17 @@ def cors_origins(env: dict[str, str] | None = None) -> list[str]:
 
 
 class UploadSizeLimit:
-    """Pure ASGI: a PDF upload (POST .../documents/file) must say how big it is, and may be at
-    most UPLOAD_BODY_LIMIT - refused by its Content-Length alone, before the body is read or any
-    route runs (411 length_required, 413 too_large; `{"detail": code}` like the rest of the API).
-    Every other request passes untouched."""
+    """Pure ASGI: a PDF upload (POST .../documents/file or POST .../reply/file) must say how big
+    it is, and may be at most UPLOAD_BODY_LIMIT - refused by its Content-Length alone, before the
+    body is read or any route runs (411 length_required, 413 too_large; `{"detail": code}` like
+    the rest of the API). Every other request passes untouched."""
 
     def __init__(self, app) -> None:
         self.app = app
 
     async def __call__(self, scope, receive, send) -> None:
-        if scope["type"] == "http" and scope["method"] == "POST" and scope["path"].endswith("/documents/file"):
+        if scope["type"] == "http" and scope["method"] == "POST" \
+                and scope["path"].endswith(("/documents/file", "/reply/file")):
             raw = dict(scope.get("headers") or []).get(b"content-length")
             if raw is None or not raw.isdigit():  # missing, empty, signed, or not a number at all
                 await self._refuse(send, 411, "length_required")

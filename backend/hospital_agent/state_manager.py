@@ -159,6 +159,40 @@ def _clinical_answer_approval(
     return approval
 
 
+# Sub-project 15 (design §7.3, docs/spec_corrections.md row 86): the events that may carry a staff
+# member's clinical free text to the patient, under their own payload key (message_approval_id) -
+# never content_approval_id, which is the clinical answer's.
+MESSAGE_EVENTS = frozenset({Event.PATIENT_REPLY_REQUESTED, Event.HUMAN_RESOLVED_CASE, Event.HUMAN_REJECTED})
+
+
+def _patient_message_approval(
+    conn: Connection, case: CaseRecord, approval_id: str, now: datetime
+) -> ApprovalRecord | None:
+    """The ContentApproval that authorises a clinical staff message, or None if it cannot be used.
+
+    Every check of _clinical_answer_approval except the MedicalQuestion one: a clarifying question
+    or a closing message may be written on any escalation, but only by clinical_staff, bound to
+    one exact text (execution_id + action + content_hash), unused and in time (§12.4).
+    """
+    approval = repository.load_approval(conn, approval_id)
+    if approval is None or approval.approval_type != "ContentApproval" or approval.decision != "approve":
+        return None
+    if (approval.case_id, approval.patient_id) != (case.case_id, case.patient_id):
+        return None
+    if approval.reviewer_role != "clinical_staff" or approval.action != Action.ANSWER_CLINICAL_QUESTION.value:
+        return None
+    if not approval.content_hash or not approval.execution_id:
+        return None
+    if approval.consumed_at is not None or approval.valid_until <= now:
+        return None
+    execution = repository.load_execution(conn, approval.execution_id)
+    if execution is None or execution.case_id != case.case_id:
+        return None
+    if execution.content_hash != approval.content_hash or not execution.medical_content_flag:
+        return None
+    return approval
+
+
 @dataclass(frozen=True)
 class TransitionResult:
     case_id: str | None  # None only when REQUEST_SUBMITTED itself was rejected
@@ -292,6 +326,16 @@ class StateManager:
                            "content_hash": content_approval.content_hash,
                            "execution_id": content_approval.execution_id}
 
+            message_approval = None
+            if payload.get("message_approval_id"):
+                if case is None or event not in MESSAGE_EVENTS or payload.get("content_approval_id"):
+                    return self._block(conn, case, event, CONTENT_APPROVAL_INVALID, now, payload=payload)
+                message_approval = _patient_message_approval(conn, case, payload["message_approval_id"], now)
+                if message_approval is None:
+                    return self._block(conn, case, event, CONTENT_APPROVAL_INVALID, now, payload=payload)
+                # The audit row describes what was verified, never what the caller claimed.
+                payload = {**payload, "content_hash": message_approval.content_hash}
+
             ctx = GuardContext(
                 case=case,
                 event=event,
@@ -340,6 +384,9 @@ class StateManager:
                     raise _StaleVersion(case.case_id)
             if content_approval is not None:
                 if repository.consume_approval(conn, content_approval.approval_id, now) == 0:
+                    raise _StaleVersion(case.case_id)
+            if message_approval is not None:
+                if repository.consume_approval(conn, message_approval.approval_id, now) == 0:
                     raise _StaleVersion(case.case_id)
             return TransitionResult(after.case_id, True, state, row.target, audit_id=audit_id)
 

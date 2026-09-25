@@ -6,7 +6,8 @@
  */
 import { useEffect, useRef } from 'react'
 import { ApiError } from '../../api/client'
-import type { PatientStatus } from '../../api/types'
+import type { DocumentType, PatientStatus, UploadResult } from '../../api/types'
+import type { AlertVariant } from '../../components/Alert'
 
 /** The patient screens refresh every 3 s while a case is still moving (design §4). */
 export const POLL_MS = 3000
@@ -93,13 +94,14 @@ export function elapsedBetween(from: string, to: string): string | null {
 
 /**
  * What each status means, in the patient's own words: a title for the timeline step,
- * and one line saying what it means for them. The patient sees only these six abstract
+ * and one line saying what it means for them. The patient sees only these seven abstract
  * statuses, so nothing here names a State, an event or a reason (§12.3).
  */
 const STATUS_TEXT: Record<PatientStatus, { title: string; note: string }> = {
   received: { title: 'הפנייה נקלטה', note: 'הפנייה התקבלה במערכת וממתינה לטיפול.' },
   in_progress: { title: 'הפנייה בטיפול', note: 'בדיקת התור, המסמכים הנדרשים והוראות ההכנה.' },
   needs_document: { title: 'ממתינה למסמך', note: 'כדי להמשיך נדרש מסמך שעדיין לא הועלה.' },
+  needs_reply: { title: 'ממתינה לתשובתך', note: 'איש צוות ביקש ממך פרט נוסף או מסמך.' },
   in_review: { title: 'הועברה לצוות', note: 'איש צוות בודק את הפנייה. מידע רפואי אינו נמסר אוטומטית.' },
   completed: { title: 'הפנייה הושלמה', note: 'נשלחה אליכם הודעת סטטוס.' },
   closed: { title: 'הפנייה נסגרה', note: 'הטיפול הסתיים בלי הודעה אוטומטית.' },
@@ -133,6 +135,27 @@ export function documentLabel(documentId: string): string | null {
   return DOCUMENT_LABELS[documentId] ?? null
 }
 
+// Unicode "First Strong Isolate" / "Pop Directional Isolate": wraps a Latin run inside
+// Hebrew text so it keeps its own direction without disturbing the RTL sentence around it
+// (the `.mono` convention elsewhere in this app does the same with CSS `unicode-bidi:
+// isolate` for a run that lives in its own element; a raw code interpolated into a plain
+// string has no element to isolate, so the string itself carries the isolation).
+const FSI = '\u2068'
+const PDI = '\u2069'
+
+/**
+ * The type's Hebrew label, or - fail closed (§14) - the raw catalog code, isolated so it
+ * reads left-to-right instead of jumping to the wrong edge of the Hebrew sentence it lands
+ * in (a code this version does not know should still never happen in practice, since
+ * `DocumentType` is a closed union, but the value arrives over the wire, not from the type
+ * checker).
+ */
+export function describeDocumentType(type: DocumentType | null): string {
+  if (!type) return ''
+  const label = documentLabel(type)
+  return label ?? `${FSI}${type}${PDI}`
+}
+
 /** The client-side refusal of a non-PDF file, and of a PDF over the 10 MB limit. */
 export const NOT_PDF_MESSAGE = 'יש לבחור קובץ PDF.'
 export const FILE_TOO_LARGE_MESSAGE = 'הקובץ גדול מדי. אפשר להעלות קובץ עד 10MB.'
@@ -140,16 +163,76 @@ export const FILE_TOO_LARGE_MESSAGE = 'הקובץ גדול מדי. אפשר לה
 /** `POST .../documents/file` accepts a PDF of at most 10 MB (`docs/api.md` §4). */
 export const MAX_UPLOAD_BYTES = 10 * 1024 * 1024
 
+/** A file whose name and (when the browser reports one) type both say PDF. */
+export function isPdfFile(file: File): boolean {
+  const nameIsPdf = /\.pdf$/i.test(file.name)
+  const typeIsPdf = file.type === '' || file.type === 'application/pdf'
+  return nameIsPdf && typeIsPdf
+}
+
+/** The outcome of a PDF upload, shown next to the request regardless of its status. */
+export interface UploadNotice {
+  variant: AlertVariant
+  text: string
+}
+
 /**
- * Hebrew for the sub-project 13 upload errors (`docs/api.md` §4), keyed by `detail`.
- * Checked before the generic status-based fallbacks below, since a `404` here
- * (`file_upload_not_enabled`) is not the same as the generic "case not found" `404`.
+ * One Hebrew sentence per `upload.code` (`docs/api.md` §4 and §8, design §5.3). Shared by
+ * the `needs_document` file picker and the sub-project 15 reply file picker - the reply
+ * route only ever returns a subset of these codes plus `wrong_document_type`, but the
+ * mapping is the same one either way, never duplicated. A code this version does not know
+ * is shown as the neutral, fail-closed sentence (§14), never the raw code (§12.3).
+ */
+export function uploadResultMessage(upload: UploadResult): UploadNotice {
+  const label = describeDocumentType(upload.document_type)
+  switch (upload.code) {
+    case 'accepted':
+      return { variant: 'ok', text: `המסמך ${label} התקבל. הפנייה ממשיכה בטיפול.` }
+    case 'not_required':
+      return { variant: 'info', text: `המסמך ${label} תקין, אבל אינו נדרש לתור הזה.` }
+    case 'already_received':
+      return { variant: 'info', text: `המסמך ${label} כבר התקבל קודם.` }
+    case 'wrong_document_type':
+      return label
+        ? {
+            variant: 'error',
+            text: `המסמך שהועלה אינו המסמך שהתבקש. זיהינו אותו כ${label}. נא להעלות את המסמך הנכון.`,
+          }
+        : { variant: 'error', text: 'המסמך שהועלה אינו המסמך שהתבקש. נא להעלות את המסמך הנכון.' }
+    case 'not_medical':
+      return { variant: 'error', text: 'הקובץ אינו מסמך רפואי, ולכן לא נקלט.' }
+    case 'unreadable':
+      return { variant: 'error', text: 'לא הצלחנו לקרוא את המסמך. ודאו שזה קובץ PDF ברור ונסו שוב.' }
+    case 'expired':
+      // `document_type` is `null` for `expired` in the common case (`docs/api.md` §4) - an
+      // empty `label` must not leave a double space where it would have gone.
+      return label
+        ? { variant: 'error', text: `המסמך ${label} ישן מדי לפי כללי התוקף. יש להעלות מסמך עדכני.` }
+        : { variant: 'error', text: 'המסמך ישן מדי לפי כללי התוקף. יש להעלות מסמך עדכני.' }
+    case 'not_yours':
+      return { variant: 'error', text: 'המסמך אינו שייך לך, ולכן לא נקלט.' }
+    default:
+      return { variant: 'error', text: 'המסמך לא נקלט. נסו שוב או פנו למוקד.' }
+  }
+}
+
+/**
+ * Hebrew for the sub-project 13 upload errors and the sub-project 15 reply errors
+ * (`docs/api.md` §4, §8), keyed by `detail`. Checked before the generic status-based
+ * fallbacks below, since a `404` here (`file_upload_not_enabled`) is not the same as
+ * the generic "case not found" `404`. A code not listed here still falls back to the
+ * generic sentence below, never to the raw code (§12.3).
  */
 const ERROR_DETAILS: Record<string, string> = {
   not_waiting_for_document: 'הפנייה כבר אינה ממתינה למסמך. רעננו את המסך ונסו שוב.',
   too_large: FILE_TOO_LARGE_MESSAGE,
   document_service_unavailable: 'שירות המסמכים אינו זמין כרגע. נסו שוב מאוחר יותר או פנו למוקד המטופלים.',
   file_upload_not_enabled: 'העלאת קובץ אינה זמינה כרגע. נסו שוב מאוחר יותר או פנו למוקד המטופלים.',
+  // Sub-project 15 (`docs/api.md` §8): the patient's reply to a staff request.
+  not_waiting_for_reply: 'הפנייה כבר אינה ממתינה לתשובה, ולכן התשובה לא נשלחה. המסך עודכן למצב הנוכחי.',
+  reply_kind_mismatch: 'לא ניתן להשיב בדרך זו לבקשה שנשלחה. רעננו את המסך ונסו שוב.',
+  reply_not_accepted: 'לא הצלחנו לקלוט את התשובה. נסו שוב בעוד רגע או פנו למוקד המטופלים.',
+  reply_too_long: 'התשובה ארוכה מדי. יש לקצר אותה ל־2000 תווים לכל היותר.',
 }
 
 /**

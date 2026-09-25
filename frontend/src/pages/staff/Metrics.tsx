@@ -168,7 +168,7 @@ function Group({ id, title, scope, children }: { id: string; title: string; scop
 
 function FlowGroup({ flow }: { flow: MetricsData['flow'] }) {
   const state = (code: string) => flow.by_state[code] ?? 0
-  const named = ['Completed', 'Failed', 'AwaitingHumanReview', 'AwaitingPatientInput']
+  const named = ['Completed', 'Failed', 'AwaitingHumanReview', 'AwaitingPatientInput', 'AwaitingPatientReply']
   const inProgress = flow.opened - named.reduce((sum, code) => sum + state(code), 0)
   return (
     <Group id="metrics-flow" title="זרימת פניות" scope="הפניות שנפתחו בטווח, במצבן הנוכחי">
@@ -178,6 +178,7 @@ function FlowGroup({ flow }: { flow: MetricsData['flow'] }) {
         <Tile label="נדחו ע״י צוות" value={formatCount(state('Failed'))} />
         <Tile label="ממתינות לאדם" value={formatCount(state('AwaitingHumanReview'))} />
         <Tile label="ממתינות למטופל" value={formatCount(state('AwaitingPatientInput'))} />
+        <Tile label="ממתינות לתשובת מטופל" value={formatCount(state('AwaitingPatientReply'))} />
         <Tile label="בטיפול" value={formatCount(inProgress)} />
       </div>
       <h3 className="metrics-sub">תוצאת הסיווג</h3>
@@ -203,14 +204,18 @@ function HumanLoadGroup({ load }: { load: MetricsData['human_load'] }) {
   return (
     <Group id="metrics-human" title="עומס על הצוות" scope="אירועים שקרו בטווח. התור הפתוח — נכון לעכשיו">
       <div className="metrics-tiles">
-        <Tile label="כניסות לתור ההסלמות" value={formatCount(load.escalations_entered)} />
+        <Tile
+          label="כניסות לתור ההסלמות"
+          value={formatCount(load.escalations_entered)}
+          note="כולל גם חזרות מתשובת מטופל ומתפוגת מועד"
+        />
         <Tile
           label="פתוחות עכשיו"
           value={formatCount(load.open_now)}
           note={load.oldest_open_seconds === null ? undefined : `הוותיקה ממתינה ${formatSeconds(load.oldest_open_seconds)}`}
         />
         <Tile
-          label="זמן עד הכרעה (p50)"
+          label="זמן עד פעולה אנושית ראשונה (p50)"
           value={formatSeconds(load.time_to_decision.p50)}
           note={durationsText(load.time_to_decision)}
         />

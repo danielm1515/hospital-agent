@@ -51,6 +51,11 @@ class CaseRecord:
     escalated_from_state: State | None = None
     patient_deadline: datetime | None = None
     appointment_at: datetime | None = None  # from CheckAppointment's result (Execution design §5)
+    # Sub-project 15 (design §5.2): set by PATIENT_REPLY_REQUESTED. human_engaged is never cleared -
+    # a person has written to the patient, and the case never goes back to the agent.
+    human_engaged: bool = False
+    reply_kind: str | None = None  # "question" | "document" while AwaitingPatientReply
+    requested_document: str | None = None  # the catalog type a document request asks for
 
     def step_action(self, step: int | None) -> Action | None:
         """The action at 1-based `step` of the approved plan, or None outside the plan."""
