@@ -3,7 +3,7 @@ import { Link, useLocation, useNavigate } from 'react-router-dom'
 import * as api from '../../api/client'
 import type { ReviewItem } from '../../api/types'
 import { Alert } from '../../components/Alert'
-import { detailOf, escalationLabel, formatDateTime, stateLabel } from './labels'
+import { detailOf, escalationLabel, formatDateTime, returnedByLabel, stateLabel } from './labels'
 
 /** The queue is polled rather than pushed (design decision 4). */
 export const QUEUE_POLL_MS = 5000
@@ -127,7 +127,14 @@ export function ReviewQueue() {
                       </ul>
                     )}
                   </td>
-                  <td className="nowrap">{formatDateTime(item.updated_at)}</td>
+                  <td className="nowrap">
+                    {formatDateTime(item.updated_at)}
+                    {item.returned_by && (
+                      <span className="cell-sub">
+                        {returnedByLabel(item.returned_by)} <span className="mono">{item.returned_by}</span>
+                      </span>
+                    )}
+                  </td>
                 </tr>
               ))}
             </tbody>

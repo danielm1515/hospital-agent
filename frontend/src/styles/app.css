@@ -1784,6 +1784,27 @@ img {
   color: var(--ink-900);
 }
 
+/* ---- Sub-project 15: the staff request panel ----------------------------- */
+
+.patient-request {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding-block-start: var(--space-4);
+  border-block-start: 1px solid var(--line-200);
+}
+
+.patient-request-kind {
+  display: flex;
+  gap: var(--space-4);
+}
+
+.closing-message {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
 /* ---- The patient's correspondence (Data Log, §12.3) --------------------- */
 
 .thread {

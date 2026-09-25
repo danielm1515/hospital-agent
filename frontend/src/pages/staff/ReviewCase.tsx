@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import * as api from '../../api/client'
-import type { DataLogEntry, Decision, DecisionBody, ReviewContext, ReviewItem } from '../../api/types'
+import type { DataLogEntry, Decision, DecisionBody, MessageTemplate, ReviewContext, ReviewItem } from '../../api/types'
 import { Alert } from '../../components/Alert'
 import { Button } from '../../components/Button'
 import { StatusPill } from '../../components/StatusPill'
@@ -9,6 +9,8 @@ import { TextField } from '../../components/TextField'
 import { useAuth } from '../../auth/AuthContext'
 import { AuditTimeline } from './AuditTimeline'
 import { ClinicalAnswer } from './ClinicalAnswer'
+import { MessagePicker, PatientRequest, toMessageBody } from './PatientRequest'
+import type { MessageChoice } from './PatientRequest'
 import {
   DECISION_LABELS,
   REQUIRED_FIELD_HINTS,
@@ -40,6 +42,7 @@ export function ReviewCase() {
   const [context, setContext] = useState<ReviewContext | null>(null)
   const [item, setItem] = useState<ReviewItem | null>(null)
   const [loadError, setLoadError] = useState<string | null>(null)
+  const [templates, setTemplates] = useState<MessageTemplate[]>([])
 
   const [reason, setReason] = useState('')
   const [reasonError, setReasonError] = useState<string | null>(null)
@@ -49,6 +52,7 @@ export function ReviewCase() {
   const [decisionError, setDecisionError] = useState<string | null>(null)
   const [contextChanged, setContextChanged] = useState(false)
   const [busy, setBusy] = useState<Decision | null>(null)
+  const [closing, setClosing] = useState<MessageChoice>({ mode: 'none' })
 
   const [pendingDelete, setPendingDelete] = useState<DataLogEntry | null>(null)
   const [deleting, setDeleting] = useState(false)
@@ -67,6 +71,10 @@ export function ReviewCase() {
   useEffect(() => {
     void load()
   }, [load])
+
+  useEffect(() => {
+    api.getMessageTemplates().then(setTemplates).catch(() => setTemplates([]))
+  }, [])
 
   const refreshContext = useCallback(async () => {
     setContextChanged(false)
@@ -111,6 +119,11 @@ export function ReviewCase() {
         }
         body.patient_deadline = iso
       }
+    }
+
+    if (decision === 'resolve' || decision === 'reject') {
+      const message = toMessageBody(closing)
+      if (message !== undefined) body.message = message
     }
 
     setBusy(decision)
@@ -262,6 +275,21 @@ export function ReviewCase() {
               onContextChanged={() => void refreshContext()}
             />
           )}
+          {allowed.length > 0 && (
+            <PatientRequest
+              caseId={caseId}
+              shownContextRef={context.shown_context_ref}
+              role={user?.role ?? 'admin_staff'}
+              templates={templates}
+              onSent={() =>
+                navigate('/staff', {
+                  replace: true,
+                  state: { notice: `נשלחה בקשה למטופל בפנייה ${caseId}.` },
+                })
+              }
+              onContextChanged={() => void refreshContext()}
+            />
+          )}
           {allowed.length === 0 ? (
             <Alert variant="info" title="הפנייה אינה ממתינה להכרעה">
               המסך מציג את ההקשר בלבד. פניות להכרעה מופיעות בתור ההסלמות.
@@ -313,6 +341,18 @@ export function ReviewCase() {
                     {fieldError}
                   </Alert>
                 )}
+
+                <div className="closing-message" role="group" aria-label="הודעת סיום למטופל">
+                  <h3 className="col-sub">הודעת סיום למטופל (אופציונלי)</h3>
+                  <MessagePicker
+                    purpose="closing"
+                    role={user?.role ?? 'admin_staff'}
+                    templates={templates}
+                    value={closing}
+                    onChange={setClosing}
+                    allowNone
+                  />
+                </div>
 
                 <div className="decision-actions">
                   {allowed.includes('approve') && (

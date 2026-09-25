@@ -61,6 +61,16 @@ describe('ReviewQueue', () => {
     expect(screen.getAllByRole('row')).toHaveLength(3) // header + two cases
   })
 
+  it('shows the returned_by mark with its Hebrew label and the code', async () => {
+    vi.mocked(api.listReviews).mockResolvedValue([{ ...MEDICAL, returned_by: 'patient_reply' }])
+    renderQueue()
+
+    expect(await screen.findByText('התקבלה תשובת מטופל')).toBeInTheDocument()
+    const code = screen.getByText('patient_reply')
+    expect(code).toBeInTheDocument()
+    expect(code.className).toContain('mono')
+  })
+
   it('opens the case when its row is clicked', async () => {
     vi.mocked(api.listReviews).mockResolvedValue([MEDICAL])
     renderQueue()

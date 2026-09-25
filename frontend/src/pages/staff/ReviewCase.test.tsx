@@ -3,7 +3,7 @@ import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import * as api from '../../api/client'
-import type { ReviewContext, ReviewItem } from '../../api/types'
+import type { MessageTemplate, ReviewContext, ReviewItem } from '../../api/types'
 import { authValue, STAFF_USER, TestAuthProvider } from '../../test/helpers'
 import { ReviewCase } from './ReviewCase'
 
@@ -13,7 +13,27 @@ vi.mock('../../api/client', async (importOriginal) => ({
   listReviews: vi.fn(),
   decide: vi.fn(),
   tombstone: vi.fn(),
+  getMessageTemplates: vi.fn(),
 }))
+
+const TEMPLATES: MessageTemplate[] = [
+  { template_id: 'clarify_general', purpose: 'question', text: 'לא הצלחנו להבין', param: null, options: {} },
+  {
+    template_id: 'clarify_did_you_mean',
+    purpose: 'question',
+    text: 'האם התכוונת ל{topic}?',
+    param: 'topic',
+    options: { preparation: 'הוראות ההכנה לתור' },
+  },
+  {
+    template_id: 'document_request',
+    purpose: 'document',
+    text: 'נא להעלות את המסמך: {document}.',
+    param: 'document',
+    options: { URINALYSIS: 'בדיקת שתן' },
+  },
+  { template_id: 'close_handled', purpose: 'closing', text: 'טופלה', param: null, options: {} },
+]
 
 const CASE_ID = 'CASE-6FFF40DFB8DA'
 
@@ -101,6 +121,7 @@ beforeEach(() => {
   vi.mocked(api.listReviews).mockResolvedValue([MEDICAL_ITEM])
   vi.mocked(api.decide).mockResolvedValue({ case_id: CASE_ID, state: 'Completed' })
   vi.mocked(api.tombstone).mockResolvedValue(undefined)
+  vi.mocked(api.getMessageTemplates).mockResolvedValue([])
 })
 
 describe('ReviewCase', () => {
@@ -311,5 +332,35 @@ describe('ReviewCase', () => {
 
     expect(await screen.findByText('הפנייה אינה ממתינה להכרעה')).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'סגירת הפנייה' })).not.toBeInTheDocument()
+  })
+
+  it('shows the patient-request panel and no approve button when human_engaged', async () => {
+    vi.mocked(api.listReviews).mockResolvedValue([
+      { ...MEDICAL_ITEM, human_engaged: true, allowed_decisions: ['resolve', 'reject'] },
+    ])
+    vi.mocked(api.getMessageTemplates).mockResolvedValue(TEMPLATES)
+    renderCase()
+
+    expect(await screen.findByRole('heading', { name: 'בקשה מהמטופל' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'אישור והמשך' })).not.toBeInTheDocument()
+  })
+
+  it('sends a closing template with the resolve decision', async () => {
+    vi.mocked(api.listReviews).mockResolvedValue([Z3_ITEM])
+    vi.mocked(api.getMessageTemplates).mockResolvedValue(TEMPLATES)
+    renderCase()
+
+    await userEvent.type(await screen.findByLabelText(/סיבת ההכרעה/), 'טופלה.')
+    const closingGroup = screen.getByRole('group', { name: 'הודעת סיום למטופל' })
+    await userEvent.selectOptions(within(closingGroup).getByLabelText('הודעה'), 'close_handled')
+    await userEvent.click(screen.getByRole('button', { name: 'סגירת הפנייה' }))
+
+    expect(api.decide).toHaveBeenCalledWith(
+      CASE_ID,
+      expect.objectContaining({
+        decision: 'resolve',
+        message: { template_id: 'close_handled' },
+      }),
+    )
   })
 })
