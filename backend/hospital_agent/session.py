@@ -105,10 +105,31 @@ class ConversationEntry:
 
 
 MAX_REPLY_LENGTH = 2000
-# The Data Log line of an accepted document reply - the same shape sub-project 13 records.
-_DOCUMENT_REPLY = re.compile(r"^(\S+) (\S+) ACCEPTED$")
+# The exact reference line reply_pdf writes (§9): a document-service id (never a single
+# character - the shortest one this app or the document-service ever mints is a prefix plus
+# something), a known catalog type, and the literal suffix - anchored, so a patient's own text
+# that merely happens to look like this (e.g. "x CBC ACCEPTED") is never mistaken for an upload.
+_DOCUMENT_REPLY = re.compile(r"^([A-Za-z0-9_-]{2,64}) ([A-Za-z0-9_-]{1,64}) ACCEPTED$")
+_GENERIC_DOCUMENT_LABEL = "הועלה מסמך"  # a recognised reference line whose type this version does not know
 _STAFF_MESSAGE_EVENTS = frozenset({Event.PATIENT_REPLY_REQUESTED.value, Event.HUMAN_RESOLVED_CASE.value,
                                    Event.HUMAN_REJECTED.value})
+
+
+@dataclass(frozen=True)
+class _Message:
+    content_hash: str
+    text: str
+    at: datetime
+
+
+def _approved_hashes(conn, case_id: str) -> set[str]:
+    """content_hash of every consumed ContentApproval clinical_staff was granted for
+    AnswerClinicalQuestion (§12.4) - shared by the clinical answer and the staff-message read,
+    both of which trust exactly this approval, and nothing else, to authorise free text."""
+    return {a.content_hash for a in repository.content_approvals_for(
+                conn, case_id, naming.Action.ANSWER_CLINICAL_QUESTION.value)
+            if a.approval_type == "ContentApproval" and a.reviewer_role == auth.CLINICAL_STAFF
+            and a.consumed_at is not None and a.content_hash}
 
 
 @dataclass(frozen=True)
@@ -317,8 +338,10 @@ class SessionService:
     def reply_text(self, patient_id: str, case_id: str, text: str) -> TransitionResult:
         case = self._replying_case(patient_id, case_id, "question")
         body = (text or "").strip()
-        if not body or len(body) > MAX_REPLY_LENGTH:
+        if not body:
             raise EventRejected("reply_required")
+        if len(body) > MAX_REPLY_LENGTH:
+            raise EventRejected("reply_too_long")
         entry = self._record(case, data_log.DataKind.PATIENT_REPLY, body)
         return self._submit_reply(case_id, entry, {"reply_kind": "question"})
 
@@ -342,11 +365,7 @@ class SessionService:
                 outcome = UploadOutcome("wrong_document_type", document_type)
             else:
                 entry = self._record(case, data_log.DataKind.PATIENT_REPLY, f"{document_ref} {document_type} ACCEPTED")
-                try:
-                    self._submit_reply(case_id, entry, {"reply_kind": "document", "document_type": document_type})
-                except EventRejected:
-                    logger.info("pdf reply: not_waiting_for_reply")
-                    raise NotWaitingForReply(case_id) from None
+                self._submit_reply(case_id, entry, {"reply_kind": "document", "document_type": document_type})
                 outcome = UploadOutcome("accepted", document_type)
         logger.info("pdf reply: %s", outcome.code)
         return outcome
@@ -360,13 +379,26 @@ class SessionService:
         return case
 
     def _submit_reply(self, case_id: str, entry: data_log.DataEntry, payload: dict) -> TransitionResult:
-        result = self.sm.apply(case_id, Event.PATIENT_REPLY_SUBMITTED, {**payload, "content_hash": entry.content_hash},
-                               Component.SESSION_SERVICE)
+        """Apply PATIENT_REPLY_SUBMITTED; a reply that never committed must not leave the entry
+        readable (§12.3) - the same fail-closed pattern as human_review._apply, on both exits:
+        a blocked commit (a lost race - a concurrent reply, or the SLA timeout firing first -
+        is `not_waiting_for_reply`, design §10, never a validation error) and a raising one
+        (`sm.apply()` can also raise instead of returning a not-committed result)."""
+        try:
+            result = self.sm.apply(case_id, Event.PATIENT_REPLY_SUBMITTED,
+                                   {**payload, "content_hash": entry.content_hash}, Component.SESSION_SERVICE)
+        except Exception:
+            self._tombstone_reply(entry.entry_id)
+            raise
         if not result.committed:
-            with self.engine.begin() as conn:  # §12.3: a refused reply must not stay readable
-                data_log.tombstone(conn, entry.entry_id, self.sm.clock())
-            raise EventRejected(result.reason or "blocked")
+            self._tombstone_reply(entry.entry_id)
+            logger.info("reply: not_waiting_for_reply (%s)", result.reason)
+            raise NotWaitingForReply(case_id)
         return result
+
+    def _tombstone_reply(self, entry_id: str) -> None:
+        with self.engine.begin() as conn:
+            data_log.tombstone(conn, entry_id, self.sm.clock())
 
     # --- what the patient sees --------------------------------------------------------------
 
@@ -445,15 +477,7 @@ class SessionService:
         and its content_hash must match an outgoing message whose content is still there.
         This is what T6 does for the Tool Executor's path, applied where the patient reads.
         """
-        approved = {
-            approval.content_hash
-            for approval in repository.content_approvals_for(
-                conn, case_id, naming.Action.ANSWER_CLINICAL_QUESTION.value)
-            if approval.approval_type == "ContentApproval"
-            and approval.reviewer_role == auth.CLINICAL_STAFF
-            and approval.consumed_at is not None
-            and approval.content_hash
-        }
+        approved = _approved_hashes(conn, case_id)
         if not approved:
             return None
         answers = [entry.content for entry
@@ -461,29 +485,23 @@ class SessionService:
                    if entry.content is not None and entry.content_hash in approved]
         return answers[-1] if answers else None
 
-    @dataclass(frozen=True)
-    class _Message:
-        content_hash: str
-        text: str
-        at: datetime
-
     def _staff_messages(self, conn, case_id: str, trace) -> list[_Message]:
         """Staff messages the patient may read (design §7.5): the hash is on a committed request /
         resolve / reject row, and the text is a template's or has a consumed clinical approval."""
         committed = {r.content_hash for r in trace
                      if r.record_type == "Transition" and r.content_hash and r.event in _STAFF_MESSAGE_EVENTS}
-        approved = {a.content_hash for a in repository.content_approvals_for(
-                        conn, case_id, naming.Action.ANSWER_CLINICAL_QUESTION.value)
-                    if a.approval_type == "ContentApproval" and a.reviewer_role == auth.CLINICAL_STAFF
-                    and a.consumed_at is not None and a.content_hash}
-        return [self._Message(e.content_hash, e.content, e.created_at)
+        approved = _approved_hashes(conn, case_id)
+        return [_Message(e.content_hash, e.content, e.created_at)
                 for e in data_log.entries(conn, case_id, data_log.DataKind.STAFF_MESSAGE)
                 if e.content is not None and e.content_hash in committed
                 and (patient_messages.is_template_text(e.content) or e.content_hash in approved)]
 
     def _patient_replies(self, conn, case_id: str, trace) -> list[_Message]:
-        """The patient's own replies whose PATIENT_REPLY_SUBMITTED committed; a document reply is
-        shown as the document's label, never its reference line."""
+        """The patient's own replies whose PATIENT_REPLY_SUBMITTED committed; an accepted-document
+        reply is shown as the document's label (or a generic one, for a type this version does
+        not know), never its reference line - the reference line itself must never reach the
+        patient screen, so an unrecognised *non*-reference text is the only case that falls
+        through to the raw content."""
         committed = {r.content_hash for r in trace if r.record_type == "Transition"
                      and r.event == Event.PATIENT_REPLY_SUBMITTED.value and r.content_hash}
         replies = []
@@ -491,9 +509,13 @@ class SessionService:
             if e.content is None or e.content_hash not in committed:
                 continue
             match = _DOCUMENT_REPLY.match(e.content)
-            text = (f"הועלה המסמך: {document_label(match.group(2))}"
-                    if match and match.group(2) in CATALOG_LABELS else e.content)
-            replies.append(self._Message(e.content_hash, text, e.created_at))
+            if match:
+                doc_type = match.group(2)
+                text = (f"הועלה המסמך: {document_label(doc_type)}" if doc_type in CATALOG_LABELS
+                        else _GENERIC_DOCUMENT_LABEL)
+            else:
+                text = e.content
+            replies.append(_Message(e.content_hash, text, e.created_at))
         return replies
 
     def _request_text(self, case_id: str) -> str | None:

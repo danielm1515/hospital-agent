@@ -22,10 +22,11 @@ def escalated(sm, app_engine) -> Driver:
     return d
 
 
-def request(sm, d, *, kind="question", document=None, deadline=None, decision="request"):
+def request(sm, d, *, kind="question", document=None, deadline=None, decision="request",
+            content_hash="HASH-MESSAGE"):
     approval_id = d.approval(decision, patient_deadline=deadline or datetime.now(UTC) + timedelta(hours=24))
     payload = {"approval_id": approval_id, "reply_kind": kind, "requested_document": document,
-               "content_hash": "HASH-MESSAGE"}
+               "content_hash": content_hash}
     return sm.apply(d.case_id, Event.PATIENT_REPLY_REQUESTED, payload, Component.EXTERNAL)
 
 
