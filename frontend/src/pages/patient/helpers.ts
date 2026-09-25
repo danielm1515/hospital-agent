@@ -6,7 +6,8 @@
  */
 import { useEffect, useRef } from 'react'
 import { ApiError } from '../../api/client'
-import type { PatientStatus } from '../../api/types'
+import type { DocumentType, PatientStatus, UploadResult } from '../../api/types'
+import type { AlertVariant } from '../../components/Alert'
 
 /** The patient screens refresh every 3 s while a case is still moving (design §4). */
 export const POLL_MS = 3000
@@ -134,12 +135,67 @@ export function documentLabel(documentId: string): string | null {
   return DOCUMENT_LABELS[documentId] ?? null
 }
 
+/** The type's Hebrew label, or the type code itself when this version does not know it. */
+export function describeDocumentType(type: DocumentType | null): string {
+  if (!type) return ''
+  return documentLabel(type) ?? type
+}
+
 /** The client-side refusal of a non-PDF file, and of a PDF over the 10 MB limit. */
 export const NOT_PDF_MESSAGE = 'יש לבחור קובץ PDF.'
 export const FILE_TOO_LARGE_MESSAGE = 'הקובץ גדול מדי. אפשר להעלות קובץ עד 10MB.'
 
 /** `POST .../documents/file` accepts a PDF of at most 10 MB (`docs/api.md` §4). */
 export const MAX_UPLOAD_BYTES = 10 * 1024 * 1024
+
+/** A file whose name and (when the browser reports one) type both say PDF. */
+export function isPdfFile(file: File): boolean {
+  const nameIsPdf = /\.pdf$/i.test(file.name)
+  const typeIsPdf = file.type === '' || file.type === 'application/pdf'
+  return nameIsPdf && typeIsPdf
+}
+
+/** The outcome of a PDF upload, shown next to the request regardless of its status. */
+export interface UploadNotice {
+  variant: AlertVariant
+  text: string
+}
+
+/**
+ * One Hebrew sentence per `upload.code` (`docs/api.md` §4 and §8, design §5.3). Shared by
+ * the `needs_document` file picker and the sub-project 15 reply file picker - the reply
+ * route only ever returns a subset of these codes plus `wrong_document_type`, but the
+ * mapping is the same one either way, never duplicated. A code this version does not know
+ * is shown as the neutral, fail-closed sentence (§14), never the raw code (§12.3).
+ */
+export function uploadResultMessage(upload: UploadResult): UploadNotice {
+  const label = describeDocumentType(upload.document_type)
+  switch (upload.code) {
+    case 'accepted':
+      return { variant: 'ok', text: `המסמך ${label} התקבל. הפנייה ממשיכה בטיפול.` }
+    case 'not_required':
+      return { variant: 'info', text: `המסמך ${label} תקין, אבל אינו נדרש לתור הזה.` }
+    case 'already_received':
+      return { variant: 'info', text: `המסמך ${label} כבר התקבל קודם.` }
+    case 'wrong_document_type':
+      return label
+        ? {
+            variant: 'error',
+            text: `המסמך שהועלה אינו המסמך שהתבקש. זיהינו אותו כ${label}. נא להעלות את המסמך הנכון.`,
+          }
+        : { variant: 'error', text: 'המסמך שהועלה אינו המסמך שהתבקש. נא להעלות את המסמך הנכון.' }
+    case 'not_medical':
+      return { variant: 'error', text: 'הקובץ אינו מסמך רפואי, ולכן לא נקלט.' }
+    case 'unreadable':
+      return { variant: 'error', text: 'לא הצלחנו לקרוא את המסמך. ודאו שזה קובץ PDF ברור ונסו שוב.' }
+    case 'expired':
+      return { variant: 'error', text: `המסמך ${label} ישן מדי לפי כללי התוקף. יש להעלות מסמך עדכני.` }
+    case 'not_yours':
+      return { variant: 'error', text: 'המסמך אינו שייך לך, ולכן לא נקלט.' }
+    default:
+      return { variant: 'error', text: 'המסמך לא נקלט. נסו שוב או פנו למוקד.' }
+  }
+}
 
 /**
  * Hebrew for the sub-project 13 upload errors and the sub-project 15 reply errors

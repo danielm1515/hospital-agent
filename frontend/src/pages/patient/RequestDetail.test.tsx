@@ -320,6 +320,34 @@ describe('RequestDetail: the other statuses', () => {
     expect(screen.queryByText(/סיבת ההכרעה/)).not.toBeInTheDocument()
   })
 
+  it('closed with a closing message shows it instead of the generic line (sub-project 15)', async () => {
+    getRequest.mockResolvedValue(
+      patientView({ status: 'closed', message: 'פנייתך אינה בתחום שהמערכת מטפלת בו.' }),
+    )
+    renderDetail()
+    expect(await screen.findByText('הודעה מהצוות')).toBeInTheDocument()
+    expect(screen.getByText('פנייתך אינה בתחום שהמערכת מטפלת בו.')).toBeInTheDocument()
+    expect(screen.queryByText('הפנייה נסגרה על ידי איש צוות')).not.toBeInTheDocument()
+  })
+
+  it('needs_reply renders the staff request and the reply form', async () => {
+    getRequest.mockResolvedValue(
+      patientView({
+        status: 'needs_reply',
+        reply_request: {
+          kind: 'question',
+          message: 'האם התכוונת למועד התור?',
+          document_type: null,
+          deadline: '2026-09-26T08:05:00Z',
+        },
+      }),
+    )
+    renderDetail()
+    expect(await screen.findByText('בקשה מהצוות')).toBeInTheDocument()
+    expect(screen.getByText('האם התכוונת למועד התור?')).toBeInTheDocument()
+    expect(screen.getByLabelText('התשובה שלך')).toBeInTheDocument()
+  })
+
   it('marks the timeline step of the current status', async () => {
     getRequest.mockResolvedValue(patientView({ status: 'in_progress' }))
     const { container } = renderDetail()

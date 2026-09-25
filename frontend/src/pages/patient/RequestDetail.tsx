@@ -2,12 +2,12 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import * as api from '../../api/client'
 import { DOCUMENT_FORMATS } from '../../api/types'
-import type { DocumentFormat, DocumentType, PatientView, StatusChange, UploadResult } from '../../api/types'
+import type { DocumentFormat, PatientView, StatusChange } from '../../api/types'
 import { Alert } from '../../components/Alert'
-import type { AlertVariant } from '../../components/Alert'
 import { Button } from '../../components/Button'
 import { StatusPill } from '../../components/StatusPill'
 import { TextField } from '../../components/TextField'
+import { Conversation, ReplyToRequest } from './ReplyToRequest'
 import { MY_REQUESTS } from './paths'
 import {
   documentLabel,
@@ -18,12 +18,15 @@ import {
   formatDate,
   formatDateTime,
   isMoving,
+  isPdfFile,
   MAX_UPLOAD_BYTES,
   NOT_PDF_MESSAGE,
   sameDay,
   statusText,
+  uploadResultMessage,
   usePolling,
 } from './helpers'
+import type { UploadNotice } from './helpers'
 
 /**
  * One request (design §4). Everything on the screen comes from the patient view
@@ -37,12 +40,6 @@ const MISSING_DOCUMENT_TEMPLATE = 'missing-document-v1'
 
 /** `POST .../documents` accepts 1-20000 characters of text (the demo has no binary upload). */
 const MAX_CONTENT = 20000
-
-/** The outcome of a PDF upload, shown next to the request regardless of its status. */
-interface UploadNotice {
-  variant: AlertVariant
-  text: string
-}
 
 export function RequestDetail() {
   const { caseId = '' } = useParams()
@@ -116,6 +113,8 @@ export function RequestDetail() {
           {uploadNotice && <Alert variant={uploadNotice.variant}>{uploadNotice.text}</Alert>}
 
           <StatusContent view={view} onChanged={setView} onUploadNotice={setUploadNotice} />
+
+          <Conversation entries={view.conversation} />
         </>
       )}
     </section>
@@ -176,6 +175,10 @@ function StatusContent({
   switch (view.status) {
     case 'needs_document':
       return <MissingDocuments view={view} onChanged={onChanged} onUploadNotice={onUploadNotice} />
+    case 'needs_reply':
+      // Sub-project 15 (`docs/api.md` §8): a staff member asked a question or for a
+      // document instead of (or before) deciding the case.
+      return <ReplyToRequest view={view} onChanged={onChanged} />
     case 'completed':
       return (
         <Alert variant="ok" title="ההודעה שנשלחה אליך">
@@ -188,8 +191,14 @@ function StatusContent({
       // `closed` means a person handled the case and no message was delivered through the
       // system (`docs/api.md` §4). The reviewer's own reason is an audit record, not an
       // answer to the patient: content reaches a patient only through a ContentApproval
-      // (§12.5), so the screen says where the answer will come from instead of inventing one.
-      return (
+      // (§12.5). Since sub-project 15, a reviewer may attach a closing message to the
+      // decision - shown here exactly like a delivered one - and the screen falls back to
+      // the generic line only when there isn't one.
+      return view.message ? (
+        <Alert variant="info" title="הודעה מהצוות">
+          <span className="message-text">{view.message}</span>
+        </Alert>
+      ) : (
         <Alert variant="info" title="הפנייה נסגרה על ידי איש צוות">
           תשובה רפואית אינה נמסרת דרך המערכת. איש הצוות שטיפל בפנייה יחזור אליכם ישירות; אם לא שמעתם
           מאיתנו, אפשר לפנות למוקד המטופלים.
@@ -248,45 +257,6 @@ function MissingDocuments({
 }
 
 // ---- File upload (sub-project 13) ------------------------------------------
-
-/** A file whose name and (when the browser reports one) type both say PDF. */
-function isPdfFile(file: File): boolean {
-  const nameIsPdf = /\.pdf$/i.test(file.name)
-  const typeIsPdf = file.type === '' || file.type === 'application/pdf'
-  return nameIsPdf && typeIsPdf
-}
-
-/** The type's Hebrew label, or the type code itself when this version does not know it. */
-function describeDocumentType(type: DocumentType | null): string {
-  if (!type) return ''
-  return documentLabel(type) ?? type
-}
-
-/**
- * One Hebrew sentence per `upload.code` (`docs/api.md` §4, design §5.3). A code this
- * version does not know is shown as the neutral, fail-closed sentence (§14).
- */
-function uploadResultMessage(upload: UploadResult): UploadNotice {
-  const label = describeDocumentType(upload.document_type)
-  switch (upload.code) {
-    case 'accepted':
-      return { variant: 'ok', text: `המסמך ${label} התקבל. הפנייה ממשיכה בטיפול.` }
-    case 'not_required':
-      return { variant: 'info', text: `המסמך ${label} תקין, אבל אינו נדרש לתור הזה.` }
-    case 'already_received':
-      return { variant: 'info', text: `המסמך ${label} כבר התקבל קודם.` }
-    case 'not_medical':
-      return { variant: 'error', text: 'הקובץ אינו מסמך רפואי, ולכן לא נקלט.' }
-    case 'unreadable':
-      return { variant: 'error', text: 'לא הצלחנו לקרוא את המסמך. ודאו שזה קובץ PDF ברור ונסו שוב.' }
-    case 'expired':
-      return { variant: 'error', text: `המסמך ${label} ישן מדי לפי כללי התוקף. יש להעלות מסמך עדכני.` }
-    case 'not_yours':
-      return { variant: 'error', text: 'המסמך אינו שייך לך, ולכן לא נקלט.' }
-    default:
-      return { variant: 'error', text: 'המסמך לא נקלט. נסו שוב או פנו למוקד.' }
-  }
-}
 
 /**
  * The sub-project 13 PDF picker (design §5.3): one file, checked in the browser for
