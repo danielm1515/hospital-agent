@@ -212,21 +212,43 @@ def test_a_committed_non_template_unapproved_text_is_still_hidden(sm, app_engine
 
 
 def test_a_tombstoned_staff_message_neither_crashes_the_view_nor_appears_in_it(sm, app_engine):
+    """An APPROVED (non-template) clinical message, not a template one: its hash stays in the
+    approved set after a tombstone (a ContentApproval is about the hash, not the Data Log row's
+    current content), so this is the case that actually depends on the `e.content is not None`
+    guard - a template text is already screened out on its own, once tombstoned, by
+    is_template_text(None) being false."""
     d, session, reviews = setup(sm, app_engine)
-    ask(reviews, d, template_id="clarify_appointment")
+    text = "נא לציין אם יש לך רגישות ליוד"
+    ask(reviews, d, NURSE, text=text)
     [message] = staff_messages(d)
     with d.engine.begin() as conn:
         data_log.tombstone(conn, message.entry_id, datetime.now(UTC))
     view = session.patient_view(d.case_id)  # must not raise
     assert view.reply_request.message is None
-    assert all("האם הפנייה נוגעת לתור קיים" not in e.text for e in view.conversation)
+    assert all(text not in e.text for e in view.conversation)
 
 
 def test_a_question_reply_that_looks_like_a_document_reference_is_shown_verbatim(sm, app_engine):
-    """A coincidental match to the reply_pdf reference-line shape, typed as a plain text answer,
-    must never be mistaken for a document upload - it is shown exactly as the patient wrote it."""
+    """A coincidental match to the reply_pdf reference-line shape, typed as a plain text answer
+    to a QUESTION request, must never be mistaken for a document upload: what makes a reply a
+    document reply is what was asked (a document_request template message), never the reply's
+    own shape - it is shown exactly as the patient wrote it."""
     d, session, reviews = setup(sm, app_engine)
     ask(reviews, d, template_id="clarify_appointment")
-    session.reply_text(d.patient_id, d.case_id, "x CBC ACCEPTED")
+    session.reply_text(d.patient_id, d.case_id, "ok CBC ACCEPTED")
     view = session.patient_view(d.case_id)
-    assert [e.text for e in view.conversation if e.sender == "patient"] == ["x CBC ACCEPTED"]
+    assert [e.text for e in view.conversation if e.sender == "patient"] == ["ok CBC ACCEPTED"]
+
+
+def test_a_one_character_document_id_still_renders_as_the_label_not_the_raw_line(sm, app_engine):
+    """document_intake._ID allows a 1-character id; the old shape-based regex ({2,64}) would
+    have let a genuine such reply fall through to the raw reference line. Detection by what was
+    asked has no such lower bound, so it renders correctly regardless of the id's length."""
+    d, session, reviews = setup(sm, app_engine, accepted("URINALYSIS", doc_id="D"))
+    ask(reviews, d, kind="document", document_type="URINALYSIS")
+    outcome = session.reply_pdf(d.patient_id, d.case_id, PDF, "urine.pdf")
+    assert outcome.code == "accepted"
+    view = session.patient_view(d.case_id)
+    patient_texts = [e.text for e in view.conversation if e.sender == "patient"]
+    assert patient_texts == ["הועלה המסמך: בדיקת שתן"]
+    assert "D URINALYSIS ACCEPTED" not in patient_texts

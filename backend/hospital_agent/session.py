@@ -105,14 +105,20 @@ class ConversationEntry:
 
 
 MAX_REPLY_LENGTH = 2000
-# The exact reference line reply_pdf writes (§9): a document-service id (never a single
-# character - the shortest one this app or the document-service ever mints is a prefix plus
-# something), a known catalog type, and the literal suffix - anchored, so a patient's own text
-# that merely happens to look like this (e.g. "x CBC ACCEPTED") is never mistaken for an upload.
-_DOCUMENT_REPLY = re.compile(r"^([A-Za-z0-9_-]{2,64}) ([A-Za-z0-9_-]{1,64}) ACCEPTED$")
+# The exact reference line reply_pdf writes (§9): a document-service id in the same shape
+# document_intake._ID accepts (1-64 letters/digits/_/-, so a 1-character id is possible), a
+# known catalog type, and the literal suffix. This is used only to *render* a reply already
+# known to be a document reply (from what was asked, not from this shape) - never to decide
+# whether it is one, since a patient's own text can share this exact shape by coincidence.
+_DOCUMENT_REPLY = re.compile(r"^([A-Za-z0-9_-]{1,64}) ([A-Za-z0-9_-]{1,64}) ACCEPTED$")
 _GENERIC_DOCUMENT_LABEL = "הועלה מסמך"  # a recognised reference line whose type this version does not know
 _STAFF_MESSAGE_EVENTS = frozenset({Event.PATIENT_REPLY_REQUESTED.value, Event.HUMAN_RESOLVED_CASE.value,
                                    Event.HUMAN_REJECTED.value})
+# Every text a document request can ever render (§7.1, §7.2: document_request is the only
+# template a document request uses) - the set _document_reply_hashes checks a request's staff
+# message against, to tell a document reply from a question reply by what was asked.
+_DOCUMENT_REQUEST_TEXTS = frozenset(
+    patient_messages.render(patient_messages.DOCUMENT_REQUEST, doc_type) for doc_type in CATALOG_LABELS)
 
 
 @dataclass(frozen=True)
@@ -497,26 +503,51 @@ class SessionService:
                 and (patient_messages.is_template_text(e.content) or e.content_hash in approved)]
 
     def _patient_replies(self, conn, case_id: str, trace) -> list[_Message]:
-        """The patient's own replies whose PATIENT_REPLY_SUBMITTED committed; an accepted-document
-        reply is shown as the document's label (or a generic one, for a type this version does
-        not know), never its reference line - the reference line itself must never reach the
-        patient screen, so an unrecognised *non*-reference text is the only case that falls
-        through to the raw content."""
+        """The patient's own replies whose PATIENT_REPLY_SUBMITTED committed. Whether a reply
+        answers a document request is decided by what was actually asked (§7.2: a document
+        request always renders the document_request template, and nothing else ever does) -
+        never by guessing from the reply's own shape, which a patient's own text can match by
+        coincidence and a genuine one-character document id would otherwise slip past. A
+        document reply is shown as the document's label (or a generic one, for a type this
+        version does not know), never its reference line; every other reply is shown verbatim,
+        even one that happens to look like a reference line."""
+        document_replies = self._document_reply_hashes(conn, case_id, trace)
         committed = {r.content_hash for r in trace if r.record_type == "Transition"
                      and r.event == Event.PATIENT_REPLY_SUBMITTED.value and r.content_hash}
         replies = []
         for e in data_log.entries(conn, case_id, data_log.DataKind.PATIENT_REPLY):
             if e.content is None or e.content_hash not in committed:
                 continue
-            match = _DOCUMENT_REPLY.match(e.content)
-            if match:
-                doc_type = match.group(2)
+            if e.content_hash in document_replies:
+                match = _DOCUMENT_REPLY.match(e.content)
+                doc_type = match.group(2) if match else None
                 text = (f"הועלה המסמך: {document_label(doc_type)}" if doc_type in CATALOG_LABELS
                         else _GENERIC_DOCUMENT_LABEL)
             else:
                 text = e.content
             replies.append(_Message(e.content_hash, text, e.created_at))
         return replies
+
+    @staticmethod
+    def _document_reply_hashes(conn, case_id: str, trace) -> set[str]:
+        """content_hash of every PATIENT_REPLY_SUBMITTED whose immediately preceding, committed
+        PATIENT_REPLY_REQUESTED asked with the document_request template - the request the
+        patient was actually replying to, read off the trace's own chronological order (only
+        one request is ever open at a time), never guessed from the reply's own text."""
+        staff_text = {m.content_hash: m.content for m in
+                     data_log.entries(conn, case_id, data_log.DataKind.STAFF_MESSAGE) if m.content is not None}
+        pending: str | None = None
+        hashes: set[str] = set()
+        for row in trace:
+            if row.record_type != "Transition" or not row.content_hash:
+                continue
+            if row.event == Event.PATIENT_REPLY_REQUESTED.value:
+                pending = row.content_hash
+            elif row.event == Event.PATIENT_REPLY_SUBMITTED.value:
+                if pending is not None and staff_text.get(pending) in _DOCUMENT_REQUEST_TEXTS:
+                    hashes.add(row.content_hash)
+                pending = None
+        return hashes
 
     def _request_text(self, case_id: str) -> str | None:
         with self.engine.connect() as conn:
