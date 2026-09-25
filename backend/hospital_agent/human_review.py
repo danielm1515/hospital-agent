@@ -269,6 +269,8 @@ class HumanReviewService:
             if text is not None or template_id not in (None, patient_messages.DOCUMENT_REQUEST) \
                     or document_type not in CATALOG_LABELS:
                 raise DecisionRejected("invalid_request")
+            if param is not None:  # design §7.2: document_request takes no parameter of its own
+                raise DecisionRejected("unexpected_param")
             if self.session.document_intake is None:  # configuration, so here and not in a guard (§9)
                 raise DecisionRejected("document_service_not_configured")
             body = patient_messages.render(patient_messages.DOCUMENT_REQUEST, document_type)

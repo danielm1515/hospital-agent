@@ -83,6 +83,7 @@ def test_a_document_request_uses_its_template_and_needs_the_document_service(sm,
     ({"template_id": "close_handled"}, "invalid_template"),  # a closing template is not a question
     ({"template_id": "clarify_did_you_mean", "param": "gossip"}, "invalid_param"),
     ({"kind": "document", "document_type": "X-RAY"}, "invalid_request"),
+    ({"kind": "document", "document_type": "URINALYSIS", "param": "x"}, "unexpected_param"),
     ({"kind": "chat", "template_id": "clarify_general"}, "invalid_request"),
     ({"template_id": "clarify_general", "reason": " "}, "reason_required"),
     ({"template_id": "clarify_general", "deadline": datetime.now(UTC) - timedelta(minutes=1)}, "invalid_deadline"),

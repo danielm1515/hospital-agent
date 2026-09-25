@@ -197,8 +197,9 @@ patient route already returned everything else shown here.
   sub-project 15, in `closed` when the reviewer sent a closing message with the decision
   (`POST .../decision`'s optional `message`, §8 below); otherwise `null`.
 - `history` is the case's abstract status over time, oldest first: one entry each time the
-  status actually changed, with the time the case entered it. It holds the same six values
-  as `status` and nothing else - never a State, an event, an escalation kind or a reason
+  status actually changed, with the time the case entered it. It holds the same seven values
+  as `status` (since sub-project 15 added `needs_reply`) and nothing else - never a State, an
+  event, an escalation kind or a reason
   (§12.3) - and a status the case entered twice appears twice. The last entry's `status`
   always equals `status`, and the first is the submission. It is `[]` only for a case with
   no committed transition, which the patient routes never return.
@@ -545,7 +546,7 @@ automatically. What to expect:
 
 | Decision | Kind | Resulting state |
 |---|---|---|
-| `resolve` | any | `Completed` (the patient sees `closed` - this route never carries a message; for a `MedicalQuestion`, answering it through `POST .../answer` instead leaves the patient seeing `completed`) |
+| `resolve` | any | `Completed` (the patient sees `closed`, with an optional closing message - see §8; for a `MedicalQuestion`, answering it through `POST .../answer` instead leaves the patient seeing `completed`) |
 | `reject` | any | `Failed` (the patient sees `closed`) |
 | `approve` | `PatientVerificationFailed` | `Classifying` - the request is re-validated automatically and goes on; or `Received` if the request text had been deleted: the decision stands and the case waits for staff |
 | `approve` | `RetryExhausted` | `Planning` (a new retry cycle) |
@@ -567,6 +568,11 @@ Errors - all of them leave the case exactly as it was:
 | 409 | `workflow_decision_invalid` | The state machine refused the approval record (e.g. a non-staff reviewer role) |
 | 409 | other codes | Any other guard that refused the human event; show `detail` and re-fetch the case |
 | 422 | `invalid_body` | A field is over its length limit, or `patient_deadline` has no timezone |
+
+Sub-project 15's optional `message` field adds three more codes to this route - `403
+clinical_staff_only`, `409 message_not_allowed` and `409 human_engaged` - documented in §8
+below, along with `message`'s other validation codes (`invalid_request`, `message_required`,
+`invalid_template`, `unexpected_param`, `invalid_param`).
 
 ### POST /api/staff/cases/{case_id}/answer
 
@@ -737,14 +743,20 @@ The patient's text answer to a staff question. Request:
 {"text": "תור לאורתופדיה"}
 ```
 
-`text` is 1-2000 characters. `200`: the patient view, now `in_review` (back with the reviewer,
-`returned_by: "patient_reply"`).
+`text` is trimmed, and must then be 1-2000 characters. `200`: the patient view, now `in_review`
+(back with the reviewer, `returned_by: "patient_reply"`).
 
 - `404 case_not_found`
 - `409 not_waiting_for_reply` - the case is not in `needs_reply` (already answered, timed
   out, or never asked)
 - `409 reply_kind_mismatch` - the staff member asked for a document, not text
-- `422 invalid_body` - empty or over 2000 characters
+- `409 reply_not_accepted` - the state machine refused the reply for an internal reason; the
+  exact reason stays on the server (application log, §12.3), the same pattern as
+  `POST /api/patient/requests`' `request_rejected` - not reachable through a conforming
+  client today (a trimmed, non-blank, ≤2000-character `text` is always accepted or refused
+  with a more specific code above), kept as the safe default for a guard failure the service
+  does not otherwise name
+- `422 invalid_body` - empty, whitespace-only or over 2000 characters
 - `422 reply_too_long` - defence only: the schema already caps `text` at 2000, so this is not
   reachable through a conforming client; kept in case the service ever counts length
   differently, so it can never surface as a 500
@@ -768,6 +780,10 @@ offered only while `reply_request.kind` is `"document"`. `200`:
 | `wrong_document_type` | Readable and valid, but not the catalog type the staff member asked for | Unchanged |
 | `not_medical`, `unreadable`, `expired`, `not_yours` | As in §4 | Unchanged |
 
+`upload.document_type` is the catalog type the document-service classified the file as, for
+`accepted` and also for `wrong_document_type` (the type it actually was, not the one that was
+requested); `null` for every other code.
+
 - `404 file_upload_not_enabled`, `404 case_not_found`
 - `409 not_waiting_for_reply`, `409 reply_kind_mismatch`
 - `411 length_required`, `413 too_large`, `422 invalid_body` - as in §4
@@ -787,15 +803,20 @@ keeps no copy of them. `200`:
    "options": {"appointment_time": "מועד התור", "required_documents": "המסמכים הנדרשים לתור",
                "preparation": "הוראות ההכנה לתור"}},
   {"template_id": "document_request", "purpose": "document", "text": "נא להעלות את המסמך: {document}.",
-   "param": "document", "options": {"CBC": "בדיקת דם כללית", "...": "..."}},
+   "param": "document", "options": {"CBC": "ספירת דם מלאה", "COAGULATION_TESTS": "בדיקות קרישה",
+   "ECG": "תרשים פעילות חשמלית של הלב", "URINALYSIS": "בדיקת שתן", "PREOP_SUMMARY": "סיכום טרום ניתוח"}},
   {"template_id": "close_out_of_scope", "purpose": "closing",
    "text": "פנייתך אינה בתחום שהמערכת מטפלת בו. לשאלות אחרות ניתן לפנות למוקד.", "param": null, "options": {}}
 ]
 ```
 
+This example shows 4 of the server's 7 templates (`clarify_general`, `clarify_did_you_mean`,
+`document_request`, `close_out_of_scope`); `clarify_appointment`, `close_handled` and
+`close_no_reply` follow the same shape, each with `param: null` and `options: {}`.
+
 `purpose` is `"question"`, `"document"` or `"closing"` - which route(s) may use that template.
-`param` and `options` are `null`-free: a template with no parameter has `param: null` and
-`options: {}`.
+`options` is `{}` exactly when `param` is `null`: a template takes a parameter if and only if
+it lists one or more options for it.
 
 - `403 staff_only` - a patient token.
 
@@ -844,10 +865,11 @@ Errors - all of them leave the case exactly as it was:
 | 403 | `clinical_staff_only` | `text` from a non-`clinical_staff` token |
 | 409 | `message_required` | `text` is empty or blank once trimmed (over 2000 characters is the same defence as `reply_too_long` above - the schema already caps `text` at 2000) |
 | 409 | `invalid_template` | `kind: "question"` with a `template_id` that is unknown, or is not a `question` template (a `document` request's `template_id` is checked as part of `invalid_request` above, never this code) |
-| 409 | `unexpected_param` | `param` given for a template that takes none |
+| 409 | `unexpected_param` | `param` given for a template that takes none, or `param` given at all for `kind: "document"` (a document request never takes one) |
 | 409 | `invalid_param` | `param` is not one of the template's `options` |
 | 409 | `document_service_not_configured` | `kind: "document"` with no document-service configured |
 | 409 | `invalid_deadline` | `deadline` is in the past, more than 7 days ahead, or after the appointment |
+| 409 | other codes | Any other guard that refused the `PATIENT_REPLY_REQUESTED` transition; show `detail` and re-fetch the case |
 | 422 | `invalid_body` | A field is over its length limit, `kind`/`reason`/`shown_context_ref` missing, or `deadline` has no timezone |
 
 ### POST /api/staff/cases/{case_id}/decision: the optional closing message

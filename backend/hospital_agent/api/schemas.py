@@ -238,7 +238,7 @@ class MessageTemplateView(BaseModel):
 
 
 class ReplyBody(BaseModel):
-    text: Annotated[str, StringConstraints(min_length=1, max_length=2000)]
+    text: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=2000)]
 
 
 # --- sub-project 14: the admin metrics screen (design 2026-09-24 §5) ----------------------

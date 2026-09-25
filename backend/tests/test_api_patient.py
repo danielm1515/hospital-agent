@@ -198,6 +198,8 @@ def test_a_rejected_upload_still_answers_200_with_the_patient_view(client):
     ("POST", "/api/staff/cases/CASE-1/decision",
      {"decision": "resolve", "reason": "x", "shown_context_ref": "ctx-x"}),
     ("DELETE", "/api/staff/cases/CASE-1/data/DATA-1", None),
+    ("POST", "/api/staff/cases/CASE-1/request",
+     {"kind": "question", "template_id": "clarify_general", "reason": "x", "shown_context_ref": "ctx-x"}),
 ])
 def test_a_patient_is_forbidden_on_staff_routes(client, method, path, body):
     response = client.request(method, path, json=body, headers=auth(client, PATIENT))
