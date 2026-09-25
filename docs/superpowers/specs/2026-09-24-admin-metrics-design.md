@@ -68,8 +68,8 @@
 |---|---|---|
 | B1 | כניסות ל־AwaitingHumanReview | שורות `Transition` עם `state_after = AwaitingHumanReview` |
 | B2 | הסלמות לפי סוג: **הוכרעו בחלון** ו**פתוחות עכשיו** | הוכרעו: שורות `Transition` עם `event ∈ {HUMAN_APPROVED, HUMAN_RESOLVED_CASE, HUMAN_REJECTED}`, `JOIN approvals USING (approval_id)` ← `approvals.escalation_kind`. פתוחות: `cases.escalation_kind` כש־`state = AwaitingHumanReview` |
-| B3 | זמן עד החלטה אנושית — p50 / p95 / מקסימום | לכל כניסה ל־AwaitingHumanReview, שורת ה־Transition **הבאה** של אותה פנייה עם `state_before = AwaitingHumanReview` (`LEAD` לפי `audit_id`). רק כניסות שהוכרעו |
-| B4 | החלטות: אושרו (`HUMAN_APPROVED`) / נסגרו (`HUMAN_RESOLVED_CASE`) / נדחו ע״י צוות (`HUMAN_REJECTED`) | שורות `Transition` |
+| B3 | זמן עד החלטה אנושית — p50 / p95 / מקסימום | לכל כניסה ל־AwaitingHumanReview, שורת ה־Transition **הבאה** של אותה פנייה עם `state_before = AwaitingHumanReview` (`LEAD` לפי `audit_id`). רק כניסות שהוכרעו. מאז תת־פרויקט 15 היציאה הראשונה יכולה להיות בקשה מהמטופל, ולכן המדד הוא הזמן עד הפעולה האנושית הראשונה. |
+| B4 | החלטות: אושרו (`HUMAN_APPROVED`) / נסגרו (`HUMAN_RESOLVED_CASE`) / נדחו ע״י צוות (`HUMAN_REJECTED`) | שורות `Transition`. וגם `PATIENT_REPLY_REQUESTED` (תת־פרויקט 15). |
 | B5 | תור פתוח **עכשיו**: גודל, וגיל הפנייה הוותיקה ביותר | `cases`, לא תלוי בחלון |
 
 ### 4.3 C — כלים חיצוניים (אירוע, `executions.started_at`)

@@ -158,6 +158,12 @@ def human_load(conn: Connection, window: Window) -> HumanLoad:
     decisions.update(_counts(conn, f"""
         SELECT event, count(*) FROM audit_log
         WHERE record_type = 'Transition' AND event IN {_DECISIONS} AND {_EVENTS} GROUP BY 1""", params))
+    # Sub-project 15: a request to the patient is a staff action too. It is not a decision on the
+    # escalation, so decided_by_kind (the approval join) leaves it out.
+    decisions["PATIENT_REPLY_REQUESTED"] = int(conn.execute(text(f"""
+        SELECT count(*) FROM audit_log
+        WHERE record_type = 'Transition' AND event = 'PATIENT_REPLY_REQUESTED' AND {_EVENTS}"""),
+        params).scalar_one())
     # design decision 6: the approval the committed transition actually used. Never a count of
     # approvals rows - _grant writes one in its own transaction, and a blocked decision (or a
     # double submit) leaves one behind.
