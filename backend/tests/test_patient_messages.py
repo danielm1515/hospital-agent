@@ -45,3 +45,31 @@ def test_purposes_and_the_api_shape():
     assert set(shapes[0]) == {"template_id", "purpose", "text", "param", "options"}
     document = next(s for s in shapes if s["template_id"] == pm.DOCUMENT_REQUEST)
     assert document["param"] == "document" and document["options"] == CATALOG_LABELS
+
+
+def test_template_options_are_read_only():
+    """Assigning into a template's options raises TypeError."""
+    template = next(t for t in pm.TEMPLATES if t.template_id == pm.DOCUMENT_REQUEST)
+    with pytest.raises(TypeError):
+        template.options["NEW_CODE"] = "New label"
+
+
+def test_mutating_catalog_labels_does_not_affect_render():
+    """Mutating CATALOG_LABELS after import does not change what render() accepts."""
+    # Get the original acceptable code
+    original_code = "URINALYSIS"
+    original_text = pm.render(pm.DOCUMENT_REQUEST, original_code)
+
+    # Add a new code to CATALOG_LABELS
+    CATALOG_LABELS["FAKE_CODE"] = "Fake label"
+    try:
+        # The fake code should still be rejected by render()
+        with pytest.raises(pm.InvalidMessage) as invalid:
+            pm.render(pm.DOCUMENT_REQUEST, "FAKE_CODE")
+        assert invalid.value.code == "invalid_param"
+
+        # The original code should still work
+        assert pm.render(pm.DOCUMENT_REQUEST, original_code) == original_text
+    finally:
+        # Restore CATALOG_LABELS
+        del CATALOG_LABELS["FAKE_CODE"]

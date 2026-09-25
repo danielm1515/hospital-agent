@@ -12,16 +12,17 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from functools import cache
+from types import MappingProxyType
 
 from .documents import CATALOG_LABELS
 
 DOCUMENT_REQUEST = "document_request"
 
-TOPICS: dict[str, str] = {
+TOPICS: Mapping[str, str] = MappingProxyType({
     "appointment_time": "מועד התור",
     "required_documents": "המסמכים הנדרשים לתור",
     "preparation": "הוראות ההכנה לתור",
-}
+})
 
 
 @dataclass(frozen=True)
@@ -30,7 +31,7 @@ class Template:
     purpose: str  # "question" | "document" | "closing"
     text: str
     param: str | None = None  # the {placeholder} the text takes, if any
-    options: Mapping[str, str] = field(default_factory=dict)  # the closed list: code -> Hebrew
+    options: Mapping[str, str] = field(default_factory=lambda: MappingProxyType({}))  # the closed list: code -> Hebrew
 
 
 TEMPLATES: tuple[Template, ...] = (
@@ -38,7 +39,7 @@ TEMPLATES: tuple[Template, ...] = (
     Template("clarify_did_you_mean", "question", "האם התכוונת ל{topic}? נשמח לאישור או לפירוט.", "topic", TOPICS),
     Template("clarify_appointment", "question",
              "האם הפנייה נוגעת לתור קיים? אם כן, נא לציין את התאריך או את המחלקה."),
-    Template(DOCUMENT_REQUEST, "document", "נא להעלות את המסמך: {document}.", "document", CATALOG_LABELS),
+    Template(DOCUMENT_REQUEST, "document", "נא להעלות את המסמך: {document}.", "document", MappingProxyType(dict(CATALOG_LABELS))),
     Template("close_handled", "closing", "פנייתך טופלה על ידי הצוות."),
     Template("close_out_of_scope", "closing",
              "פנייתך אינה בתחום שהמערכת מטפלת בו. לשאלות אחרות ניתן לפנות למוקד."),
