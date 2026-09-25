@@ -162,6 +162,7 @@ export function PatientRequest({
   async function send() {
     setFieldError(null)
     setError(null)
+    setContextChanged(false)
 
     const trimmedReason = reason.trim()
     if (!trimmedReason) {
@@ -264,7 +265,7 @@ export function PatientRequest({
         value={deadline}
         min={deadlineMin}
         max={deadlineMax}
-        hint="ריק = 24 שעות מעכשיו. לעולם לא אחרי מועד התור, ולכל היותר 7 ימים."
+        hint="אם ריק: 24 שעות מעכשיו, או מועד התור אם הוא מוקדם יותר. מועד שנבחר: עד 7 ימים ולא אחרי מועד התור."
         onChange={(event) => setDeadline(event.target.value)}
       />
       <TextField
@@ -286,7 +287,7 @@ export function PatientRequest({
       )}
       {contextChanged && (
         <Alert variant="error" title="ההקשר השתנה">
-          <p>ההקשר השתנה מאז שנטען. רעננו אותו ושלחו את הבקשה שוב.</p>
+          <p>ההקשר השתנה מאז שנטען. רעננו אותו, קראו שוב את התוכן ושלחו את הבקשה מחדש אם היא עדיין נדרשת.</p>
           <Button
             variant="secondary"
             onClick={() => {

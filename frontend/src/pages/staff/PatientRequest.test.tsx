@@ -161,6 +161,23 @@ describe('PatientRequest', () => {
     expect(api.requestFromPatient).not.toHaveBeenCalled()
   })
 
+  it('requires a message to be chosen before sending', async () => {
+    renderPanel()
+    await userEvent.type(screen.getByLabelText(REASON_LABEL), 'r')
+    await userEvent.click(screen.getByRole('button', { name: 'שליחה למטופל' }))
+    expect(await screen.findByText('יש לבחור הודעה למטופל')).toBeInTheDocument()
+    expect(api.requestFromPatient).not.toHaveBeenCalled()
+  })
+
+  it('requires free text to be filled in before sending', async () => {
+    renderPanel('clinical_staff')
+    await userEvent.selectOptions(screen.getByLabelText('הודעה'), 'text')
+    await userEvent.type(screen.getByLabelText(REASON_LABEL), 'r')
+    await userEvent.click(screen.getByRole('button', { name: 'שליחה למטופל' }))
+    expect(await screen.findByText('יש לכתוב את הטקסט למטופל')).toBeInTheDocument()
+    expect(api.requestFromPatient).not.toHaveBeenCalled()
+  })
+
   it('shows a refresh action for context_changed instead of refreshing silently', async () => {
     vi.mocked(api.requestFromPatient).mockRejectedValue(new api.ApiError(409, 'context_changed'))
     const { onContextChanged } = renderPanel()
@@ -175,9 +192,36 @@ describe('PatientRequest', () => {
     expect(onContextChanged).toHaveBeenCalledTimes(1)
   })
 
+  it('clears a stale context_changed alert once a new send fails with a different code', async () => {
+    vi.mocked(api.requestFromPatient).mockRejectedValueOnce(new api.ApiError(409, 'context_changed'))
+    renderPanel()
+    await userEvent.selectOptions(screen.getByLabelText('הודעה'), 'clarify_general')
+    await userEvent.type(screen.getByLabelText(REASON_LABEL), 'r')
+    await userEvent.click(screen.getByRole('button', { name: 'שליחה למטופל' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent('ההקשר השתנה')
+
+    vi.mocked(api.requestFromPatient).mockRejectedValueOnce(new api.ApiError(409, 'invalid_deadline'))
+    await userEvent.click(screen.getByRole('button', { name: 'שליחה למטופל' }))
+
+    const alert = await screen.findByRole('alert')
+    expect(alert).toHaveTextContent('invalid_deadline')
+    expect(screen.queryByText('ההקשר השתנה')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'רענון הקשר' })).not.toBeInTheDocument()
+  })
+
   it('never shows a raw template placeholder', () => {
     renderPanel()
     const option = screen.getByRole('option', { name: /האם התכוונת ל/ })
     expect(option.textContent).not.toMatch(/[{}]/)
+  })
+
+  it('warns that sending a request removes the approve option, only when it is still allowed', () => {
+    renderPanel('admin_staff', true)
+    expect(screen.getByText(/שליחת בקשה מסירה לצמיתות את אפשרות אישור ההמשך/)).toBeInTheDocument()
+  })
+
+  it('shows no approve warning when approve is not on the table', () => {
+    renderPanel('admin_staff', false)
+    expect(screen.queryByText(/שליחת בקשה מסירה לצמיתות את אפשרות אישור ההמשך/)).not.toBeInTheDocument()
   })
 })
