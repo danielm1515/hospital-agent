@@ -164,6 +164,7 @@ export const REQUEST_ERROR_LABELS: Record<string, string> = {
   message_required: 'יש להזין טקסט להודעה',
   document_service_not_configured: 'שירות המסמכים אינו מוגדר במערכת',
   invalid_deadline: 'מועד היעד אינו תקין',
+  appointment_passed: 'מועד התור כבר עבר, ולכן לא ניתן לבקש מהמטופל',
   message_not_allowed: 'לא ניתן לצרף הודעה לאישור המשך',
   human_engaged: 'לא ניתן לאשר המשך: כבר נשלחה בקשה למטופל בפנייה זו',
   clinical_staff_only: 'הפעולה מותרת לאיש צוות קליני בלבד',

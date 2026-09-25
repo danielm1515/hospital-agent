@@ -136,6 +136,19 @@ def test_a_message_on_approve_is_409_message_not_allowed(client, sm, app_engine)
     assert (response.status_code, response.json()["detail"]) == (409, "message_not_allowed")
 
 
+def test_a_request_after_the_appointment_has_passed_is_409(client, sm, app_engine):
+    from sqlalchemy import text
+    d = escalated(sm, app_engine)
+    with app_engine.begin() as conn:
+        conn.execute(text("UPDATE cases SET appointment_at = now() - interval '1 minute' WHERE case_id = :c"),
+                     {"c": d.case_id})
+    staff = auth(client, ADMIN)
+    response = client.post(f"/api/staff/cases/{d.case_id}/request", headers=staff, json={
+        "kind": "question", "template_id": "clarify_general", "reason": "unclear",
+        "shown_context_ref": context_ref(client, d.case_id, staff)})
+    assert (response.status_code, response.json()["detail"]) == (409, "appointment_passed")
+
+
 def test_approve_is_409_human_engaged_once_a_request_was_sent(client, sm, app_engine):
     d = escalated(sm, app_engine)
     staff = auth(client, ADMIN)

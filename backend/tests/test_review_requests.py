@@ -286,3 +286,19 @@ def test_the_default_deadline_respects_a_close_appointment(sm, app_engine):
     result = ask(reviews, d, template_id="clarify_general")  # no deadline given
     assert result.committed
     assert datetime.now(UTC) < d.case.patient_deadline <= appointment
+
+
+def test_a_request_after_the_appointment_has_passed_is_refused_distinctly(sm, app_engine):
+    """M2: even the default deadline can never be legal once the appointment is behind us -
+    the refusal must name the real problem, not invalid_deadline."""
+    from sqlalchemy import text
+    d = escalated(sm, app_engine)
+    past = datetime.now(UTC) - timedelta(minutes=1)
+    with app_engine.begin() as conn:
+        conn.execute(text("UPDATE cases SET appointment_at = :a WHERE case_id = :c"),
+                     {"a": past, "c": d.case_id})
+    reviews = service(sm)
+    with pytest.raises(DecisionRejected) as refused:
+        ask(reviews, d, template_id="clarify_general")  # no deadline given
+    assert refused.value.reason == "appointment_passed"
+    assert staff_messages(d) == [] and d.state is State.AWAITING_HUMAN_REVIEW

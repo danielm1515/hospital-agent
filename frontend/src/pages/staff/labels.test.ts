@@ -39,6 +39,7 @@ describe('sub-project 15 labels', () => {
       'message_required',
       'document_service_not_configured',
       'invalid_deadline',
+      'appointment_passed',
       'message_not_allowed',
       'human_engaged',
       'clinical_staff_only',

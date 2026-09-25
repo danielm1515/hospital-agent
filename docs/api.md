@@ -871,6 +871,7 @@ Errors - all of them leave the case exactly as it was:
 | 409 | `invalid_param` | `param` is not one of the template's `options` |
 | 409 | `document_service_not_configured` | `kind: "document"` with no document-service configured |
 | 409 | `invalid_deadline` | `deadline` is in the past, more than 7 days ahead, or after the appointment |
+| 409 | `appointment_passed` | `appointment_at` is known and is already in the past - refused before the deadline is even computed, so a default deadline never masquerades as `invalid_deadline` |
 | 409 | other codes | Any other guard that refused the `PATIENT_REPLY_REQUESTED` transition; show `detail` and re-fetch the case |
 | 422 | `invalid_body` | A field is over its length limit, `kind`/`reason`/`shown_context_ref` missing, or `deadline` has no timezone |
 
