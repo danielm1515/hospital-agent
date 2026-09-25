@@ -17,6 +17,7 @@ import type {
   DecisionResult,
   LoginResponse,
   Me,
+  Metrics,
   PatientView,
   PdfUploadResponse,
   ReviewContext,
@@ -252,4 +253,12 @@ export function answer(caseId: string, body: AnswerBody): Promise<DecisionResult
 
 export async function tombstone(caseId: string, entryId: string): Promise<void> {
   await request<void>('DELETE', `/staff/cases/${id(caseId)}/data/${id(entryId)}`)
+}
+
+// ---- Admin (sub-project 14) ------------------------------------------------
+
+/** `GET /api/admin/metrics` - admin_staff only. `from` inclusive, `to` exclusive. */
+export function getMetrics(from: Date, to: Date): Promise<Metrics> {
+  const query = new URLSearchParams({ from: from.toISOString(), to: to.toISOString() })
+  return request<Metrics>('GET', `/admin/metrics?${query.toString()}`)
 }

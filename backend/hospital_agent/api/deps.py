@@ -11,7 +11,7 @@ from datetime import UTC, datetime
 from fastapi import Depends, HTTPException, Request
 from sqlalchemy.engine import Engine
 
-from ..auth import Principal, auth_secret, verify_token
+from ..auth import ADMIN_STAFF, Principal, auth_secret, verify_token
 from ..human_review import HumanReviewService
 from ..session import SessionService
 
@@ -52,4 +52,11 @@ def require_patient(principal: Principal = Depends(current_principal)) -> Princi
 def require_staff(principal: Principal = Depends(current_principal)) -> Principal:
     if not principal.is_staff:
         raise HTTPException(status_code=403, detail="staff_only")
+    return principal
+
+
+def require_admin(principal: Principal = Depends(current_principal)) -> Principal:
+    """Sub-project 14: the metrics screen is admin_staff's only (design §5)."""
+    if principal.role != ADMIN_STAFF:
+        raise HTTPException(status_code=403, detail="admin_only")
     return principal

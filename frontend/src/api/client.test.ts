@@ -221,3 +221,15 @@ describe('staff routes', () => {
     expect(init.method).toBe('DELETE')
   })
 })
+
+describe('getMetrics', () => {
+  it('sends the window as ISO instants, URL-encoded', async () => {
+    mockOnce(200, {})
+    await api.getMetrics(new Date('2026-09-17T00:00:00Z'), new Date('2026-09-24T00:00:00Z'))
+    const [url, init] = lastCall()
+    expect(url).toBe(
+      '/api/admin/metrics?from=2026-09-17T00%3A00%3A00.000Z&to=2026-09-24T00%3A00%3A00.000Z',
+    )
+    expect(init.method).toBe('GET')
+  })
+})

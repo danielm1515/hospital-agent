@@ -36,7 +36,7 @@ from ..llm.model_selector import llm_version, select_provider
 from ..llm.orchestrator import Orchestrator, orchestrator_interval_seconds
 from ..session import DocumentIntake, SessionService
 from ..wiring import build_state_manager
-from . import routes_auth, routes_patient, routes_staff
+from . import routes_admin, routes_auth, routes_patient, routes_staff
 from .deps import get_engine
 from .routes_patient import UPLOAD_BODY_LIMIT
 
@@ -173,6 +173,7 @@ def create_app(engine: Engine | None = None, orchestrator: Orchestrator | None =
     app.include_router(routes_auth.router)
     app.include_router(routes_patient.router)
     app.include_router(routes_staff.router)
+    app.include_router(routes_admin.router)
     return app
 
 
