@@ -168,7 +168,7 @@ function Group({ id, title, scope, children }: { id: string; title: string; scop
 
 function FlowGroup({ flow }: { flow: MetricsData['flow'] }) {
   const state = (code: string) => flow.by_state[code] ?? 0
-  const named = ['Completed', 'Failed', 'AwaitingHumanReview', 'AwaitingPatientInput']
+  const named = ['Completed', 'Failed', 'AwaitingHumanReview', 'AwaitingPatientInput', 'AwaitingPatientReply']
   const inProgress = flow.opened - named.reduce((sum, code) => sum + state(code), 0)
   return (
     <Group id="metrics-flow" title="זרימת פניות" scope="הפניות שנפתחו בטווח, במצבן הנוכחי">
@@ -178,6 +178,7 @@ function FlowGroup({ flow }: { flow: MetricsData['flow'] }) {
         <Tile label="נדחו ע״י צוות" value={formatCount(state('Failed'))} />
         <Tile label="ממתינות לאדם" value={formatCount(state('AwaitingHumanReview'))} />
         <Tile label="ממתינות למטופל" value={formatCount(state('AwaitingPatientInput'))} />
+        <Tile label="ממתינות לתשובת מטופל" value={formatCount(state('AwaitingPatientReply'))} />
         <Tile label="בטיפול" value={formatCount(inProgress)} />
       </div>
       <h3 className="metrics-sub">תוצאת הסיווג</h3>
