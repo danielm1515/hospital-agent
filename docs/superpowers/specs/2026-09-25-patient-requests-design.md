@@ -133,16 +133,23 @@
 
 ### 7.4 הודעת סיום
 
-אופציונלית, על `resolve` ו־`reject` בלבד (`approve` ממשיך ל־AI ולא נושא הודעה; `approve` עם הודעה ← `422`). ההודעה נרשמת ב־Data Log, וה־`content_hash` שלה נכתב לשורת ה־Transition. התשובה הקלינית הקיימת נשארת כמו שהיא — מקרה פרטי של `resolve` עם טקסט חופשי ב־`MedicalQuestion`.
+אופציונלית, על `resolve` ו־`reject` בלבד (`approve` ממשיך ל־AI ולא נושא הודעה; `approve` עם הודעה ← `409 message_not_allowed`). ההודעה נרשמת ב־Data Log, וה־`content_hash` שלה נכתב לשורת ה־Transition. התשובה הקלינית הקיימת נשארת כמו שהיא — מקרה פרטי של `resolve` עם טקסט חופשי ב־`MedicalQuestion`.
 
 ### 7.5 מה המטופל רואה
 
 הודעת צוות מוצגת **רק** אם: ה־`content_hash` שלה נמצא בשורת Transition שנכנסה (committed) של הפנייה, **וגם** אחד מאלה: היא טקסט של תבנית (בדיקה דטרמיניסטית מול הקבוצה הסופית של תבניות × פרמטרים), או שקיים `ContentApproval` מנוצל לאותו `content_hash`. כל טקסט אחר לא מוצג — fail-closed, הצד הקורא של T6.
 
+אותו כלל fail-closed חל גם על צד הקריאה של **תשובת המטופל** (`_patient_replies`): התשובה מוצגת
+verbatim רק כשהוכח שהיא עונה לשאלה - יש `PATIENT_REPLY_REQUESTED` קודם עם הודעת צוות שעדיין
+קיימת (לא tombstoned) ושאינה תבנית `document_request`. אחרת, אם צורתה כמו שורת-רפרנס של מסמך
+("הועלה המסמך: ..."), מוצגת רק תווית סוג המסמך (גנרית כשהסוג אינו מוכר) - לעולם לא שורת הרפרנס
+המקורית; טקסט שאינו מוכח וגם אינו בצורת שורת-רפרנס עדיין מוצג verbatim (אין ממה להסתיר אותו).
+
 ## 8. דדליין ו־SLA
 
-- ברירת מחדל: עכשיו + 24 שעות. איש הצוות יכול לשנות.
-- אכיפה (ב־`reply_request_valid`, ובנוסף בבדיקת הקלט של ה־API): בעתיד; עד 7 ימים; לא אחרי `appointment_at` כשהוא ידוע. אחרת `422 invalid_deadline`.
+- ברירת מחדל: `min(עכשיו + 24 שעות, appointment_at)` כשהתור ידוע, אחרת עכשיו + 24 שעות. איש הצוות יכול לשנות.
+- אכיפה (ב־`reply_request_valid`, ובנוסף בבדיקת הקלט של ה־API): דדליין מפורש חייב להיות בעתיד, עד 7 ימים קדימה, ולא אחרי `appointment_at` כשהוא ידוע — אחרת `409 invalid_deadline`.
+- כשה־`appointment_at` הידוע כבר עבר, הבקשה נדחית מיד, לפני חישוב הדדליין (גם ברירת המחדל לא יכולה להיות חוקית) — `409 appointment_passed`, קוד נפרד מ־`invalid_deadline` כדי שהצוות לא יחשוב שהזין דדליין שגוי.
 - `repository.expired_patient_deadlines()` סורק גם את `AwaitingPatientReply`; `PatientSlaExpired` מקבל כל אחד משני המצבים. ה־SLA Worker לא משתנה.
 - פנייה שחזרה בדדליין מסומנת בתור (`returned_by = reply_timeout`).
 
@@ -156,26 +163,27 @@
 
 **צוות:**
 - `GET /api/staff/message-templates` — התבניות (id, מטרה, טקסט, פרמטר ואפשרויותיו).
-- `POST /api/staff/cases/{id}/request` — `{kind: question|document, template_id?, param?, text?, document_type?, deadline?, reason, shown_context_ref}`. `409 context_changed` כמו בהחלטה; `403 clinical_staff_only` לטקסט חופשי שלא מצוות קליני; `409 invalid_request` / `409 invalid_deadline`, כמו סירובי השירות במסלול ההחלטה.
-- `POST /api/staff/cases/{id}/decision` — שדה אופציונלי חדש `message: {template_id, param?} | {text}` ל־`resolve` / `reject`; `409 human_engaged` ל־`approve` בפנייה שכבר נשלחה בה בקשה.
+- `POST /api/staff/cases/{id}/request` — `{kind: question|document, template_id?, param?, text?, document_type?, deadline?, reason, shown_context_ref}`. `404 case_not_found`; `409 not_in_review`; `409 context_changed` כמו בהחלטה; `403 clinical_staff_only` לטקסט חופשי שלא מצוות קליני; `409 reason_required`; `409 invalid_request`; `409 message_required`; `409 invalid_template`; `409 unexpected_param`; `409 invalid_param`; `409 document_service_not_configured`; `409 invalid_deadline`; `409 appointment_passed` (§8); `422 invalid_body`.
+- `POST /api/staff/cases/{id}/decision` — שדה אופציונלי חדש `message: {template_id, param?} | {text}` ל־`resolve` / `reject`, מאומת באותם כללים (אותם קודים כמו למעלה, `403 clinical_staff_only` ל־`text` שלא מ־`clinical_staff`); שני קודים משלה: `409 message_not_allowed` (הודעה עם `approve`), `409 human_engaged` (`approve` בפנייה שכבר נשלחה בה בקשה - `allowed_decisions` כבר משמיט אותו).
 - `ReviewItem`: שדות חדשים `human_engaged` ו־`returned_by` (`patient_reply` | `reply_timeout` | null); `allowed_decisions` בלי `approve` כש־`human_engaged`.
 
 **מטופל:**
 - סטטוס חדש `needs_reply` (ל־`AwaitingPatientReply`), ושדות חדשים `reply_request` (`kind`, `message`, `document_type`, `deadline`) ו־`conversation` (הודעות צוות לפי §7.5 ותשובות המטופל, לפי הסדר). ל־`closed` מתווסף `message` כשיש הודעת סיום.
-- `POST /api/patient/requests/{id}/reply` — `{text}`. `409 not_waiting_for_reply` / `409 reply_kind_mismatch`.
-- `POST /api/patient/requests/{id}/reply/file` — multipart PDF, בדיוק כמו ההעלאה של תת־פרויקט 13, עם קוד תוצאה נוסף `wrong_document_type`.
+- `POST /api/patient/requests/{id}/reply` — `{text}`. `404 case_not_found`; `409 not_waiting_for_reply`; `409 reply_kind_mismatch`; `422 reply_too_long` (מעבר לגבול שה־schema כבר אוכף); `409 reply_not_accepted` לכל סירוב פנימי אחר (לא מוחזר למטופל כפי שהוא, §12.3).
+- `POST /api/patient/requests/{id}/reply/file` — multipart PDF, בדיוק כמו ההעלאה של תת־פרויקט 13 (`404 file_upload_not_enabled` כש־document-service לא מוגדר, `413 too_large`, `422 invalid_body`); `404 case_not_found`; `409 not_waiting_for_reply`; `409 reply_kind_mismatch`; `503 document_service_unavailable`. מסמך שהתקבל אך אינו מהסוג המבוקש אינו שגיאת HTTP - אין אירוע, ותוצאת ההעלאה (`UploadResult`) מדווחת כרגיל כדי שהמטופל ינסה שוב עד הדדליין (§9).
 
 כל השינויים ב־API הם תוספות; `docs/api.md` מתעדכן.
 
 ## 11. מסד הנתונים — מיגרציה 0006
 
 - על `cases`: `human_engaged BOOLEAN NOT NULL DEFAULT false`, `reply_kind TEXT NULL`, `requested_document TEXT NULL`. `db.py` משקף אותן (`test_schema.py` בודק), ו־`CaseRecord` מקבל שלושה שדות עם ברירות מחדל. ל־`hospital_app` כבר יש `UPDATE` על `cases`.
-- **שני CHECK constraints מורחבים** (נמצא ב־prototype — בלעדיהם ה־DB עצמו דוחה את הכתיבה): `ck_approvals_decision` מקבל גם `'request'`, ו־`ck_data_log_kind` מקבל גם `'staff_message'` ו־`'patient_reply'`. כל אחד נמחק ונוצר מחדש באותה מיגרציה; ה־downgrade מחזיר את הרשימה המקורית.
+- **שני CHECK constraints מורחבים** (נמצא ב־prototype — בלעדיהם ה־DB עצמו דוחה את הכתיבה): `ck_approvals_decision` מקבל גם `'request'`, ו־`ck_data_log_kind` מקבל גם `'staff_message'` ו־`'patient_reply'`. כל אחד נמחק ונוצר מחדש באותה מיגרציה; ה־downgrade מחזיר את הרשימה המצומצמת המקורית - אבל בתור `NOT VALID` (§18.4: הפרויקט לעולם לא מוחק נתונים, אז ה־downgrade לא רשאי לדחות ריצה רק כי כבר יש שורות עם הערכים החדשים; `NOT VALID` עדיין חוסם כתיבה חדשה של ערך שהוסר, ופשוט מדלג על בדיקת השורות הקיימות).
+- **ה־downgrade מאבד מידע**: הוא גם מפיל את שלושת העמודות עצמן (`human_engaged`, `reply_kind`, `requested_document`). זו פעולת אופרטור בלבד ואינה חלק מזרימת עבודה רגילה - היא מוחקת את הסימון "לעולם לא חוזר ל־AI" מכל פנייה שאיש צוות אי־פעם כתב אליה, ואת צורתה של כל בקשה עדיין פתוחה. אין להריץ אותה כשיש פניות ב־`AwaitingPatientReply` או עם `human_engaged = true`.
 - Additive בלבד; תרוץ על ה־RDS בעלייה הבאה.
 
 ## 12. ה־UI
 
-- **מסך הסקירה של הצוות:** פאנל "בקשה מהמטופל" — סוג (שאלה / מסמך), תבנית ופרמטר, טקסט חופשי (מוצג רק ל־`clinical_staff`), סוג מסמך מהקטלוג, דדליין (`datetime-local`, 24 שעות קדימה כברירת מחדל). ל־resolve / reject — הודעת סיום אופציונלית, באותם כללים. כשהפנייה `human_engaged`, כפתור האישור לא מוצג (השרת לא מחזיר אותו).
+- **מסך הסקירה של הצוות:** פאנל "בקשה מהמטופל" — סוג (שאלה / מסמך), תבנית ופרמטר, טקסט חופשי (מוצג רק ל־`clinical_staff`), סוג מסמך מהקטלוג, דדליין (`datetime-local`, עם `min`/`max` של היום ועד 7 ימים קדימה). ה־UI משאיר את השדה ריק כברירת מחדל ואינו ממלא אותו מראש - כשריק, אין `deadline` בבקשה כלל וברירת המחדל של השרת (§8) חלה. ל־resolve / reject — הודעת סיום אופציונלית, באותם כללים. כשהפנייה `human_engaged`, כפתור האישור לא מוצג (השרת לא מחזיר אותו).
 - **תור ההסלמות:** סימון "תשובת מטופל התקבלה" / "לא נענתה בזמן" לפי `returned_by`.
 - **מסך המטופל:** `needs_reply` — הודעת הצוות, הדדליין, ותיבת תשובה או בוחר PDF (הרכיב הקיים של תת־פרויקט 13); שרשור השיחה; הודעת סיום ב־`closed`.
 - הטקסטים של התבניות מגיעים מהשרת; ה־UI לא מחזיק עותק.
@@ -228,3 +236,4 @@
 - מסמך שאינו מהקטלוג.
 - החזרה יזומה של פנייה ל־AI אחרי מגע אנושי (הבעלים החליט: לעולם לא).
 - שינוי ב־spec עצמו (ה־docx) — ההרחבה מתועדת כאן וב־`spec_corrections`.
+- ביטול בקשה פתוחה ע״י הצוות (M7): אין מסלול לכך; הפנייה ממתינה לתשובת המטופל או לדדליין, לכל היותר 7 ימים.

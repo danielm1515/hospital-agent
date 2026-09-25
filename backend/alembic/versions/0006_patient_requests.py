@@ -6,6 +6,13 @@ open request asks for) - and two CHECK constraints widened, without which the da
 refuses the new writes: a WorkflowDecision may now be a 'request', and the Data Log holds
 staff messages and patient replies. Additive only.
 
+M3: the downgrade is data-losing and operator-only. It drops human_engaged, reply_kind and
+requested_document outright (see downgrade() below), which loses the "never back to the
+agent" mark on every case a staff member has ever written to, and the shape of any request
+still open (its kind and requested document). It should not be run while a case sits in
+AwaitingPatientReply or already has human_engaged set - both would resurface, wrongly
+resumable, on the next upgrade with no record of what was lost.
+
 Revision ID: 0006
 """
 import sqlalchemy as sa

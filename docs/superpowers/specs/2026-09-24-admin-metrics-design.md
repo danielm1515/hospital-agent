@@ -66,7 +66,7 @@
 
 | מזהה | מדד | מקור |
 |---|---|---|
-| B1 | כניסות ל־AwaitingHumanReview | שורות `Transition` עם `state_after = AwaitingHumanReview` |
+| B1 | כניסות ל־AwaitingHumanReview | שורות `Transition` עם `state_after = AwaitingHumanReview`. מאז תת־פרויקט 15 זו גם חזרה מתשובת מטופל (`PATIENT_REPLY_SUBMITTED`) וגם תפוגת הדדליין שלה (`TIMEOUT_EXPIRED`) - שתיהן `state_after = AwaitingHumanReview` כמו כל כניסה אחרת, ולא נבדלות כאן מהסלמה חדשה |
 | B2 | הסלמות לפי סוג: **הוכרעו בחלון** ו**פתוחות עכשיו** | הוכרעו: שורות `Transition` עם `event ∈ {HUMAN_APPROVED, HUMAN_RESOLVED_CASE, HUMAN_REJECTED}`, `JOIN approvals USING (approval_id)` ← `approvals.escalation_kind`. פתוחות: `cases.escalation_kind` כש־`state = AwaitingHumanReview` |
 | B3 | זמן עד החלטה אנושית — p50 / p95 / מקסימום | לכל כניסה ל־AwaitingHumanReview, שורת ה־Transition **הבאה** של אותה פנייה עם `state_before = AwaitingHumanReview` (`LEAD` לפי `audit_id`). רק כניסות שהוכרעו. מאז תת־פרויקט 15 היציאה הראשונה יכולה להיות בקשה מהמטופל, ולכן המדד הוא הזמן עד הפעולה האנושית הראשונה. |
 | B4 | החלטות: אושרו (`HUMAN_APPROVED`) / נסגרו (`HUMAN_RESOLVED_CASE`) / נדחו ע״י צוות (`HUMAN_REJECTED`) | שורות `Transition`. וגם `PATIENT_REPLY_REQUESTED` (תת־פרויקט 15). |
@@ -94,6 +94,10 @@
 | D3 | אחוז עמידה = עמדו / (עמדו + חרגו) | D2. פתוחות ו"יצאו אחרת" לא נספרות במכנה |
 
 המדד מדווח את **הכרעת המערכת עצמה** — איזה אירוע סיים את ההמתנה — ולא שופט מחדש מול `patient_deadline`. זה עקבי עם ה־Audit ולא תלוי ב־`cases.patient_deadline`, שמשתנה בסבב המתנה חדש.
+
+סעיף D עוסק אך ורק בהמתנה למסמך (`AwaitingPatientInput`, תת־פרויקט 11-13). המתנה לתשובת מטופל
+(`AwaitingPatientReply`, תת־פרויקט 15) אינה מדווחת כאן בכלל - אין D-מקביל לה; מספר הפניות שממתינות
+לתשובה **כרגע** מופיע רק כאריח הזרימה (§4.1, A2), לא כמדד אירוע עם עמידה/חריגה.
 
 ### 4.5 E — מדיניות (אירוע)
 
