@@ -280,10 +280,10 @@ class HumanReviewService:
             raise DecisionRejected("invalid_request")
         now = self.sm.clock()
         if case.appointment_at is not None and case.appointment_at <= now:
-            # M2 fix: an appointment that has already passed refuses the request outright,
-            # distinctly from invalid_deadline - even the default deadline could never be legal
-            # (it would have to sit before the appointment, i.e. in the past), so staff should
-            # not be told their (non-existent) deadline was the problem.
+            # An appointment that has already passed refuses the request outright, distinctly
+            # from invalid_deadline - even the default deadline could never be legal (it would
+            # have to sit before the appointment, i.e. in the past), so staff are not told a
+            # deadline they never entered was the problem.
             raise DecisionRejected("appointment_passed")
         if deadline is not None and deadline.tzinfo is None:
             raise DecisionRejected("invalid_deadline")
