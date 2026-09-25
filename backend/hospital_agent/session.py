@@ -18,14 +18,16 @@ DOCUMENT_UPLOADED - DocumentValid (§3.1) accepts a document only from it.
 from __future__ import annotations
 
 import logging
+import re
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Literal, Protocol
 
-from . import auth, data_log, naming, repository
+from . import auth, data_log, naming, patient_messages, repository
 from .case import CaseRecord
 from .document_intake import IntakeAnswer, IntakeUnavailable
+from .documents import CATALOG_LABELS, document_label
 from .naming import Component, Event, State
 from .state_manager import CaseNotFound as _UnknownCase
 from .state_manager import StateManager, TransitionResult
@@ -77,6 +79,38 @@ class EventRejected(Exception):
         self.reason = reason
 
 
+class NotWaitingForReply(Exception):
+    """Sub-project 15: the case is not waiting for a reply (API 409 "not_waiting_for_reply")."""
+
+
+class ReplyKindMismatch(Exception):
+    """Sub-project 15: a text for a document request, or a file for a question (409 "reply_kind_mismatch")."""
+
+
+@dataclass(frozen=True)
+class ReplyRequest:
+    """What the staff asked for, while the case waits for the patient (design §10)."""
+
+    kind: str  # "question" | "document"
+    message: str | None
+    document_type: str | None
+    deadline: datetime | None
+
+
+@dataclass(frozen=True)
+class ConversationEntry:
+    sender: str  # "staff" | "patient"
+    text: str
+    at: datetime
+
+
+MAX_REPLY_LENGTH = 2000
+# The Data Log line of an accepted document reply - the same shape sub-project 13 records.
+_DOCUMENT_REPLY = re.compile(r"^(\S+) (\S+) ACCEPTED$")
+_STAFF_MESSAGE_EVENTS = frozenset({Event.PATIENT_REPLY_REQUESTED.value, Event.HUMAN_RESOLVED_CASE.value,
+                                   Event.HUMAN_REJECTED.value})
+
+
 @dataclass(frozen=True)
 class StatusChange:
     """One entry of the case's history: the abstract status, and when the case entered it."""
@@ -97,6 +131,8 @@ class PatientView:
     message: str | None
     history: list[StatusChange]
     document_upload: Literal["file", "text"] = "text"
+    reply_request: ReplyRequest | None = None  # sub-project 15, while status is needs_reply
+    conversation: list[ConversationEntry] = field(default_factory=list)  # staff messages and replies
 
 
 _STATUS: dict[State, str] = {
@@ -276,6 +312,62 @@ class SessionService:
             raise NotWaitingForDocument(case_id)
         return case
 
+    # --- sub-project 15: the patient's reply to a staff request (design §9) ----------------
+
+    def reply_text(self, patient_id: str, case_id: str, text: str) -> TransitionResult:
+        case = self._replying_case(patient_id, case_id, "question")
+        body = (text or "").strip()
+        if not body or len(body) > MAX_REPLY_LENGTH:
+            raise EventRejected("reply_required")
+        entry = self._record(case, data_log.DataKind.PATIENT_REPLY, body)
+        return self._submit_reply(case_id, entry, {"reply_kind": "question"})
+
+    def reply_pdf(self, patient_id: str, case_id: str, data: bytes, filename: str) -> UploadOutcome:
+        """The requested document, through the sub-project 13 intake; it counts only when its type
+        is the one asked for. The PDF stays in the document-service; the log gets only the code."""
+        self._replying_case(patient_id, case_id, "document")
+        if self.document_intake is None:
+            raise IntakeUnavailable("not_configured")
+        try:
+            answer = self.document_intake.submit(patient_id, filename, data)
+        except IntakeUnavailable as unavailable:
+            logger.info("pdf reply: document_service_unavailable (%s)", unavailable)
+            raise
+        document_type, document_ref = _effective(answer)
+        if document_type is None or document_ref is None:
+            outcome = UploadOutcome(_REJECTION_CODES.get(answer.result, _UNREADABLE), None)
+        else:
+            case = self._replying_case(patient_id, case_id, "document")  # it may have moved meanwhile
+            if document_type != case.requested_document:
+                outcome = UploadOutcome("wrong_document_type", document_type)
+            else:
+                entry = self._record(case, data_log.DataKind.PATIENT_REPLY, f"{document_ref} {document_type} ACCEPTED")
+                try:
+                    self._submit_reply(case_id, entry, {"reply_kind": "document", "document_type": document_type})
+                except EventRejected:
+                    logger.info("pdf reply: not_waiting_for_reply")
+                    raise NotWaitingForReply(case_id) from None
+                outcome = UploadOutcome("accepted", document_type)
+        logger.info("pdf reply: %s", outcome.code)
+        return outcome
+
+    def _replying_case(self, patient_id: str, case_id: str, kind: str) -> CaseRecord:
+        case = self.case_for_patient(patient_id, case_id)
+        if case.state is not State.AWAITING_PATIENT_REPLY:
+            raise NotWaitingForReply(case_id)
+        if case.reply_kind != kind:
+            raise ReplyKindMismatch(case_id)
+        return case
+
+    def _submit_reply(self, case_id: str, entry: data_log.DataEntry, payload: dict) -> TransitionResult:
+        result = self.sm.apply(case_id, Event.PATIENT_REPLY_SUBMITTED, {**payload, "content_hash": entry.content_hash},
+                               Component.SESSION_SERVICE)
+        if not result.committed:
+            with self.engine.begin() as conn:  # §12.3: a refused reply must not stay readable
+                data_log.tombstone(conn, entry.entry_id, self.sm.clock())
+            raise EventRejected(result.reason or "blocked")
+        return result
+
     # --- what the patient sees --------------------------------------------------------------
 
     def case_for_patient(self, patient_id: str, case_id: str) -> CaseRecord:
@@ -304,8 +396,22 @@ class SessionService:
             history = status_history(trace, delivered=bool(resolved) or answer is not None)
             message = (self._delivered_message(conn, case.case_id, resolved[-1]) if resolved
                        else answer) if status == "completed" else None
+            staff = self._staff_messages(conn, case.case_id, trace)
+            replies = self._patient_replies(conn, case.case_id, trace)
         needs_document = status == "needs_document"
         missing = sorted(set(case.required_documents or []) - set(case.held_documents)) if needs_document else []
+        committed = [r for r in trace if r.record_type == "Transition"]
+        reply_request = None
+        if case.state is State.AWAITING_PATIENT_REPLY:
+            asked = [r.content_hash for r in committed if r.event == Event.PATIENT_REPLY_REQUESTED.value]
+            text = next((m.text for m in reversed(staff) if asked and m.content_hash == asked[-1]), None)
+            reply_request = ReplyRequest(case.reply_kind, text, case.requested_document, case.patient_deadline)
+        if status == "closed" and message is None:
+            closing = [r.content_hash for r in committed if r.content_hash and r.event in
+                       (Event.HUMAN_RESOLVED_CASE.value, Event.HUMAN_REJECTED.value)]
+            message = next((m.text for m in reversed(staff) if closing and m.content_hash == closing[-1]), None)
+        conversation = sorted([ConversationEntry("staff", m.text, m.at) for m in staff]
+                              + [ConversationEntry("patient", r.text, r.at) for r in replies], key=lambda e: e.at)
         return PatientView(
             case_id=case.case_id,
             status=status,
@@ -317,6 +423,8 @@ class SessionService:
             message=message,
             history=history,
             document_upload="file" if self.document_intake is not None else "text",
+            reply_request=reply_request,
+            conversation=conversation,
         )
 
     @staticmethod
@@ -352,6 +460,41 @@ class SessionService:
                    in data_log.entries(conn, case_id, data_log.DataKind.OUTGOING_MESSAGE)
                    if entry.content is not None and entry.content_hash in approved]
         return answers[-1] if answers else None
+
+    @dataclass(frozen=True)
+    class _Message:
+        content_hash: str
+        text: str
+        at: datetime
+
+    def _staff_messages(self, conn, case_id: str, trace) -> list[_Message]:
+        """Staff messages the patient may read (design §7.5): the hash is on a committed request /
+        resolve / reject row, and the text is a template's or has a consumed clinical approval."""
+        committed = {r.content_hash for r in trace
+                     if r.record_type == "Transition" and r.content_hash and r.event in _STAFF_MESSAGE_EVENTS}
+        approved = {a.content_hash for a in repository.content_approvals_for(
+                        conn, case_id, naming.Action.ANSWER_CLINICAL_QUESTION.value)
+                    if a.approval_type == "ContentApproval" and a.reviewer_role == auth.CLINICAL_STAFF
+                    and a.consumed_at is not None and a.content_hash}
+        return [self._Message(e.content_hash, e.content, e.created_at)
+                for e in data_log.entries(conn, case_id, data_log.DataKind.STAFF_MESSAGE)
+                if e.content is not None and e.content_hash in committed
+                and (patient_messages.is_template_text(e.content) or e.content_hash in approved)]
+
+    def _patient_replies(self, conn, case_id: str, trace) -> list[_Message]:
+        """The patient's own replies whose PATIENT_REPLY_SUBMITTED committed; a document reply is
+        shown as the document's label, never its reference line."""
+        committed = {r.content_hash for r in trace if r.record_type == "Transition"
+                     and r.event == Event.PATIENT_REPLY_SUBMITTED.value and r.content_hash}
+        replies = []
+        for e in data_log.entries(conn, case_id, data_log.DataKind.PATIENT_REPLY):
+            if e.content is None or e.content_hash not in committed:
+                continue
+            match = _DOCUMENT_REPLY.match(e.content)
+            text = (f"הועלה המסמך: {document_label(match.group(2))}"
+                    if match and match.group(2) in CATALOG_LABELS else e.content)
+            replies.append(self._Message(e.content_hash, text, e.created_at))
+        return replies
 
     def _request_text(self, case_id: str) -> str | None:
         with self.engine.connect() as conn:
