@@ -125,6 +125,28 @@ describe('ReplyToRequest: text reply', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent('לא ניתן להשיב בדרך זו')
     expect(onChanged).toHaveBeenCalledWith(DOCUMENT)
   })
+
+  it('clears a previous notice once the patient sends a text reply again', async () => {
+    // The view prop here never actually changes (`onChanged` is a spy, not wired to state),
+    // so the form stays mounted between the two attempts, the way a caller whose refetch
+    // failed - or simply hasn't re-rendered yet - would leave it; the notice must still not
+    // survive a fresh, unrelated attempt.
+    vi.mocked(api.replyToRequest)
+      .mockRejectedValueOnce(new ApiError(409, 'reply_kind_mismatch'))
+      .mockResolvedValueOnce({ ...QUESTION, status: 'in_review', reply_request: null })
+    vi.mocked(api.getRequest).mockResolvedValue(DOCUMENT)
+    render(<Harness view={QUESTION} onChanged={vi.fn()} />)
+
+    await userEvent.type(screen.getByLabelText('התשובה שלך'), 'כן')
+    await userEvent.click(screen.getByRole('button', { name: 'שליחת התשובה' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent('לא ניתן להשיב בדרך זו')
+
+    await userEvent.clear(screen.getByLabelText('התשובה שלך'))
+    await userEvent.type(screen.getByLabelText('התשובה שלך'), 'תור לאורתופדיה')
+    await userEvent.click(screen.getByRole('button', { name: 'שליחת התשובה' }))
+
+    await waitFor(() => expect(screen.queryByRole('alert')).not.toBeInTheDocument())
+  })
 })
 
 describe('ReplyToRequest: file reply', () => {
@@ -149,6 +171,30 @@ describe('ReplyToRequest: file reply', () => {
     await userEvent.click(screen.getByRole('button', { name: 'העלאת המסמך' }))
     expect(api.replyWithFile).not.toHaveBeenCalled()
     expect(screen.getByRole('alert')).toHaveTextContent('יש לבחור קובץ PDF.')
+  })
+
+  it('clears a previous wrong-type notice once a new file is chosen', async () => {
+    // `applyAccept: false`: a real patient can still pick a non-PDF through "all files" past
+    // the input's `accept` filter, so the choice itself must clear the old notice regardless
+    // of whether the browser's own filter would normally have stopped this particular file.
+    const user = userEvent.setup({ applyAccept: false })
+    vi.mocked(api.replyWithFile).mockResolvedValue({
+      upload: { code: 'wrong_document_type', document_type: 'CBC' },
+      request: DOCUMENT,
+    })
+    render(<Harness view={DOCUMENT} onChanged={vi.fn()} />)
+    await user.upload(screen.getByLabelText('בחירת קובץ PDF'), pdfFile('cbc.pdf'))
+    await user.click(screen.getByRole('button', { name: 'העלאת המסמך' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent('המסמך שהועלה אינו המסמך שהתבקש')
+
+    await user.upload(screen.getByLabelText('בחירת קובץ PDF'), new File(['hello'], 'notes.txt', { type: 'text/plain' }))
+    await user.click(screen.getByRole('button', { name: 'העלאת המסמך' }))
+
+    // Only the fresh, local PDF refusal shows - the stale lifted notice about the previous
+    // file is gone, not stacked underneath it.
+    const alerts = screen.getAllByRole('alert')
+    expect(alerts).toHaveLength(1)
+    expect(alerts[0]).toHaveTextContent('יש לבחור קובץ PDF.')
   })
 
   it('refuses a PDF over 10 MB without calling the API', async () => {

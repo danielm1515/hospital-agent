@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { ApiError } from '../../api/client'
 import {
+  describeDocumentType,
   documentLabel,
   elapsedBetween,
   errorMessage,
@@ -10,6 +11,7 @@ import {
   isMoving,
   sameDay,
   truncate,
+  uploadResultMessage,
 } from './helpers'
 
 describe('patient helpers', () => {
@@ -43,6 +45,19 @@ describe('patient helpers', () => {
     expect(documentLabel('ECG')).toBe('תרשים פעילות חשמלית של הלב')
     expect(documentLabel('URINALYSIS')).toBe('בדיקת שתן')
     expect(documentLabel('PREOP_SUMMARY')).toBe('סיכום טרום ניתוח')
+  })
+
+  it('isolates an unrecognised catalog code (fail closed, §14) instead of leaving it to pick its own direction', () => {
+    // A code outside the closed `DocumentType` union can still arrive over the wire; it is
+    // wrapped in FSI/PDI (U+2068/U+2069) so it reads left-to-right inside the Hebrew
+    // sentence it lands in, instead of jumping to the wrong edge.
+    expect(describeDocumentType('MYSTERY_TYPE' as never)).toBe('⁨MYSTERY_TYPE⁩')
+  })
+
+  it('the expired outcome has no double space when document_type is null (the common case)', () => {
+    const { text } = uploadResultMessage({ code: 'expired', document_type: null })
+    expect(text).toBe('המסמך ישן מדי לפי כללי התוקף. יש להעלות מסמך עדכני.')
+    expect(text).not.toMatch(/ {2}/)
   })
 
   it('turns an error into one Hebrew sentence, never a code', () => {

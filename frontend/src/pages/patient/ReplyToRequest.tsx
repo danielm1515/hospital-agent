@@ -160,6 +160,9 @@ function FileReply({
     const file = event.target.files?.[0]
     setFileName(file ? file.name : null)
     setError(null)
+    // A previous attempt's lifted notice (e.g. `wrong_document_type`) is about the file
+    // that was sent, not this new one - it must not linger once the patient moves on.
+    onNotice(null)
   }
 
   async function submit(event: React.FormEvent) {
