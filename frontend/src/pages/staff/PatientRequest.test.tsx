@@ -30,21 +30,24 @@ const TEMPLATES: MessageTemplate[] = [
   { template_id: 'close_handled', purpose: 'closing', text: 'טופלה', param: null, options: {} },
 ]
 
-const DEADLINE_LABEL = 'עד מתי (ברירת מחדל: 24 שעות)'
+const DEADLINE_LABEL = 'עד מתי (אופציונלי)'
+const REASON_LABEL = 'סיבת הבקשה (פנימית)'
 
-function renderPanel(role: 'clinical_staff' | 'admin_staff' = 'admin_staff') {
+function renderPanel(role: 'clinical_staff' | 'admin_staff' = 'admin_staff', allowsApprove = false) {
   const onSent = vi.fn()
+  const onContextChanged = vi.fn()
   render(
     <PatientRequest
       caseId="C-1"
       shownContextRef="ref-1"
       role={role}
       templates={TEMPLATES}
+      allowsApprove={allowsApprove}
       onSent={onSent}
-      onContextChanged={vi.fn()}
+      onContextChanged={onContextChanged}
     />,
   )
-  return { onSent }
+  return { onSent, onContextChanged }
 }
 
 describe('PatientRequest', () => {
@@ -53,7 +56,7 @@ describe('PatientRequest', () => {
     const { onSent } = renderPanel()
     await userEvent.selectOptions(screen.getByLabelText('הודעה'), 'clarify_did_you_mean')
     await userEvent.selectOptions(screen.getByLabelText('נושא'), 'preparation')
-    await userEvent.type(screen.getByLabelText('סיבה (פנימית)'), 'unclear')
+    await userEvent.type(screen.getByLabelText(REASON_LABEL), 'unclear')
     await userEvent.click(screen.getByRole('button', { name: 'שליחה למטופל' }))
     expect(api.requestFromPatient).toHaveBeenCalledWith(
       'C-1',
@@ -78,7 +81,7 @@ describe('PatientRequest', () => {
     renderPanel('clinical_staff')
     await userEvent.selectOptions(screen.getByLabelText('הודעה'), 'text')
     await userEvent.type(screen.getByLabelText('הטקסט למטופל'), 'נא לפרט')
-    await userEvent.type(screen.getByLabelText('סיבה (פנימית)'), 'r')
+    await userEvent.type(screen.getByLabelText(REASON_LABEL), 'r')
     await userEvent.click(screen.getByRole('button', { name: 'שליחה למטופל' }))
     expect(api.requestFromPatient).toHaveBeenCalledWith('C-1', expect.objectContaining({ text: 'נא לפרט' }))
   })
@@ -88,7 +91,7 @@ describe('PatientRequest', () => {
     renderPanel()
     await userEvent.click(screen.getByRole('radio', { name: 'בקשת מסמך' }))
     await userEvent.selectOptions(screen.getByLabelText('סוג המסמך'), 'URINALYSIS')
-    await userEvent.type(screen.getByLabelText('סיבה (פנימית)'), 'r')
+    await userEvent.type(screen.getByLabelText(REASON_LABEL), 'r')
     await userEvent.click(screen.getByRole('button', { name: 'שליחה למטופל' }))
     expect(api.requestFromPatient).toHaveBeenCalledWith(
       'C-1',
@@ -103,7 +106,7 @@ describe('PatientRequest', () => {
     vi.mocked(api.requestFromPatient).mockRejectedValue(new api.ApiError(409, 'invalid_deadline'))
     renderPanel()
     await userEvent.selectOptions(screen.getByLabelText('הודעה'), 'clarify_general')
-    await userEvent.type(screen.getByLabelText('סיבה (פנימית)'), 'r')
+    await userEvent.type(screen.getByLabelText(REASON_LABEL), 'r')
     await userEvent.click(screen.getByRole('button', { name: 'שליחה למטופל' }))
     const alert = await screen.findByRole('alert')
     expect(alert).toHaveTextContent('invalid_deadline')
@@ -115,20 +118,66 @@ describe('PatientRequest', () => {
     renderPanel()
     fireEvent.change(screen.getByLabelText(DEADLINE_LABEL), { target: { value: '2026-10-01T10:00' } })
     await userEvent.selectOptions(screen.getByLabelText('הודעה'), 'clarify_general')
-    await userEvent.type(screen.getByLabelText('סיבה (פנימית)'), 'r')
+    await userEvent.type(screen.getByLabelText(REASON_LABEL), 'r')
     await userEvent.click(screen.getByRole('button', { name: 'שליחה למטופל' }))
     const [, body] = vi.mocked(api.requestFromPatient).mock.calls[0]
     expect(body.deadline).toBe(toIsoWithOffset('2026-10-01T10:00'))
   })
 
-  it('omits the deadline when the field is emptied, so the server default applies', async () => {
+  it('omits the deadline by default, so the server default applies', async () => {
     vi.mocked(api.requestFromPatient).mockResolvedValue({ case_id: 'C-1', state: 'AwaitingPatientReply' })
     renderPanel()
-    fireEvent.change(screen.getByLabelText(DEADLINE_LABEL), { target: { value: '' } })
+    expect(screen.getByLabelText(DEADLINE_LABEL)).toHaveValue('')
     await userEvent.selectOptions(screen.getByLabelText('הודעה'), 'clarify_general')
-    await userEvent.type(screen.getByLabelText('סיבה (פנימית)'), 'r')
+    await userEvent.type(screen.getByLabelText(REASON_LABEL), 'r')
     await userEvent.click(screen.getByRole('button', { name: 'שליחה למטופל' }))
     const [, body] = vi.mocked(api.requestFromPatient).mock.calls[0]
     expect(body.deadline).toBeUndefined()
+  })
+
+  it('requires a document type before sending', async () => {
+    renderPanel()
+    await userEvent.click(screen.getByRole('radio', { name: 'בקשת מסמך' }))
+    await userEvent.type(screen.getByLabelText(REASON_LABEL), 'r')
+    await userEvent.click(screen.getByRole('button', { name: 'שליחה למטופל' }))
+    expect(await screen.findByText('יש לבחור סוג מסמך')).toBeInTheDocument()
+    expect(api.requestFromPatient).not.toHaveBeenCalled()
+  })
+
+  it('requires a reason before sending', async () => {
+    renderPanel()
+    await userEvent.selectOptions(screen.getByLabelText('הודעה'), 'clarify_general')
+    await userEvent.click(screen.getByRole('button', { name: 'שליחה למטופל' }))
+    expect(await screen.findByText('יש לציין סיבה')).toBeInTheDocument()
+    expect(api.requestFromPatient).not.toHaveBeenCalled()
+  })
+
+  it('requires a template parameter before sending', async () => {
+    renderPanel()
+    await userEvent.selectOptions(screen.getByLabelText('הודעה'), 'clarify_did_you_mean')
+    await userEvent.type(screen.getByLabelText(REASON_LABEL), 'r')
+    await userEvent.click(screen.getByRole('button', { name: 'שליחה למטופל' }))
+    expect(await screen.findByText('יש לבחור ערך לפרמטר ההודעה')).toBeInTheDocument()
+    expect(api.requestFromPatient).not.toHaveBeenCalled()
+  })
+
+  it('shows a refresh action for context_changed instead of refreshing silently', async () => {
+    vi.mocked(api.requestFromPatient).mockRejectedValue(new api.ApiError(409, 'context_changed'))
+    const { onContextChanged } = renderPanel()
+    await userEvent.selectOptions(screen.getByLabelText('הודעה'), 'clarify_general')
+    await userEvent.type(screen.getByLabelText(REASON_LABEL), 'r')
+    await userEvent.click(screen.getByRole('button', { name: 'שליחה למטופל' }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('ההקשר השתנה')
+    expect(onContextChanged).not.toHaveBeenCalled()
+
+    await userEvent.click(screen.getByRole('button', { name: 'רענון הקשר' }))
+    expect(onContextChanged).toHaveBeenCalledTimes(1)
+  })
+
+  it('never shows a raw template placeholder', () => {
+    renderPanel()
+    const option = screen.getByRole('option', { name: /האם התכוונת ל/ })
+    expect(option.textContent).not.toMatch(/[{}]/)
   })
 })

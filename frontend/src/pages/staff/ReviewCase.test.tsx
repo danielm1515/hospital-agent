@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -293,6 +293,18 @@ describe('ReviewCase', () => {
     expect(screen.queryByRole('button', { name: 'רענון הקשר' })).not.toBeInTheDocument()
   })
 
+  it('shows the Hebrew label beside a decision error code', async () => {
+    vi.mocked(api.decide).mockRejectedValue(new api.ApiError(409, 'human_engaged'))
+    renderCase()
+
+    await userEvent.type(await screen.findByLabelText(/סיבת ההכרעה/), 'סגירה.')
+    await userEvent.click(screen.getByRole('button', { name: 'סגירת הפנייה' }))
+
+    const alert = await screen.findByRole('alert')
+    expect(alert).toHaveTextContent('human_engaged')
+    expect(alert).toHaveTextContent('לא ניתן לאשר המשך: כבר נשלחה בקשה למטופל בפנייה זו')
+  })
+
   it('asks for confirmation before it tombstones a Data Log entry', async () => {
     renderCase()
 
@@ -334,9 +346,17 @@ describe('ReviewCase', () => {
     expect(screen.queryByRole('button', { name: 'סגירת הפנייה' })).not.toBeInTheDocument()
   })
 
-  it('shows the patient-request panel and no approve button when human_engaged', async () => {
+  it('shows the patient-request panel and no approve button when human_engaged, even on a resumable kind', async () => {
+    // RetryExhausted normally allows `approve` (it just opens a new retry cycle) - the
+    // absent button here has to come from `allowed_decisions`, not from the escalation kind.
     vi.mocked(api.listReviews).mockResolvedValue([
-      { ...MEDICAL_ITEM, human_engaged: true, allowed_decisions: ['resolve', 'reject'] },
+      {
+        ...MEDICAL_ITEM,
+        escalation_kind: 'RetryExhausted',
+        escalated_from_state: 'RetrievingData',
+        human_engaged: true,
+        allowed_decisions: ['resolve', 'reject'],
+      },
     ])
     vi.mocked(api.getMessageTemplates).mockResolvedValue(TEMPLATES)
     renderCase()
@@ -362,5 +382,23 @@ describe('ReviewCase', () => {
         message: { template_id: 'close_handled' },
       }),
     )
+  })
+
+  it('never sends a message when approving, even if a closing message was chosen', async () => {
+    // Z3_ITEM allows approve and requires patient_deadline; a closing message picked while
+    // it was on screen must not leak into an approve body (a closing message is resolve/reject only).
+    vi.mocked(api.listReviews).mockResolvedValue([Z3_ITEM])
+    vi.mocked(api.getMessageTemplates).mockResolvedValue(TEMPLATES)
+    renderCase()
+
+    await userEvent.type(await screen.findByLabelText(/סיבת ההכרעה/), 'אישור.')
+    fireEvent.change(screen.getByLabelText('מועד יעד חדש למטופל'), { target: { value: '2026-10-01T10:00' } })
+    const closingGroup = screen.getByRole('group', { name: 'הודעת סיום למטופל' })
+    await userEvent.selectOptions(within(closingGroup).getByLabelText('הודעה'), 'close_handled')
+    await userEvent.click(screen.getByRole('button', { name: 'אישור והמשך' }))
+
+    expect(api.decide).toHaveBeenCalled()
+    const [, body] = vi.mocked(api.decide).mock.calls[0]
+    expect(body).not.toHaveProperty('message')
   })
 })

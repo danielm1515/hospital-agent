@@ -20,6 +20,7 @@ import {
   escalationLabel,
   formatDateTime,
   groupByKind,
+  requestErrorLabel,
   stateLabel,
   toIsoWithOffset,
 } from './labels'
@@ -281,6 +282,7 @@ export function ReviewCase() {
               shownContextRef={context.shown_context_ref}
               role={user?.role ?? 'admin_staff'}
               templates={templates}
+              allowsApprove={allowed.includes('approve')}
               onSent={() =>
                 navigate('/staff', {
                   replace: true,
@@ -344,6 +346,7 @@ export function ReviewCase() {
 
                 <div className="closing-message" role="group" aria-label="הודעת סיום למטופל">
                   <h3 className="col-sub">הודעת סיום למטופל (אופציונלי)</h3>
+                  <p className="col-note">נשלחת רק עם סגירה או דחייה.</p>
                   <MessagePicker
                     purpose="closing"
                     role={user?.role ?? 'admin_staff'}
@@ -398,7 +401,7 @@ export function ReviewCase() {
               )}
               {decisionError && (
                 <Alert variant="error" title="ההכרעה נדחתה">
-                  <span className="mono">{decisionError}</span>
+                  {requestErrorLabel(decisionError)} <span className="mono">{decisionError}</span>
                 </Alert>
               )}
             </>
