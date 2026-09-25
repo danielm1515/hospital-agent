@@ -5,6 +5,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from sqlalchemy import text
 
+from hospital_agent import guards
 from hospital_agent.execution.sla import SlaWorker
 from hospital_agent.naming import Component, EscalationKind, Event, State
 from tests.driver import Driver
@@ -112,6 +113,29 @@ def test_approve_after_a_request_is_refused_as_human_engaged(sm, app_engine):
     assert result.reason == "human_engaged"
     assert result.temporal_violation is None  # the guard refuses first - T13 is the backstop (Task 3)
     assert d.state is State.AWAITING_HUMAN_REVIEW
+
+
+def test_t13_is_the_state_manager_backstop_when_the_guard_is_bypassed(sm, app_engine, monkeypatch):
+    """M6: WorkflowDecisionValid is what actually refuses this in production
+    (test_approve_after_a_request_is_refused_as_human_engaged above), but the case a person has
+    written to must never reach an agent state even if that guard were ever wrong or bypassed -
+    T13 is the State Manager's own backstop, evaluated independently of the guard that failed."""
+    d = escalated(sm, app_engine)
+    request(sm, d)
+    reply(sm, d)
+    monkeypatch.setitem(guards.GUARDS, "WorkflowDecisionValid", lambda ctx: None)  # let it through
+    result = d.human(Event.HUMAN_APPROVED, d.approval("approve"))
+    # T13 blocks the transition into Planning before it ever commits (the case is already in
+    # AwaitingHumanReview, so - unlike a violation caught mid-flow, e.g. test_temporal_violation_
+    # blocks_and_escalates - there is no legal HUMAN_REVIEW_REQUIRED row to re-escalate into the
+    # state it never left; the backstop still holds by refusing the transition outright).
+    assert not result.committed
+    assert result.reason == "temporal_violation:T13"
+    assert result.temporal_violation == "T13"
+    assert not result.escalation.committed
+    case = d.case
+    assert case.state is State.AWAITING_HUMAN_REVIEW
+    assert case.escalation_kind is EscalationKind.RETRY_EXHAUSTED  # never overwritten - nothing committed
 
 
 @pytest.mark.parametrize("event, target", [(Event.HUMAN_RESOLVED_CASE, State.COMPLETED),
