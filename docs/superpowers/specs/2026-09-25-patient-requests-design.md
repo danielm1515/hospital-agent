@@ -85,7 +85,7 @@
 ### 5.3 ה־guards
 
 - **`WorkflowDecisionValid` (קיים, מורחב):** `DECISION_FOR_EVENT` מקבל `PATIENT_REPLY_REQUESTED → "request"`. **ובנוסף, הידוק ל־`HUMAN_APPROVED`:** אם `case.human_engaged`, ה־guard נכשל עם הסיבה `human_engaged`. זה הידוק fail-closed של guard קיים — לא נוסף תנאי לשורות ה־spec, ושום שורה לא נוספה.
-- **`reply_request_valid` (חדש):** `reply_kind` חוקי; לבקשת מסמך — `requested_document` בקטלוג ו־document-service מוגדר; הדדליין בעתיד, עד 7 ימים, ולא אחרי `appointment_at` כשהוא ידוע; להודעה בטקסט חופשי — אישור התוכן תקין (§7.3).
+- **`reply_request_valid` (חדש):** `reply_kind` חוקי; לבקשת מסמך — `requested_document` בקטלוג; הדדליין בעתיד, עד 7 ימים, ולא אחרי `appointment_at` כשהוא ידוע. אישור התוכן של טקסט חופשי נבדק ומנוצל ב־State Manager, כמו התשובה הקלינית (§7.3). האם document-service מוגדר — תצורת אפליקציה, ולכן נבדק ב־`HumanReviewService` ולא ב־guard, שהוא חלק מבסיס האמון (§9).
 - **`patient_reply_valid` (חדש):** `ctx.source is Component.SESSION_SERVICE` (כמו `DocumentValid`); סוג התשובה תואם ל־`reply_kind`; לבקשת מסמך — המסמך התקבל ב־document-service והסוג שלו הוא `requested_document`.
 
 ## 6. "לעולם לא ל־AI" — שלוש שכבות
