@@ -140,8 +140,8 @@ export function documentLabel(documentId: string): string | null {
 // (the `.mono` convention elsewhere in this app does the same with CSS `unicode-bidi:
 // isolate` for a run that lives in its own element; a raw code interpolated into a plain
 // string has no element to isolate, so the string itself carries the isolation).
-const FSI = '⁨'
-const PDI = '⁩'
+const FSI = '\u2068'
+const PDI = '\u2069'
 
 /**
  * The type's Hebrew label, or - fail closed (§14) - the raw catalog code, isolated so it
