@@ -15,9 +15,16 @@ from starlette.concurrency import run_in_threadpool
 
 from ..auth import DEMO_USERS, Principal
 from ..document_intake import IntakeUnavailable
-from ..session import CaseNotFound, EventRejected, NotWaitingForDocument, SessionService
+from ..session import (
+    CaseNotFound,
+    EventRejected,
+    NotWaitingForDocument,
+    NotWaitingForReply,
+    ReplyKindMismatch,
+    SessionService,
+)
 from .deps import get_session, require_patient
-from .schemas import DocumentUpload, NewRequest, PatientCaseView, PdfUploadResponse, UploadResult
+from .schemas import DocumentUpload, NewRequest, PatientCaseView, PdfUploadResponse, ReplyBody, UploadResult
 
 router = APIRouter(prefix="/api/patient", tags=["patient"])
 logger = logging.getLogger(__name__)
@@ -115,6 +122,60 @@ async def upload_pdf(case_id: str, request: Request, principal: Principal = Depe
         raise HTTPException(status_code=404, detail="case_not_found") from None
     except NotWaitingForDocument:
         raise HTTPException(status_code=409, detail="not_waiting_for_document") from None
+    except IntakeUnavailable:
+        raise HTTPException(status_code=503, detail="document_service_unavailable") from None
+    return PdfUploadResponse(upload=UploadResult.model_validate(outcome),
+                             request=PatientCaseView.model_validate(view))
+
+
+@router.post("/requests/{case_id}/reply", response_model=PatientCaseView)
+def reply(case_id: str, body: ReplyBody, principal: Principal = Depends(require_patient),
+          session: SessionService = Depends(get_session)) -> PatientCaseView:
+    """Sub-project 15 (design §9): the patient's text answer to a staff question."""
+    try:
+        session.reply_text(principal.patient_id, case_id, body.text)
+    except CaseNotFound:
+        raise HTTPException(status_code=404, detail="case_not_found") from None
+    except NotWaitingForReply:
+        raise HTTPException(status_code=409, detail="not_waiting_for_reply") from None
+    except ReplyKindMismatch:
+        raise HTTPException(status_code=409, detail="reply_kind_mismatch") from None
+    except EventRejected as rejected:
+        # reply_too_long (ReplyBody already caps text at 2000, a 422 invalid_body; this is
+        # defence for a length the service counts differently) is a form error, not a state
+        # refusal - answered like the schema's own 422, never the generic 409.
+        if rejected.reason == "reply_too_long":
+            raise HTTPException(status_code=422, detail="reply_too_long") from None
+        raise HTTPException(status_code=409, detail=rejected.reason) from None
+    return PatientCaseView.model_validate(session.patient_view(case_id))
+
+
+@router.post("/requests/{case_id}/reply/file", response_model=PdfUploadResponse)
+async def reply_pdf(case_id: str, request: Request, principal: Principal = Depends(require_patient),
+                    session: SessionService = Depends(get_session)) -> PdfUploadResponse:
+    """Sub-project 15 (design §9): the requested document, as the sub-project 13 upload does it."""
+    if session.document_intake is None:
+        raise HTTPException(status_code=404, detail="file_upload_not_enabled")
+    body = bytearray()
+    async for chunk in request.stream():
+        body += chunk
+        if len(body) > UPLOAD_BODY_LIMIT:
+            raise HTTPException(status_code=413, detail="too_large")
+    part = await run_in_threadpool(_file_part, request.headers.get("content-type", ""), bytes(body))
+    if part is None:
+        raise HTTPException(status_code=422, detail="invalid_body")
+    filename, data = part
+    if len(data) > MAX_PDF_BYTES:
+        raise HTTPException(status_code=413, detail="too_large")
+    try:
+        outcome = await run_in_threadpool(session.reply_pdf, principal.patient_id, case_id, data, filename)
+        view = await run_in_threadpool(session.patient_view, case_id)
+    except CaseNotFound:
+        raise HTTPException(status_code=404, detail="case_not_found") from None
+    except NotWaitingForReply:
+        raise HTTPException(status_code=409, detail="not_waiting_for_reply") from None
+    except ReplyKindMismatch:
+        raise HTTPException(status_code=409, detail="reply_kind_mismatch") from None
     except IntakeUnavailable:
         raise HTTPException(status_code=503, detail="document_service_unavailable") from None
     return PdfUploadResponse(upload=UploadResult.model_validate(outcome),

@@ -23,6 +23,8 @@ from .schemas import (
     CaseSummary,
     DecisionRequest,
     DecisionResponse,
+    MessageTemplateView,
+    PatientRequestBody,
     ReviewContext,
     ReviewItem,
 )
@@ -83,6 +85,7 @@ def decide(case_id: str, body: DecisionRequest, principal: Principal = Depends(r
             shown_context_ref=body.shown_context_ref,
             verified_identity_ref=body.verified_identity_ref,
             patient_deadline=body.patient_deadline,
+            message=body.message.model_dump() if body.message else None,
         )
     except CaseNotFound:
         raise HTTPException(status_code=404, detail="case_not_found") from None
@@ -91,7 +94,35 @@ def decide(case_id: str, body: DecisionRequest, principal: Principal = Depends(r
     except ContextChanged:
         raise HTTPException(status_code=409, detail="context_changed") from None
     except DecisionRejected as rejected:
-        raise HTTPException(status_code=409, detail=rejected.reason) from None
+        status = 403 if rejected.reason == "clinical_staff_only" else 409
+        raise HTTPException(status_code=status, detail=rejected.reason) from None
+    return DecisionResponse(case_id=case_id, state=reviews.sm.load(case_id).state.value)
+
+
+@router.get("/message-templates", response_model=list[MessageTemplateView])
+def message_templates(reviews: HumanReviewService = Depends(get_reviews)) -> list[MessageTemplateView]:
+    """Sub-project 15: the fixed messages (design §7.1) - the UI keeps no copy of them."""
+    return [MessageTemplateView.model_validate(template) for template in reviews.templates()]
+
+
+@router.post("/cases/{case_id}/request", response_model=DecisionResponse)
+def request_from_patient(case_id: str, body: PatientRequestBody, principal: Principal = Depends(require_staff),
+                         reviews: HumanReviewService = Depends(get_reviews)) -> DecisionResponse:
+    """Sub-project 15 (design §5, §7): ask the patient a question or for one catalog document."""
+    try:
+        reviews.request(
+            reviewer_id=principal.user_id, reviewer_role=principal.role, case_id=case_id, kind=body.kind,
+            reason=body.reason, shown_context_ref=body.shown_context_ref, template_id=body.template_id,
+            param=body.param, text=body.text, document_type=body.document_type, deadline=body.deadline)
+    except CaseNotFound:
+        raise HTTPException(status_code=404, detail="case_not_found") from None
+    except NotInReview:
+        raise HTTPException(status_code=409, detail="not_in_review") from None
+    except ContextChanged:
+        raise HTTPException(status_code=409, detail="context_changed") from None
+    except DecisionRejected as rejected:
+        status = 403 if rejected.reason == "clinical_staff_only" else 409
+        raise HTTPException(status_code=status, detail=rejected.reason) from None
     return DecisionResponse(case_id=case_id, state=reviews.sm.load(case_id).state.value)
 
 

@@ -156,7 +156,7 @@
 
 **צוות:**
 - `GET /api/staff/message-templates` — התבניות (id, מטרה, טקסט, פרמטר ואפשרויותיו).
-- `POST /api/staff/cases/{id}/request` — `{kind: question|document, template_id?, param?, text?, document_type?, deadline?, reason, shown_context_ref}`. `409 context_changed` כמו בהחלטה; `403 clinical_staff_only` לטקסט חופשי שלא מצוות קליני; `422 invalid_request` / `invalid_deadline`.
+- `POST /api/staff/cases/{id}/request` — `{kind: question|document, template_id?, param?, text?, document_type?, deadline?, reason, shown_context_ref}`. `409 context_changed` כמו בהחלטה; `403 clinical_staff_only` לטקסט חופשי שלא מצוות קליני; `409 invalid_request` / `409 invalid_deadline`, כמו סירובי השירות במסלול ההחלטה.
 - `POST /api/staff/cases/{id}/decision` — שדה אופציונלי חדש `message: {template_id, param?} | {text}` ל־`resolve` / `reject`; `409 human_engaged` ל־`approve` בפנייה שכבר נשלחה בה בקשה.
 - `ReviewItem`: שדות חדשים `human_engaged` ו־`returned_by` (`patient_reply` | `reply_timeout` | null); `allowed_decisions` בלי `approve` כש־`human_engaged`.
 

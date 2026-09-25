@@ -114,7 +114,7 @@ def test_the_review_queue_shape(client, staff, sm, app_engine):
     queue = client.get("/api/staff/reviews", headers=staff).json()
     assert [item["case_id"] for item in queue] == [medical.case_id, retry.case_id]
     assert set(queue[0]) == {"case_id", "patient_id", "escalation_kind", "escalated_from_state", "reasons",
-                             "allowed_decisions", "required_fields", "updated_at"}
+                             "allowed_decisions", "required_fields", "updated_at", "human_engaged", "returned_by"}
     assert queue[0]["escalation_kind"] == "MedicalQuestion"
     assert queue[0]["allowed_decisions"] == ["resolve", "reject"]
     assert queue[1]["allowed_decisions"] == ["approve", "resolve", "reject"]
