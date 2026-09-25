@@ -204,14 +204,18 @@ function HumanLoadGroup({ load }: { load: MetricsData['human_load'] }) {
   return (
     <Group id="metrics-human" title="עומס על הצוות" scope="אירועים שקרו בטווח. התור הפתוח — נכון לעכשיו">
       <div className="metrics-tiles">
-        <Tile label="כניסות לתור ההסלמות" value={formatCount(load.escalations_entered)} />
+        <Tile
+          label="כניסות לתור ההסלמות"
+          value={formatCount(load.escalations_entered)}
+          note="כולל גם חזרות מתשובת מטופל ומתפוגת מועד"
+        />
         <Tile
           label="פתוחות עכשיו"
           value={formatCount(load.open_now)}
           note={load.oldest_open_seconds === null ? undefined : `הוותיקה ממתינה ${formatSeconds(load.oldest_open_seconds)}`}
         />
         <Tile
-          label="זמן עד הכרעה (p50)"
+          label="זמן עד פעולה אנושית ראשונה (p50)"
           value={formatSeconds(load.time_to_decision.p50)}
           note={durationsText(load.time_to_decision)}
         />
