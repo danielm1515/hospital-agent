@@ -7,16 +7,26 @@ import { ApiError } from '../../api/client'
 import type { PatientView } from '../../api/types'
 import { RequestDetail } from './RequestDetail'
 import { patientView } from './fixtures'
+import { formatDateTime } from './helpers'
 import { authValue, PATIENT_USER, TestAuthProvider } from '../../test/helpers'
 
 vi.mock('../../api/client', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../api/client')>()
-  return { ...actual, getRequest: vi.fn(), uploadDocument: vi.fn(), uploadDocumentFile: vi.fn() }
+  return {
+    ...actual,
+    getRequest: vi.fn(),
+    uploadDocument: vi.fn(),
+    uploadDocumentFile: vi.fn(),
+    replyToRequest: vi.fn(),
+    replyWithFile: vi.fn(),
+  }
 })
 
 const getRequest = vi.mocked(api.getRequest)
 const uploadDocument = vi.mocked(api.uploadDocument)
 const uploadDocumentFile = vi.mocked(api.uploadDocumentFile)
+const replyToRequest = vi.mocked(api.replyToRequest)
+const replyWithFile = vi.mocked(api.replyWithFile)
 
 function renderDetail(caseId = 'CASE-1') {
   return render(
@@ -44,6 +54,8 @@ beforeEach(() => {
   getRequest.mockReset()
   uploadDocument.mockReset()
   uploadDocumentFile.mockReset()
+  replyToRequest.mockReset()
+  replyWithFile.mockReset()
 })
 
 describe('RequestDetail: needs_document (D24)', () => {
@@ -330,7 +342,7 @@ describe('RequestDetail: the other statuses', () => {
     expect(screen.queryByText('הפנייה נסגרה על ידי איש צוות')).not.toBeInTheDocument()
   })
 
-  it('needs_reply renders the staff request and the reply form', async () => {
+  it('needs_reply renders the staff request, its deadline, and the reply form', async () => {
     getRequest.mockResolvedValue(
       patientView({
         status: 'needs_reply',
@@ -346,6 +358,65 @@ describe('RequestDetail: the other statuses', () => {
     expect(await screen.findByText('בקשה מהצוות')).toBeInTheDocument()
     expect(screen.getByText('האם התכוונת למועד התור?')).toBeInTheDocument()
     expect(screen.getByLabelText('התשובה שלך')).toBeInTheDocument()
+    // Pins the deadline actually reaching the screen - a guard removed by mistake would
+    // still pass every other assertion here.
+    expect(screen.getByText(/נא להשיב עד/)).toHaveTextContent(formatDateTime('2026-09-26T08:05:00Z'))
+  })
+
+  it('needs_reply with no reply_request shows a neutral fail-closed line instead of nothing', async () => {
+    getRequest.mockResolvedValue(patientView({ status: 'needs_reply', reply_request: null }))
+    renderDetail()
+    expect(await screen.findByText(/הפנייה ממתינה לתשובה/)).toBeInTheDocument()
+    expect(screen.queryByText('בקשה מהצוות')).not.toBeInTheDocument()
+  })
+
+  it('renders a conversation entry, above the reply form (sub-project 15)', async () => {
+    getRequest.mockResolvedValue(
+      patientView({
+        status: 'needs_reply',
+        reply_request: {
+          kind: 'question',
+          message: 'האם התכוונת למועד התור?',
+          document_type: null,
+          deadline: '2026-09-26T08:05:00Z',
+        },
+        conversation: [{ sender: 'staff', text: 'לא הצלחנו להבין את פנייתך.', at: '2026-09-25T09:00:00Z' }],
+      }),
+    )
+    const { container } = renderDetail()
+    expect(await screen.findByText('לא הצלחנו להבין את פנייתך.')).toBeInTheDocument()
+    const conversation = container.querySelector('.conversation')
+    const replyRequest = container.querySelector('.reply-request')
+    expect(conversation).not.toBeNull()
+    expect(replyRequest).not.toBeNull()
+    // `compareDocumentPosition` - `conversation` comes before `reply-request` in source order.
+    expect(conversation!.compareDocumentPosition(replyRequest!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  })
+
+  it('needs_reply: a stale text reply (not_waiting_for_reply) refreshes the view and keeps the notice visible', async () => {
+    const user = userEvent.setup()
+    getRequest.mockResolvedValueOnce(
+      patientView({
+        status: 'needs_reply',
+        reply_request: {
+          kind: 'question',
+          message: 'האם התכוונת למועד התור?',
+          document_type: null,
+          deadline: '2026-09-26T08:05:00Z',
+        },
+      }),
+    )
+    replyToRequest.mockRejectedValue(new ApiError(409, 'not_waiting_for_reply'))
+    getRequest.mockResolvedValueOnce(patientView({ status: 'in_review' }))
+    const { container } = renderDetail()
+
+    await user.type(await screen.findByLabelText('התשובה שלך'), 'כן')
+    await user.click(screen.getByRole('button', { name: 'שליחת התשובה' }))
+
+    await waitFor(() => expect(container.querySelector('.req-head .pill')).toHaveTextContent('אצל צוות'))
+    // The reply form is gone (the case moved on), but the notice explaining why survives it.
+    expect(screen.queryByLabelText('התשובה שלך')).not.toBeInTheDocument()
+    expect(await screen.findByRole('alert')).toHaveTextContent('הפנייה כבר אינה ממתינה לתשובה')
   })
 
   it('marks the timeline step of the current status', async () => {

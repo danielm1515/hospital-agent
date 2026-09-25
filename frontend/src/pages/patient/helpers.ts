@@ -135,10 +135,25 @@ export function documentLabel(documentId: string): string | null {
   return DOCUMENT_LABELS[documentId] ?? null
 }
 
-/** The type's Hebrew label, or the type code itself when this version does not know it. */
+// Unicode "First Strong Isolate" / "Pop Directional Isolate": wraps a Latin run inside
+// Hebrew text so it keeps its own direction without disturbing the RTL sentence around it
+// (the `.mono` convention elsewhere in this app does the same with CSS `unicode-bidi:
+// isolate` for a run that lives in its own element; a raw code interpolated into a plain
+// string has no element to isolate, so the string itself carries the isolation).
+const FSI = '⁨'
+const PDI = '⁩'
+
+/**
+ * The type's Hebrew label, or - fail closed (§14) - the raw catalog code, isolated so it
+ * reads left-to-right instead of jumping to the wrong edge of the Hebrew sentence it lands
+ * in (a code this version does not know should still never happen in practice, since
+ * `DocumentType` is a closed union, but the value arrives over the wire, not from the type
+ * checker).
+ */
 export function describeDocumentType(type: DocumentType | null): string {
   if (!type) return ''
-  return documentLabel(type) ?? type
+  const label = documentLabel(type)
+  return label ?? `${FSI}${type}${PDI}`
 }
 
 /** The client-side refusal of a non-PDF file, and of a PDF over the 10 MB limit. */
@@ -189,7 +204,11 @@ export function uploadResultMessage(upload: UploadResult): UploadNotice {
     case 'unreadable':
       return { variant: 'error', text: 'לא הצלחנו לקרוא את המסמך. ודאו שזה קובץ PDF ברור ונסו שוב.' }
     case 'expired':
-      return { variant: 'error', text: `המסמך ${label} ישן מדי לפי כללי התוקף. יש להעלות מסמך עדכני.` }
+      // `document_type` is `null` for `expired` in the common case (`docs/api.md` §4) - an
+      // empty `label` must not leave a double space where it would have gone.
+      return label
+        ? { variant: 'error', text: `המסמך ${label} ישן מדי לפי כללי התוקף. יש להעלות מסמך עדכני.` }
+        : { variant: 'error', text: 'המסמך ישן מדי לפי כללי התוקף. יש להעלות מסמך עדכני.' }
     case 'not_yours':
       return { variant: 'error', text: 'המסמך אינו שייך לך, ולכן לא נקלט.' }
     default:

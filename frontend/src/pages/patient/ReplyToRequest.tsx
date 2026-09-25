@@ -15,6 +15,7 @@ import {
   NOT_PDF_MESSAGE,
   uploadResultMessage,
 } from './helpers'
+import type { UploadNotice } from './helpers'
 
 /**
  * Sub-project 15 (design §7.5, `docs/api.md` §8): the patient's answer to a staff request -
@@ -25,9 +26,47 @@ import {
 /** `POST .../reply` accepts 1-2000 characters of trimmed text (`docs/api.md` §8). */
 const MAX_REPLY_LENGTH = 2000
 
-export function ReplyToRequest({ view, onChanged }: { view: PatientView; onChanged: (next: PatientView) => void }) {
+/** The two codes that mean the request itself is stale - answered, timed out, or the wrong
+ * kind - so the view under the form is out of date and must be replaced, not just annotated
+ * with an error. */
+function isStaleReply(caught: unknown): boolean {
+  return caught instanceof ApiError && (caught.detail === 'not_waiting_for_reply' || caught.detail === 'reply_kind_mismatch')
+}
+
+/**
+ * Re-fetches the case after a stale reply attempt, so the screen reflects what actually
+ * happened (already answered, timed out, or answered a different way) instead of leaving a
+ * form for a request that no longer exists. A failed refresh is swallowed - the notice the
+ * caller already showed is the only thing the patient needs to see.
+ */
+async function refreshAfterStaleReply(caseId: string, onChanged: (next: PatientView) => void): Promise<void> {
+  try {
+    onChanged(await api.getRequest(caseId))
+  } catch {
+    /* the caller's notice already told the patient something went wrong */
+  }
+}
+
+export function ReplyToRequest({
+  view,
+  onChanged,
+  onNotice,
+}: {
+  view: PatientView
+  onChanged: (next: PatientView) => void
+  /** Lifted to `RequestDetail`, like `MissingDocuments`' `onUploadNotice`: a reply that
+   * moves the case out of `needs_reply` unmounts this whole section, so a notice that lived
+   * only in local state here would vanish with it (the same reason `FileUploadForm` lifts
+   * its own upload notice). */
+  onNotice: (notice: UploadNotice | null) => void
+}) {
   const request = view.reply_request
-  if (!request) return null
+  if (!request) {
+    // Fail closed (§14), the same pattern `MissingDocuments` uses for an unrecognised
+    // template id: `needs_reply` with no request to show (a stale poll racing a decision)
+    // still gives the patient somewhere to go, instead of a blank section.
+    return <p className="muted">הפנייה ממתינה לתשובה. פנו למוקד המטופלים להמשך טיפול.</p>
+  }
   return (
     <section className="reply-request" aria-labelledby="reply-request-h">
       <h2 className="section-h" id="reply-request-h">
@@ -36,40 +75,45 @@ export function ReplyToRequest({ view, onChanged }: { view: PatientView; onChang
       {request.message && <p className="message-text">{request.message}</p>}
       <p className="muted">נא להשיב עד {formatDateTime(request.deadline)}.</p>
       {request.kind === 'question' ? (
-        <TextReply caseId={view.case_id} onChanged={onChanged} />
+        <TextReply caseId={view.case_id} onChanged={onChanged} onNotice={onNotice} />
       ) : (
-        <FileReply caseId={view.case_id} documentType={request.document_type} onChanged={onChanged} />
+        <FileReply caseId={view.case_id} documentType={request.document_type} onChanged={onChanged} onNotice={onNotice} />
       )}
     </section>
   )
 }
 
-function TextReply({ caseId, onChanged }: { caseId: string; onChanged: (next: PatientView) => void }) {
+function TextReply({
+  caseId,
+  onChanged,
+  onNotice,
+}: {
+  caseId: string
+  onChanged: (next: PatientView) => void
+  onNotice: (notice: UploadNotice | null) => void
+}) {
   const [text, setText] = useState('')
   const [busy, setBusy] = useState(false)
-  const [error, setError] = useState<string | null>(null)
+  const [fieldError, setFieldError] = useState<string | null>(null)
 
   async function submit(event: React.FormEvent) {
     event.preventDefault()
     const trimmed = text.trim()
     if (!trimmed) {
-      setError('יש לכתוב תשובה לפני השליחה.')
+      setFieldError('יש לכתוב תשובה לפני השליחה.')
       return
     }
-    setError(null)
+    setFieldError(null)
+    onNotice(null)
     setBusy(true)
     try {
       onChanged(await api.replyToRequest(caseId, trimmed))
     } catch (caught) {
-      setError(errorMessage(caught))
-      if (caught instanceof ApiError && caught.detail === 'not_waiting_for_reply') {
-        // The case moved on (already answered, timed out) while the patient was typing -
-        // refresh so the screen shows the state it is actually in, not a stale request.
-        try {
-          onChanged(await api.getRequest(caseId))
-        } catch {
-          /* the error above already told the patient something went wrong */
-        }
+      if (isStaleReply(caught)) {
+        onNotice({ variant: 'error', text: errorMessage(caught) })
+        await refreshAfterStaleReply(caseId, onChanged)
+      } else {
+        setFieldError(errorMessage(caught))
       }
     } finally {
       setBusy(false)
@@ -84,9 +128,9 @@ function TextReply({ caseId, onChanged }: { caseId: string; onChanged: (next: Pa
         value={text}
         maxLength={MAX_REPLY_LENGTH}
         counter
+        error={fieldError}
         onChange={(event) => setText(event.target.value)}
       />
-      {error && <Alert variant="error">{error}</Alert>}
       <div className="actions">
         <Button type="submit" variant="primary" busy={busy}>
           שליחת התשובה
@@ -100,10 +144,12 @@ function FileReply({
   caseId,
   documentType,
   onChanged,
+  onNotice,
 }: {
   caseId: string
   documentType: DocumentType | null
   onChanged: (next: PatientView) => void
+  onNotice: (notice: UploadNotice | null) => void
 }) {
   const inputRef = useRef<HTMLInputElement>(null)
   const [fileName, setFileName] = useState<string | null>(null)
@@ -128,17 +174,25 @@ function FileReply({
       return
     }
     setError(null)
+    onNotice(null)
     setBusy(true)
     try {
       const { upload, request } = await api.replyWithFile(caseId, file)
-      // Only `accepted` moves the case out of `needs_reply` (`docs/api.md` §8); every other
-      // code leaves it exactly as it was, so there is nothing new to show but the sentence.
-      if (upload.code === 'accepted') onChanged(request)
-      else setError(uploadResultMessage(upload).text)
+      // Like `FileUploadForm`: the view is always replaced with `request` and the outcome
+      // sentence always shown, on every code, not only `accepted` - for every other code
+      // `request` is exactly what it was before (`docs/api.md` §8), so this is a no-op
+      // re-render when nothing moved, and the real thing when it did.
+      onChanged(request)
+      onNotice(uploadResultMessage(upload))
       setFileName(null)
       if (inputRef.current) inputRef.current.value = ''
     } catch (caught) {
-      setError(errorMessage(caught))
+      if (isStaleReply(caught)) {
+        onNotice({ variant: 'error', text: errorMessage(caught) })
+        await refreshAfterStaleReply(caseId, onChanged)
+      } else {
+        setError(errorMessage(caught))
+      }
     } finally {
       setBusy(false)
     }
@@ -146,7 +200,7 @@ function FileReply({
 
   return (
     <section className="upload" aria-label="העלאת מסמך PDF">
-      <h2 className="section-h">העלאת מסמך PDF</h2>
+      <h3 className="section-h">העלאת מסמך PDF</h3>
       {documentType && <p className="muted">המסמך המבוקש: {describeDocumentType(documentType)}</p>}
 
       <form className="form" onSubmit={(event) => void submit(event)}>
@@ -160,6 +214,7 @@ function FileReply({
             className="file-input"
             type="file"
             accept="application/pdf,.pdf"
+            disabled={busy}
             onChange={chooseFile}
           />
           <p className="hint">
@@ -183,11 +238,17 @@ function FileReply({
 export function Conversation({ entries }: { entries: ConversationEntry[] }) {
   if (entries.length === 0) return null
   return (
-    <section className="conversation" aria-label="ההתכתבות עם הצוות">
+    <section className="conversation" aria-labelledby="conversation-h">
+      <h2 className="section-h" id="conversation-h">
+        ההתכתבות עם הצוות
+      </h2>
       <ol className="conversation-list">
         {entries.map((entry, index) => (
           <li key={index} className={`conversation-item from-${entry.sender}`}>
-            <span className="conversation-who">{entry.sender === 'staff' ? 'צוות בית החולים' : 'אני'}</span>
+            {/* Fail closed: only an exact `'patient'` sender is ever labelled as the
+                patient's own words - anything else, including a value this version does
+                not recognise, is shown as the staff's (§12.3 - never invent who said what). */}
+            <span className="conversation-who">{entry.sender === 'patient' ? 'אני' : 'צוות בית החולים'}</span>
             <span className="message-text">{entry.text}</span>
             <time className="muted" dateTime={entry.at}>
               {formatDateTime(entry.at)}

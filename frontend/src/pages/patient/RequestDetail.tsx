@@ -110,11 +110,13 @@ export function RequestDetail() {
             <p className="req-full">{view.request_text ?? 'תוכן הפנייה נמחק מהמערכת.'}</p>
           </section>
 
+          {/* Sub-project 15: the conversation so far, above whatever the case is waiting on
+              now (the reply form, or nothing) - it is history, read before the present. */}
+          <Conversation entries={view.conversation} />
+
           {uploadNotice && <Alert variant={uploadNotice.variant}>{uploadNotice.text}</Alert>}
 
           <StatusContent view={view} onChanged={setView} onUploadNotice={setUploadNotice} />
-
-          <Conversation entries={view.conversation} />
         </>
       )}
     </section>
@@ -177,8 +179,11 @@ function StatusContent({
       return <MissingDocuments view={view} onChanged={onChanged} onUploadNotice={onUploadNotice} />
     case 'needs_reply':
       // Sub-project 15 (`docs/api.md` §8): a staff member asked a question or for a
-      // document instead of (or before) deciding the case.
-      return <ReplyToRequest view={view} onChanged={onChanged} />
+      // document instead of (or before) deciding the case. `onUploadNotice` is shared with
+      // `MissingDocuments` below - the two statuses are mutually exclusive, so one slot is
+      // enough, and lifting it here is what keeps a notice alive across the status change
+      // a successful reply causes (see `ReplyToRequest`).
+      return <ReplyToRequest view={view} onChanged={onChanged} onNotice={onUploadNotice} />
     case 'completed':
       return (
         <Alert variant="ok" title="ההודעה שנשלחה אליך">
