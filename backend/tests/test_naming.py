@@ -4,6 +4,8 @@ import pytest
 from hospital_agent.naming import (
     AUTOMATIC_ACTIONS,
     EVENT_OWNER,
+    EXTENSION_EVENTS,
+    EXTENSION_STATES,
     EXTERNAL_EVENTS,
     NON_TRANSITION_EVENTS,
     RESUMABLE,
@@ -22,14 +24,16 @@ from tests.spec_tables import read_table
 
 def test_states_match_spec_2_1():
     rows = read_table("02-states-events.md", ("State", "משמעות", "תרחישים"))
-    assert [s.value for s in State] == [row[0] for row in rows]
-    assert len(State) == 12
+    spec = [s for s in State if s not in EXTENSION_STATES]  # row 83: the extension is pinned in test_extension
+    assert [s.value for s in spec] == [row[0] for row in rows]
+    assert len(spec) == 12
 
 
 def test_events_match_spec_2_2_in_order():
     rows = read_table("02-states-events.md", ("#", "Event", "משמעות"))
-    assert [e.value for e in Event] == [row[1] for row in rows]
-    assert len(Event) == 26
+    spec = [e for e in Event if e not in EXTENSION_EVENTS]
+    assert [e.value for e in spec] == [row[1] for row in rows]
+    assert len(spec) == 26
 
 
 def test_actions_match_spec_5():
@@ -85,7 +89,7 @@ def test_external_events_are_the_patient_and_the_three_human_decisions():
         Event.HUMAN_APPROVED,
         Event.HUMAN_REJECTED,
         Event.HUMAN_RESOLVED_CASE,
-    }
+    } | EXTENSION_EVENTS
     assert NON_TRANSITION_EVENTS == {Event.TOOL_EXECUTION_STARTED, Event.AUDIT_RECORDED}
 
 

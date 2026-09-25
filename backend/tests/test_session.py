@@ -134,6 +134,7 @@ STATUS = {
     State.READY: "in_progress",
     State.COMPLETED: "closed",  # without a CASE_RESOLVED row: closed by a reviewer
     State.FAILED: "closed",
+    State.AWAITING_PATIENT_REPLY: "needs_reply",
 }
 
 

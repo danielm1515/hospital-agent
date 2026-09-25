@@ -22,6 +22,9 @@ class State(StrEnum):
     COMPLETED = "Completed"
     FAILED = "Failed"
 
+    # Sub-project 15's extension (docs/spec_corrections.md row 83) - not a §2.1 state.
+    AWAITING_PATIENT_REPLY = "AwaitingPatientReply"
+
 
 TERMINAL_STATES = frozenset({State.COMPLETED, State.FAILED})
 
@@ -53,6 +56,11 @@ class Event(StrEnum):
     CASE_RESOLVED = "CASE_RESOLVED"
     TOOL_EXECUTION_STARTED = "TOOL_EXECUTION_STARTED"
     AUDIT_RECORDED = "AUDIT_RECORDED"
+
+    # Sub-project 15's extension (row 83) - not §2.2 events. Both are external (§13.2 has no
+    # owner for them): a staff member's request, and the patient's reply through the Session Service.
+    PATIENT_REPLY_REQUESTED = "PATIENT_REPLY_REQUESTED"
+    PATIENT_REPLY_SUBMITTED = "PATIENT_REPLY_SUBMITTED"
 
 
 class Component(StrEnum):
@@ -108,6 +116,12 @@ POLICY_DECISION_EVENTS = frozenset({
 
 # §13.2: the patient's two events and the three human decisions.
 EXTERNAL_EVENTS = frozenset(set(Event) - set(EVENT_OWNER))
+
+# Sub-project 15 (docs/spec_corrections.md row 83): the owner's extension of §2. The members join
+# the same enums, so every component handles them like any other, and are listed here so the
+# spec's own lists (tests/test_naming.py) are compared without them.
+EXTENSION_STATES = frozenset({State.AWAITING_PATIENT_REPLY})
+EXTENSION_EVENTS = frozenset({Event.PATIENT_REPLY_REQUESTED, Event.PATIENT_REPLY_SUBMITTED})
 
 # §2.2: recorded in the trace, never a trigger for a State change.
 NON_TRANSITION_EVENTS = frozenset({Event.TOOL_EXECUTION_STARTED, Event.AUDIT_RECORDED})

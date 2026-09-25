@@ -104,6 +104,7 @@ _STATUS: dict[State, str] = {
     State.AWAITING_PATIENT_INPUT: "needs_document",
     State.AWAITING_HUMAN_REVIEW: "in_review",
     State.FAILED: "closed",
+    State.AWAITING_PATIENT_REPLY: "needs_reply",  # sub-project 15
 }
 
 

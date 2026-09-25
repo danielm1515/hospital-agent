@@ -66,6 +66,9 @@ def _case_from_row(row: RowMapping) -> CaseRecord:
         escalated_from_state=State(row["escalated_from_state"]) if row["escalated_from_state"] else None,
         patient_deadline=row["patient_deadline"],
         appointment_at=row["appointment_at"],
+        human_engaged=row["human_engaged"],
+        reply_kind=row["reply_kind"],
+        requested_document=row["requested_document"],
     )
 
 
@@ -89,6 +92,9 @@ def _case_values(case: CaseRecord) -> dict[str, Any]:
         "escalated_from_state": case.escalated_from_state.value if case.escalated_from_state else None,
         "patient_deadline": case.patient_deadline,
         "appointment_at": case.appointment_at,
+        "human_engaged": case.human_engaged,
+        "reply_kind": case.reply_kind,
+        "requested_document": case.requested_document,
         "updated_at": case.updated_at,
     }
 

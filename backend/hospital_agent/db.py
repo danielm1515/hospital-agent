@@ -48,6 +48,9 @@ cases = Table(
     Column("created_at", DateTime(timezone=True), nullable=False),
     Column("updated_at", DateTime(timezone=True), nullable=False),
     Column("appointment_at", DateTime(timezone=True)),  # migration 0002
+    Column("human_engaged", Boolean, nullable=False),  # migration 0006
+    Column("reply_kind", Text),  # migration 0006
+    Column("requested_document", Text),  # migration 0006
 )
 
 executions = Table(
