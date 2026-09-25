@@ -115,8 +115,8 @@ _GENERIC_DOCUMENT_LABEL = "הועלה מסמך"  # a recognised reference line w
 _STAFF_MESSAGE_EVENTS = frozenset({Event.PATIENT_REPLY_REQUESTED.value, Event.HUMAN_RESOLVED_CASE.value,
                                    Event.HUMAN_REJECTED.value})
 # Every text a document request can ever render (§7.1, §7.2: document_request is the only
-# template a document request uses) - the set _document_reply_hashes checks a request's staff
-# message against, to tell a document reply from a question reply by what was asked.
+# template a document request uses) - what _proven_question_hashes checks a request's staff
+# message against, to prove a reply answers a question by what was asked.
 _DOCUMENT_REQUEST_TEXTS = frozenset(
     patient_messages.render(patient_messages.DOCUMENT_REQUEST, doc_type) for doc_type in CATALOG_LABELS)
 
@@ -503,37 +503,46 @@ class SessionService:
                 and (patient_messages.is_template_text(e.content) or e.content_hash in approved)]
 
     def _patient_replies(self, conn, case_id: str, trace) -> list[_Message]:
-        """The patient's own replies whose PATIENT_REPLY_SUBMITTED committed. Whether a reply
-        answers a document request is decided by what was actually asked (§7.2: a document
-        request always renders the document_request template, and nothing else ever does) -
-        never by guessing from the reply's own shape, which a patient's own text can match by
-        coincidence and a genuine one-character document id would otherwise slip past. A
-        document reply is shown as the document's label (or a generic one, for a type this
-        version does not know), never its reference line; every other reply is shown verbatim,
-        even one that happens to look like a reference line."""
-        document_replies = self._document_reply_hashes(conn, case_id, trace)
+        """The patient's own replies whose PATIENT_REPLY_SUBMITTED committed. Fail-closed
+        (design §7.5's read side, applied to this direction too): rather than assert a reply
+        is a document reply from what was asked, this proves the opposite - a reply is a
+        *proven question reply* only when the request before it is still readable and is not
+        the document_request template - and shows it verbatim. Everything else (an unproven
+        reply, because the request was deleted or never existed to check) falls to the
+        reference-line shape: a document reply is shown as the document's label (or a generic
+        one, for a type this version does not know), never its reference line; anything that
+        does not match that shape is shown verbatim regardless. A §18.4 deletion of the
+        request's own staff message can therefore never turn a genuine document reply's
+        reference line into raw, readable text - it can only ever fall toward hiding it."""
+        proven_question = self._proven_question_hashes(conn, case_id, trace)
         committed = {r.content_hash for r in trace if r.record_type == "Transition"
                      and r.event == Event.PATIENT_REPLY_SUBMITTED.value and r.content_hash}
         replies = []
         for e in data_log.entries(conn, case_id, data_log.DataKind.PATIENT_REPLY):
             if e.content is None or e.content_hash not in committed:
                 continue
-            if e.content_hash in document_replies:
-                match = _DOCUMENT_REPLY.match(e.content)
-                doc_type = match.group(2) if match else None
-                text = (f"הועלה המסמך: {document_label(doc_type)}" if doc_type in CATALOG_LABELS
-                        else _GENERIC_DOCUMENT_LABEL)
+            if e.content_hash in proven_question:
+                text = e.content  # proven: shown verbatim, whatever it looks like
             else:
-                text = e.content
+                match = _DOCUMENT_REPLY.match(e.content)
+                if match is None:
+                    text = e.content  # not proven, and not shaped like a reference line either
+                elif match.group(2) in CATALOG_LABELS:
+                    text = f"הועלה המסמך: {document_label(match.group(2))}"
+                else:
+                    text = _GENERIC_DOCUMENT_LABEL  # a reference line, but of an unknown type
             replies.append(_Message(e.content_hash, text, e.created_at))
         return replies
 
     @staticmethod
-    def _document_reply_hashes(conn, case_id: str, trace) -> set[str]:
-        """content_hash of every PATIENT_REPLY_SUBMITTED whose immediately preceding, committed
-        PATIENT_REPLY_REQUESTED asked with the document_request template - the request the
-        patient was actually replying to, read off the trace's own chronological order (only
-        one request is ever open at a time), never guessed from the reply's own text."""
+    def _proven_question_hashes(conn, case_id: str, trace) -> set[str]:
+        """content_hash of every PATIENT_REPLY_SUBMITTED PROVEN to answer a question: the
+        committed PATIENT_REPLY_REQUESTED immediately before it (read off the trace's own
+        chronological order - only one request is ever open at a time) has a staff message
+        that is still present (not tombstoned) and is not a document_request template text.
+        Anything not provable this way - the message was deleted, or there was no preceding
+        request at all - is left for _patient_replies' own reference-line check, never assumed
+        to be a question just because it cannot be shown to be a document."""
         staff_text = {m.content_hash: m.content for m in
                      data_log.entries(conn, case_id, data_log.DataKind.STAFF_MESSAGE) if m.content is not None}
         pending: str | None = None
@@ -544,7 +553,8 @@ class SessionService:
             if row.event == Event.PATIENT_REPLY_REQUESTED.value:
                 pending = row.content_hash
             elif row.event == Event.PATIENT_REPLY_SUBMITTED.value:
-                if pending is not None and staff_text.get(pending) in _DOCUMENT_REQUEST_TEXTS:
+                text = staff_text.get(pending) if pending is not None else None
+                if text is not None and text not in _DOCUMENT_REQUEST_TEXTS:
                     hashes.add(row.content_hash)
                 pending = None
         return hashes

@@ -252,3 +252,18 @@ def test_a_one_character_document_id_still_renders_as_the_label_not_the_raw_line
     patient_texts = [e.text for e in view.conversation if e.sender == "patient"]
     assert patient_texts == ["הועלה המסמך: בדיקת שתן"]
     assert "D URINALYSIS ACCEPTED" not in patient_texts
+
+
+def test_a_tombstoned_request_message_never_leaks_the_reference_line(sm, app_engine):
+    """§18.4: staff may delete the Data Log entry that carried the request. Losing the only
+    record of what was asked must never turn a genuine document reply into raw, readable
+    reference-line text - fail-closed falls toward the label, never toward exposure."""
+    d, session, reviews = setup(sm, app_engine, accepted("URINALYSIS"))
+    ask(reviews, d, kind="document", document_type="URINALYSIS")
+    [message] = staff_messages(d)
+    outcome = session.reply_pdf(d.patient_id, d.case_id, PDF, "urine.pdf")
+    assert outcome.code == "accepted"
+    assert reviews.tombstone(d.case_id, message.entry_id)
+    view = session.patient_view(d.case_id)
+    assert all("ACCEPTED" not in e.text for e in view.conversation)
+    assert [e.text for e in view.conversation if e.sender == "patient"] == ["הועלה המסמך: בדיקת שתן"]
