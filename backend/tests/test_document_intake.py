@@ -129,6 +129,79 @@ def test_anything_but_the_contract_is_unavailable(answer):
         client(Transport(answer)).submit("P-10041", "x.pdf", PDF)
 
 
+# --- sub-project 17 task 2: content-type sniffing, the `reason` field, classifier_unavailable ----
+
+JPEG = b"\xff\xd8\xff\xe0\x00\x10JFIF...binary..."
+PNG = b"\x89PNG\r\n\x1a\n...binary..."
+
+
+@pytest.mark.parametrize("data, content_type, extension", [
+    (PDF, "application/pdf", "pdf"),
+    (JPEG, "image/jpeg", "jpg"),
+    (PNG, "image/png", "png"),
+    (b"not any known signature", "application/pdf", "pdf"),  # unrecognised: sent as pdf, fail closed
+])
+def test_the_real_content_type_is_sniffed_by_magic_bytes(data, content_type, extension):
+    transport = Transport(created(**ACCEPTED))
+    client(transport).submit("P-10041", "", data)
+    body = transport.requests[0][3]
+    header = body.split(b"\r\n\r\n", 1)[0]
+    assert f"Content-Type: {content_type}".encode() in header
+    assert f'filename="document.{extension}"'.encode() in header  # empty name: the sniffed fallback
+
+
+def test_a_named_file_keeps_its_own_name_regardless_of_its_sniffed_kind():
+    transport = Transport(created(**ACCEPTED))
+    client(transport).submit("P-10041", "photo.jpg", JPEG)
+    body = transport.requests[0][3]
+    header = body.split(b"\r\n\r\n", 1)[0]
+    assert b'filename="photo.jpg"' in header
+    assert b"Content-Type: image/jpeg" in header
+
+
+@pytest.mark.parametrize("reason", [
+    "not_supported_format", "too_large", "parse_error", "no_text_layer", "too_many_pages",
+    "too_much_text", "classifier_unparsable", "unknown_type", "future_date", "no_date", "too_old",
+])
+def test_every_closed_set_reason_is_read(reason):
+    answer = client(Transport(created(document_id="DOC-1", document_type=None, document_date=None,
+                                      result="DOCUMENT_UNREADABLE", reason=reason))).submit(
+        "P-10041", "x.pdf", PDF)
+    assert answer.reason == reason
+
+
+def test_an_unknown_reason_is_ignored():
+    answer = client(Transport(created(document_id="DOC-1", document_type=None, document_date=None,
+                                      result="DOCUMENT_UNREADABLE", reason="something_new"))).submit(
+        "P-10041", "x.pdf", PDF)
+    assert answer.reason is None
+
+
+def test_no_reason_field_at_all_is_none():
+    answer = client(Transport(created(**ACCEPTED))).submit("P-10041", "cbc.pdf", PDF)
+    assert answer.reason is None
+
+
+def test_a_503_classifier_unavailable_body_is_that_finer_code():
+    with pytest.raises(IntakeUnavailable) as raised:
+        client(Transport(HttpResponse(503, b'{"error": "classifier_unavailable"}'))).submit(
+            "P-10041", "x.pdf", PDF)
+    assert str(raised.value) == "classifier_unavailable"
+
+
+@pytest.mark.parametrize("answer", [
+    HttpResponse(503, b'{"error": "storage_unavailable"}'),
+    HttpResponse(503, b'{"error": "database_unavailable"}'),
+    HttpResponse(503, b"not json"),
+    HttpResponse(503, b"[]"),
+    HttpResponse(503, b""),
+])
+def test_a_503_with_any_other_body_stays_the_generic_status_code(answer):
+    with pytest.raises(IntakeUnavailable) as raised:
+        client(Transport(answer)).submit("P-10041", "x.pdf", PDF)
+    assert str(raised.value) == "status_503"
+
+
 def test_the_key_and_the_url_never_leave_the_client():
     transport = Transport(raises=OSError(f"cannot reach {BASE} with {KEY}"))
     intake = client(transport)

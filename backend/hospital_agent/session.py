@@ -49,13 +49,39 @@ _REJECTION_CODES = {
 }
 _UNREADABLE = "unreadable"
 
+# Sub-project 17, Task 2 decision 4: a finer patient code for the document-service's own
+# refusal `reason` (design §4.2), when it gave one this version recognises. Everything else -
+# no reason, or a reason not listed here (parse_error, too_many_pages, too_much_text,
+# classifier_unparsable) - falls back to `_REJECTION_CODES` above, i.e. stays "unreadable" for
+# every `DOCUMENT_UNREADABLE` reason this table does not name.
+_REASON_CODES = {
+    "unknown_type": "unrecognised_type",
+    "future_date": "bad_date",
+    "too_old": "expired",
+    "no_date": "no_date",
+    "no_text_layer": "unreadable_scan",
+    "not_supported_format": "unsupported_format",
+    "too_large": "too_large",
+}
+
+
+def _rejection_code(answer: IntakeAnswer) -> str:
+    """The patient-facing code for a document-service answer with no effective type (rule 6):
+    the reason-based code when there is one this version knows, else the coarser per-result
+    code (fail closed, §14)."""
+    if answer.reason is not None:
+        mapped = _REASON_CODES.get(answer.reason)
+        if mapped is not None:
+            return mapped
+    return _REJECTION_CODES.get(answer.result, _UNREADABLE)
+
 
 class CaseNotFound(Exception):
     """An unknown case, or another patient's case - the API answers 404 for both."""
 
 
 class NotWaitingForDocument(Exception):
-    """A PDF for a case that is not in AwaitingPatientInput (the API answers 409)."""
+    """A document for a case that is not in AwaitingPatientInput (the API answers 409)."""
 
 
 class DocumentIntake(Protocol):
@@ -64,7 +90,7 @@ class DocumentIntake(Protocol):
 
 @dataclass(frozen=True)
 class UploadOutcome:
-    """What the patient is told about one PDF: an abstract code and, when the document-service
+    """What the patient is told about one document upload: an abstract code and, when the document-service
     named an accepted type, that type - never an escalation kind, a reason or an Audit row."""
 
     code: str
@@ -268,7 +294,7 @@ class SessionService:
         return result
 
     def upload_pdf(self, patient_id: str, case_id: str, data: bytes, filename: str) -> UploadOutcome:
-        """Forward the patient's PDF to the document-service (sub-project 13, design §5.3).
+        """Forward the patient's document (PDF, JPEG or PNG) to the document-service (sub-project 13, design §5.3; sub-project 17 task 2 for the image formats and reason).
 
         The rules:
           1. The case must be the patient's (CaseNotFound -> 404) and in AwaitingPatientInput
@@ -314,7 +340,7 @@ class SessionService:
             raise
         document_type, document_ref = _effective(answer)  # rule 4
         if document_type is None or document_ref is None:  # rule 6
-            outcome = UploadOutcome(_REJECTION_CODES.get(answer.result, _UNREADABLE), None)
+            outcome = UploadOutcome(_rejection_code(answer), None)
         else:
             case = self._waiting_case(patient_id, case_id)  # rule 5, on the case as it is now
             if document_type not in (case.required_documents or []):
@@ -329,7 +355,7 @@ class SessionService:
                     logger.info("pdf upload: not_waiting_for_document")
                     raise NotWaitingForDocument(case_id)
                 outcome = UploadOutcome("accepted", document_type)
-        logger.info("pdf upload: %s", outcome.code)  # rule 7: the code, nothing else
+        _log_upload_outcome("pdf upload", outcome, answer.reason)  # rule 7: codes, nothing else
         return outcome
 
     def _waiting_case(self, patient_id: str, case_id: str) -> CaseRecord:
@@ -353,7 +379,7 @@ class SessionService:
 
     def reply_pdf(self, patient_id: str, case_id: str, data: bytes, filename: str) -> UploadOutcome:
         """The requested document, through the sub-project 13 intake; it counts only when its type
-        is the one asked for. The PDF stays in the document-service; the log gets only the code."""
+        is the one asked for. The document stays in the document-service; the log gets only the code."""
         self._replying_case(patient_id, case_id, "document")
         if self.document_intake is None:
             raise IntakeUnavailable("not_configured")
@@ -364,7 +390,7 @@ class SessionService:
             raise
         document_type, document_ref = _effective(answer)
         if document_type is None or document_ref is None:
-            outcome = UploadOutcome(_REJECTION_CODES.get(answer.result, _UNREADABLE), None)
+            outcome = UploadOutcome(_rejection_code(answer), None)
         else:
             case = self._replying_case(patient_id, case_id, "document")  # it may have moved meanwhile
             if document_type != case.requested_document:
@@ -373,7 +399,7 @@ class SessionService:
                 entry = self._record(case, data_log.DataKind.PATIENT_REPLY, f"{document_ref} {document_type} ACCEPTED")
                 self._submit_reply(case_id, entry, {"reply_kind": "document", "document_type": document_type})
                 outcome = UploadOutcome("accepted", document_type)
-        logger.info("pdf reply: %s", outcome.code)
+        _log_upload_outcome("pdf reply", outcome, answer.reason)
         return outcome
 
     def _replying_case(self, patient_id: str, case_id: str, kind: str) -> CaseRecord:
@@ -578,6 +604,16 @@ class SessionService:
             return self.sm.load(case_id)
         except _UnknownCase:
             raise CaseNotFound(case_id) from None
+
+
+def _log_upload_outcome(verb: str, outcome: UploadOutcome, reason: str | None) -> None:
+    """Sub-project 17, Task 2 decision 4: the code, and - when the document-service gave one -
+    its real refusal reason too, both fixed codes, never content or a patient/file identifier
+    (rule 7)."""
+    if reason:
+        logger.info("%s: %s (%s)", verb, outcome.code, reason)
+    else:
+        logger.info("%s: %s", verb, outcome.code)
 
 
 def _effective(answer: IntakeAnswer) -> tuple[str | None, str | None]:

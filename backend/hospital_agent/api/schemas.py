@@ -139,12 +139,14 @@ class PatientCaseView(BaseModel):
 
 
 class UploadResult(BaseModel):
-    """The outcome of one PDF (sub-project 13, design §5.3): an abstract code only."""
+    """The outcome of one document upload (sub-project 13, design §5.3; sub-project 17 task 2
+    for the image and per-reason codes): an abstract code only."""
 
     model_config = ConfigDict(from_attributes=True)
 
     code: Literal["accepted", "not_required", "already_received", "not_medical", "unreadable", "expired",
-                  "not_yours", "wrong_document_type"]
+                  "not_yours", "wrong_document_type", "unrecognised_type", "unreadable_scan", "bad_date",
+                  "no_date", "unsupported_format", "too_large"]
     document_type: str | None
 
 

@@ -127,6 +127,53 @@ def test_a_rejection_is_its_code_and_no_event(sm, app_engine, answer, code):
     unchanged(d, app_engine, version)
 
 
+# --- sub-project 17 task 2: a reason maps to a finer patient code, no event either way -------------
+
+@pytest.mark.parametrize("result, reason, code", [
+    ("DOCUMENT_UNREADABLE", "unknown_type", "unrecognised_type"),
+    ("DOCUMENT_UNREADABLE", "future_date", "bad_date"),
+    ("DOCUMENT_UNREADABLE", "no_text_layer", "unreadable_scan"),
+    ("DOCUMENT_UNREADABLE", "not_supported_format", "unsupported_format"),
+    ("DOCUMENT_UNREADABLE", "too_large", "too_large"),
+    ("DOCUMENT_UNREADABLE", "parse_error", "unreadable"),
+    ("DOCUMENT_UNREADABLE", "too_many_pages", "unreadable"),
+    ("DOCUMENT_UNREADABLE", "too_much_text", "unreadable"),
+    ("DOCUMENT_UNREADABLE", "classifier_unparsable", "unreadable"),
+    ("DOCUMENT_UNREADABLE", None, "unreadable"),
+    ("DOCUMENT_EXPIRED", "no_date", "no_date"),
+    ("DOCUMENT_EXPIRED", "too_old", "expired"),
+    ("DOCUMENT_EXPIRED", None, "expired"),
+])
+def test_a_reason_maps_to_a_finer_code_with_no_event(sm, app_engine, result, reason, code):
+    d = awaiting(sm, app_engine)
+    version = d.case.state_version
+    answer = IntakeAnswer(result, "DOC-1", None, None, reason)
+    outcome = SessionService(sm, document_intake=FakeIntake(answer)).upload_pdf(PATIENT, d.case_id, PDF, FILENAME)
+    assert outcome == UploadOutcome(code, None)
+    unchanged(d, app_engine, version)
+
+
+def test_the_log_line_carries_the_real_reason_and_no_content(sm, app_engine, caplog):
+    d = awaiting(sm, app_engine)
+    answer = IntakeAnswer("DOCUMENT_UNREADABLE", "DOC-SECRET00000001", None, None, "no_text_layer")
+    with caplog.at_level(logging.INFO, logger="hospital_agent.session"):
+        SessionService(sm, document_intake=FakeIntake(answer)).upload_pdf(PATIENT, d.case_id, PDF, FILENAME)
+    lines = [r.getMessage() for r in caplog.records if r.name == "hospital_agent.session"]
+    assert "pdf upload: unreadable_scan (no_text_layer)" in lines
+    for secret in (PATIENT, FILENAME, "DOC-SECRET00000001"):
+        assert secret not in caplog.text
+
+
+def test_no_reason_logs_only_the_code(sm, app_engine, caplog):
+    d = awaiting(sm, app_engine)
+    answer = IntakeAnswer("NON_MEDICAL_DOCUMENT", "DOC-1", None, None)
+    with caplog.at_level(logging.INFO, logger="hospital_agent.session"):
+        SessionService(sm, document_intake=FakeIntake(answer)).upload_pdf(PATIENT, d.case_id, PDF, FILENAME)
+    lines = [r.getMessage() for r in caplog.records if r.name == "hospital_agent.session"]
+    assert "pdf upload: not_medical" in lines
+    assert not any("(" in line for line in lines)
+
+
 # --- rules 1 and 3: checked first; an unavailable service records nothing ---------------------------
 
 def test_a_case_that_is_not_waiting_for_a_document_is_refused_before_anything_is_sent(sm, app_engine):
@@ -263,6 +310,16 @@ def test_another_patients_case_is_404_and_a_case_not_waiting_is_409(app_engine):
 
 def test_an_unavailable_document_service_is_503(app_engine):
     with api(app_engine, FakeIntake(raises=IntakeUnavailable("status_503"))) as client:
+        d = api_awaiting(client, app_engine)
+        response = post_pdf(client, d.case_id)
+        assert response.status_code == 503 and response.json() == {"detail": "document_service_unavailable"}
+
+
+def test_a_classifier_unavailable_provider_failure_is_also_503(app_engine):
+    """Sub-project 17 task 2 decision 1: a provider failure is 503 classifier_unavailable from
+    the document-service, and the patient sees the same 503 document_service_unavailable as any
+    other unavailable answer - never a verdict on the file."""
+    with api(app_engine, FakeIntake(raises=IntakeUnavailable("classifier_unavailable"))) as client:
         d = api_awaiting(client, app_engine)
         response = post_pdf(client, d.case_id)
         assert response.status_code == 503 and response.json() == {"detail": "document_service_unavailable"}
