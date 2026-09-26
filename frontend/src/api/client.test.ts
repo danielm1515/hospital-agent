@@ -314,3 +314,27 @@ describe('getMetrics', () => {
     expect(init.method).toBe('GET')
   })
 })
+
+describe('appointments (sub-project 16)', () => {
+  beforeEach(() => api.setToken('tok-1'))
+
+  it('lists the token patient own appointments over the window, URL-encoded', async () => {
+    mockOnce(200, { from: '2026-09-26T00:00:00Z', to: '2026-10-27T00:00:00Z', appointments: [], truncated: false })
+    await api.listMyAppointments(new Date('2026-09-26T00:00:00Z'), new Date('2026-10-27T00:00:00Z'))
+    const [url, init] = lastCall()
+    expect(url).toBe(
+      '/api/patient/appointments?from=2026-09-26T00%3A00%3A00.000Z&to=2026-10-27T00%3A00%3A00.000Z',
+    )
+    expect(init.method).toBe('GET')
+  })
+
+  it("lists a case's appointments, encoding the case id in the path", async () => {
+    mockOnce(200, { from: '2026-09-26T00:00:00Z', to: '2026-10-27T00:00:00Z', appointments: [], truncated: false })
+    await api.listCaseAppointments('C 1', new Date('2026-09-26T00:00:00Z'), new Date('2026-10-27T00:00:00Z'))
+    const [url, init] = lastCall()
+    expect(url).toBe(
+      '/api/staff/cases/C%201/appointments?from=2026-09-26T00%3A00%3A00.000Z&to=2026-10-27T00%3A00%3A00.000Z',
+    )
+    expect(init.method).toBe('GET')
+  })
+})

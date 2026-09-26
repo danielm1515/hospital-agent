@@ -3,7 +3,7 @@ import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import * as api from '../../api/client'
-import type { MessageTemplate, ReviewContext, ReviewItem } from '../../api/types'
+import type { AppointmentList, MessageTemplate, ReviewContext, ReviewItem } from '../../api/types'
 import { authValue, STAFF_USER, TestAuthProvider } from '../../test/helpers'
 import { ReviewCase } from './ReviewCase'
 
@@ -14,7 +14,18 @@ vi.mock('../../api/client', async (importOriginal) => ({
   decide: vi.fn(),
   tombstone: vi.fn(),
   getMessageTemplates: vi.fn(),
+  listCaseAppointments: vi.fn(),
 }))
+
+function appointmentList(overrides: Partial<AppointmentList> = {}): AppointmentList {
+  return {
+    from: '2026-09-26T00:00:00Z',
+    to: '2026-10-26T00:00:00Z',
+    appointments: [],
+    truncated: false,
+    ...overrides,
+  }
+}
 
 const TEMPLATES: MessageTemplate[] = [
   { template_id: 'clarify_general', purpose: 'question', text: 'לא הצלחנו להבין', param: null, options: {} },
@@ -122,9 +133,34 @@ beforeEach(() => {
   vi.mocked(api.decide).mockResolvedValue({ case_id: CASE_ID, state: 'Completed' })
   vi.mocked(api.tombstone).mockResolvedValue(undefined)
   vi.mocked(api.getMessageTemplates).mockResolvedValue([])
+  vi.mocked(api.listCaseAppointments).mockResolvedValue(appointmentList())
 })
 
 describe('ReviewCase', () => {
+  it('shows the appointments panel for the patient, loaded with the case id', async () => {
+    renderCase()
+
+    expect(await screen.findByRole('heading', { name: 'התורים של המטופל' })).toBeInTheDocument()
+    expect(api.listCaseAppointments).toHaveBeenCalledWith(CASE_ID, expect.any(Date), expect.any(Date))
+  })
+
+  it('does not reload the appointments list when the review context is refreshed', async () => {
+    vi.mocked(api.decide).mockRejectedValue(new api.ApiError(409, 'context_changed'))
+    renderCase()
+
+    await screen.findByRole('heading', { name: 'התורים של המטופל' })
+    expect(api.listCaseAppointments).toHaveBeenCalledTimes(1)
+
+    await userEvent.type(await screen.findByLabelText(/סיבת ההכרעה/), 'סגירה.')
+    await userEvent.click(screen.getByRole('button', { name: 'סגירת הפנייה' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent('ההקשר השתנה')
+
+    await userEvent.click(screen.getByRole('button', { name: 'רענון הקשר' }))
+    await waitFor(() => expect(api.getContext).toHaveBeenCalledTimes(2))
+
+    expect(api.listCaseAppointments).toHaveBeenCalledTimes(1)
+  })
+
   it('shows the Data Log content and the audit trace as returned', async () => {
     renderCase()
 

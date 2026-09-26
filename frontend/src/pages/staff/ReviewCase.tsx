@@ -3,6 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom'
 import * as api from '../../api/client'
 import type { DataLogEntry, Decision, DecisionBody, MessageTemplate, ReviewContext, ReviewItem } from '../../api/types'
 import { Alert } from '../../components/Alert'
+import { AppointmentsPanel } from '../../components/AppointmentsPanel'
 import { Button } from '../../components/Button'
 import { StatusPill } from '../../components/StatusPill'
 import { TextField } from '../../components/TextField'
@@ -82,6 +83,14 @@ export function ReviewCase() {
     setDecisionError(null)
     await load()
   }, [load])
+
+  // Memoised on the route's case id alone (not on `context`, which is a fresh object on
+  // every refresh), so `AppointmentsPanel` - whose own effect loads once on mount - never
+  // sees a new `load` prop from a context refresh and never refetches because of one.
+  const loadAppointments = useCallback(
+    (from: Date, to: Date) => api.listCaseAppointments(caseId, from, to),
+    [caseId],
+  )
 
   const allowed = item?.allowed_decisions ?? []
   const required = item?.required_fields ?? []
@@ -211,6 +220,8 @@ export function ReviewCase() {
           </ul>
         )}
       </header>
+
+      <AppointmentsPanel key={caseId} audience="staff" load={loadAppointments} />
 
       {loadError && (
         <Alert variant="error" title="רענון ההקשר נכשל">

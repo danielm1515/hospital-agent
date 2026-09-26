@@ -71,9 +71,11 @@ methods: `GET`, `POST`, `DELETE`, `OPTIONS`. Allowed headers: `Authorization`,
 | POST | `/api/patient/requests/{case_id}/documents/file` | patient | Upload a PDF, forwarded to the document-service (sub-project 13) |
 | POST | `/api/patient/requests/{case_id}/reply` | patient | Answer a staff question (sub-project 15) |
 | POST | `/api/patient/requests/{case_id}/reply/file` | patient | Upload the PDF a staff member asked for (sub-project 15) |
+| GET | `/api/patient/appointments` | patient | My appointments (`?from=&to=`, sub-project 16) |
 | GET | `/api/staff/cases` | staff | All cases (`?state=`) |
 | GET | `/api/staff/cases/{case_id}` | staff | One case, in full |
 | GET | `/api/staff/cases/{case_id}/audit` | staff | The case's audit trace |
+| GET | `/api/staff/cases/{case_id}/appointments` | staff | The case's patient's appointments (`?from=&to=`, sub-project 16) |
 | GET | `/api/staff/reviews` | staff | The human-review queue |
 | GET | `/api/staff/cases/{case_id}/context` | staff | What the reviewer is shown |
 | POST | `/api/staff/cases/{case_id}/decision` | staff | Approve / resolve / reject |
@@ -908,3 +910,91 @@ Two more codes are sub-project 15's own:
 - `returned_by`: how the case last came back to `AwaitingHumanReview` - `"patient_reply"`
   (the patient answered), `"reply_timeout"` (the deadline passed, the SLA Worker returned
   it), or `null` (it came from elsewhere, e.g. it just escalated).
+
+## 9. The patient's appointments (sub-project 16)
+
+```
+GET /api/patient/appointments?from=&to=
+GET /api/staff/cases/{case_id}/appointments?from=&to=
+```
+
+Read live from the appointment-service on every call and never stored here
+(`docs/spec_corrections.md` row 89, beside row 79) - there is no cache, and a repeated
+request simply asks again. The patient route works on the token's own patient - a query
+`patient_id` is accepted but ignored, exactly like every other patient route (§18.3); the
+staff route works on the case's patient, resolved server-side, and needs a `clinical_staff`
+or `admin_staff` token. It is deliberately a separate route from `GET
+.../cases/{case_id}/context`: the appointment list is not part of what a decision is bound
+to, so reading it never changes `shown_context_ref`.
+
+**The window.** `from` is inclusive, `to` is exclusive; both are ISO 8601 and must carry a
+time zone offset (a value with no offset is rejected, not assumed to be UTC or local time;
+`Z` is accepted for UTC). Neither given: `from` is now, `to` is 30 days after it. One given:
+the other is 30 days from it (before `to`, or after `from`). Both bounds in the answer are
+the exact instants the read actually used - a default `from` fixed once for that request, not
+recomputed - converted to UTC regardless of what offset the query sent. A reversed window
+(`to` at or before `from`), one longer than 366 days, or one whose bound, or whose default
+30-day span computed from a bound near the very edge of the representable date range (year 1
+or 9999), cannot be represented at all, is `422 invalid_range`.
+
+A literal `+` in an offset (e.g. `+03:00`) must be percent-encoded as `%2B` in the query
+string: an unencoded `+` is decoded as a space by ordinary URL decoding, and the resulting
+value fails to parse - also `422 invalid_range`, not a silently wrong offset.
+
+**Check order.** The staff route resolves the case first (`404 case_not_found` before
+anything else). Both routes then check whether an appointment-service is configured at all
+(`404 appointments_not_enabled`) *before* parsing the window - an unconfigured server answers
+404 even for a query that would otherwise be `422`. Only once a client exists is the window
+itself validated (`422 invalid_range`); only once that holds is the appointment-service
+actually asked (`404 patient_not_found` / `503 appointments_unavailable`).
+
+`200`:
+
+```json
+{
+  "from": "2026-10-01T00:00:00Z",
+  "to": "2026-10-31T00:00:00Z",
+  "appointments": [
+    {
+      "appointment_id": "APT-8391",
+      "appointment_at": "2026-10-03T07:30:00Z",
+      "department": "Neurology",
+      "doctor_name": "Dr. Cohen",
+      "location": "Building B, Floor 2",
+      "status": "Scheduled",
+      "required_documents": ["CBC", "ECG"]
+    }
+  ],
+  "truncated": false
+}
+```
+
+`status` is `Scheduled` or `Cancelled`. `truncated` is `true` when the appointment-service's
+own answer was cut off at its cap (100 rows) rather than the full window's worth - the UI
+should say the list may be incomplete and suggest narrowing the range. `appointment_at` is
+always normalised to UTC before it goes out, exactly like the window bounds - whatever offset
+or zone the appointment-service itself answered with.
+
+- `401 not_authenticated` - as everywhere.
+- `403 patients_only` (the patient route, a staff token) / `403 staff_only` (the staff
+  route, a patient token).
+- `404 case_not_found` - the staff route, an unknown case; checked before everything below.
+- `404 appointments_not_enabled` - the server has no appointment-service configured
+  (`APPOINTMENT_SERVICE_URL` + `APPOINTMENT_API_KEY`); there is no mock for this route
+  (design decision: unlike `CheckAppointment`'s own gateway, sub-project 10). Checked before
+  the window, so a bad window on an unconfigured server is still this code, not `422`.
+- `422 invalid_range` - `from` or `to` does not parse as ISO 8601, either carries no time
+  zone offset, `to` is at or before `from`, the span is over 366 days, or a bound (or the
+  default span from one) does not fit in the representable date range. Neither bound is
+  echoed in the error.
+- `404 patient_not_found` - the appointment-service's registry does not know the patient.
+- `503 appointments_unavailable` - the appointment-service did not answer, answered
+  something other than its documented 200/404 shape, or answered any other status. The
+  application log records one line, `appointment list: <code> in <n> ms`, for every outcome
+  (success included), where `<code>` is `ok`, `patient_not_found`, one of the codes above
+  (`no_answer`, `status_<n>`, `invalid_response`), or `client_error` (the appointment-list
+  client's own defensive `ValueError` - a naive datetime, a malformed `patient_id`, or the
+  client itself misconfigured, e.g. an invalid API key header the transport rejects before a
+  request is even sent; the first two are not reachable through these routes, since they always
+  resolve a token- or case-bound `patient_id` and always build the window as aware datetimes,
+  so in practice `client_error` means an operator's configuration mistake) - never the patient_id and never an appointment (§12.3, design D9).

@@ -1056,6 +1056,15 @@ img {
    below is built from the same tokens and the same classes as the design's own
    pages, with logical properties only. */
 
+/* Sub-project 16 (design D10): the shared appointments panel sits above the
+   requests card on "הפניות שלי" - both are top-level `.card`s here, so they need
+   their own gap (the staff review screen already gets one from `.staff-page`). */
+.patient-home {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+}
+
 .page-head {
   display: flex;
   align-items: center;
@@ -2300,5 +2309,56 @@ img {
 .conversation-who {
   font-size: 12px;
   font-weight: 600;
+  color: var(--ink-500);
+}
+
+/* ==== Appointments panel (sub-project 16) ================================= */
+
+.appointments {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.appointments-filter {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--space-3);
+}
+
+.appointment-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.appointment-item {
+  padding: var(--space-4);
+  border-radius: var(--radius-md);
+  background: var(--surface-100);
+}
+
+.appointment-item.is-cancelled {
+  color: var(--ink-500);
+}
+
+.appointment-item.is-cancelled time {
+  text-decoration: line-through;
+}
+
+.appointment-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin: 0;
+  margin-block-start: var(--space-1);
+  padding: 0;
+  list-style: none;
+  font-size: 13px;
+  line-height: 20px;
   color: var(--ink-500);
 }
