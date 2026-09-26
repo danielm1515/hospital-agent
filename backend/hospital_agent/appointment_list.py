@@ -138,7 +138,7 @@ class AppointmentListClient:
         # from the token or the case, and always build start/end as aware datetimes.
         if start.tzinfo is None or end.tzinfo is None:
             raise ValueError("start and end must be timezone-aware")
-        if not _PATIENT_ID_RE.match(patient_id):
+        if not _PATIENT_ID_RE.fullmatch(patient_id):
             raise ValueError("invalid patient_id")
         query = urllib.parse.urlencode({"from": start.isoformat(), "to": end.isoformat()})
         url = f"{self._base_url}/api/v1/patients/{urllib.parse.quote(patient_id, safe='')}/appointments?{query}"

@@ -155,7 +155,7 @@ def test_list_rejects_naive_datetimes():
 
 def test_list_rejects_a_malformed_patient_id():
     client = AppointmentListClient("http://svc:8080", "k", transport=lambda *a: None)
-    for bad_id in ("P 1/x", "..", "", "-leading-dash", "x" * 65):
+    for bad_id in ("P 1/x", "..", "", "-leading-dash", "x" * 65, "P-1\n"):
         with pytest.raises(ValueError):
             client.list(bad_id, datetime(2026, 9, 26, tzinfo=UTC), datetime(2026, 10, 26, tzinfo=UTC))
 
