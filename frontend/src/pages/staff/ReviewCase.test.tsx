@@ -344,6 +344,33 @@ describe('ReviewCase', () => {
     expect(api.getContext).toHaveBeenCalledTimes(2)
   })
 
+  it('keeps the decision form mounted while a successful refresh is still pending (fix round 3)', async () => {
+    vi.mocked(api.decide).mockRejectedValue(new api.ApiError(409, 'context_changed'))
+    renderCase()
+
+    await userEvent.type(await screen.findByLabelText(/סיבת ההכרעה/), 'סגירה.')
+    await userEvent.click(screen.getByRole('button', { name: 'סגירת הפנייה' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent('ההקשר השתנה')
+
+    let resolveContext: (value: ReviewContext) => void = () => {}
+    vi.mocked(api.getContext).mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveContext = resolve
+      }),
+    )
+    await userEvent.click(screen.getByRole('button', { name: 'רענון הקשר' }))
+
+    // The refresh has not resolved yet - the form (and its buttons) must stay mounted, not
+    // be replaced by a loader.
+    expect(screen.getByRole('button', { name: 'סגירת הפנייה' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'דחייה' })).toBeInTheDocument()
+    expect(screen.getByLabelText(/סיבת ההכרעה/)).toBeInTheDocument()
+    expect(screen.queryByText('טוען…')).not.toBeInTheDocument()
+
+    resolveContext(context())
+    await waitFor(() => expect(screen.queryByText('ההקשר השתנה')).not.toBeInTheDocument())
+  })
+
   it('keeps the decision form and the refresh button usable when the refresh itself fails (I1, fix round 2)', async () => {
     vi.mocked(api.decide).mockRejectedValue(new api.ApiError(409, 'context_changed'))
     renderCase()
@@ -437,6 +464,16 @@ describe('ReviewCase', () => {
 
     expect(await screen.findByText('הפנייה אינה ממתינה להכרעה')).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'סגירת הפנייה' })).not.toBeInTheDocument()
+  })
+
+  it('shows a first-load error, not "not awaiting a decision" or a refresh title, when getReviewItem itself fails (fix round 3)', async () => {
+    vi.mocked(api.getReviewItem).mockRejectedValue(new api.ApiError(500, 'boom'))
+    renderCase()
+
+    expect(await screen.findByText('טעינת הפנייה נכשלה')).toBeInTheDocument()
+    expect(screen.getByText('boom')).toBeInTheDocument()
+    expect(screen.queryByText('הפנייה אינה ממתינה להכרעה')).not.toBeInTheDocument()
+    expect(screen.queryByText('רענון ההקשר נכשל')).not.toBeInTheDocument()
   })
 
   it('shows the patient-request panel and no approve button when human_engaged, even on a resumable kind', async () => {

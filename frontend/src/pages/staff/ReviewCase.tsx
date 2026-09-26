@@ -48,6 +48,10 @@ export function ReviewCase() {
   // waits here" - both leave `item` at its initial `null`. Without this, the decision panel
   // briefly showed "not awaiting a decision" while `getReviewItem` was still in flight.
   const [itemLoaded, setItemLoaded] = useState(false)
+  // Fix round 3: kept separate from `loadError` (which is `getContext`'s alone) so a
+  // `getReviewItem` failure never renders under the "רענון ההקשר נכשל" title - that title
+  // is specifically about the context, and a first load never refreshed anything yet.
+  const [itemError, setItemError] = useState<string | null>(null)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [templates, setTemplates] = useState<MessageTemplate[]>([])
 
@@ -88,10 +92,16 @@ export function ReviewCase() {
       // instead of fetching the whole queue just to find this case's row).
       try {
         setItem(await api.getReviewItem(caseId))
+        setItemError(null)
       } catch (caught) {
-        if (caught instanceof api.ApiError && caught.status === 404) setItem(null)
-        else {
-          setLoadError(detailOf(caught))
+        if (caught instanceof api.ApiError && caught.status === 404) {
+          setItem(null)
+          setItemError(null)
+        } else {
+          // Fix round 3: `itemError`, not `loadError` - this is `getReviewItem`'s own
+          // failure, so it must never render under the context-refresh title, and it
+          // must not be confused with a confirmed 404 (no decision here, a fine outcome).
+          setItemError(detailOf(caught))
           ok = false
         }
       }
@@ -342,6 +352,13 @@ export function ReviewCase() {
           )}
           {!itemLoaded ? (
             <Loading size="inline" />
+          ) : itemError && item === null ? (
+            // Fix round 3: the item fetch itself failed and there is no reliable value to
+            // fall back on (never a confirmed 404) - "not awaiting a decision" would be a
+            // guess dressed as a fact, and a first load never refreshed anything to blame.
+            <Alert variant="error" title="טעינת הפנייה נכשלה">
+              <span className="mono">{itemError}</span>
+            </Alert>
           ) : allowed.length === 0 ? (
             <Alert variant="info" title="הפנייה אינה ממתינה להכרעה">
               המסך מציג את ההקשר בלבד. פניות להכרעה מופיעות בתור ההסלמות.

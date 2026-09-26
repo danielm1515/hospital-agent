@@ -255,6 +255,33 @@ describe('ReviewQueue', () => {
     expect(screen.getByText('X')).toBeInTheDocument()
   })
 
+  it('does not steal focus from elsewhere when the notice auto-dismisses (fix round 3)', async () => {
+    vi.useFakeTimers()
+    vi.mocked(api.listReviews).mockResolvedValue(page([]))
+    render(
+      <MemoryRouter initialEntries={[{ pathname: '/staff', state: { notice: 'X', title: 'ההכרעה נשמרה' } }]}>
+        <Routes>
+          <Route
+            path="/staff"
+            element={
+              <>
+                <button type="button">outside</button>
+                <ReviewQueue />
+              </>
+            }
+          />
+        </Routes>
+      </MemoryRouter>,
+    )
+    const outside = screen.getByRole('button', { name: 'outside' })
+    act(() => outside.focus())
+
+    await act(() => vi.advanceTimersByTimeAsync(NOTICE_DISMISS_MS))
+
+    expect(screen.queryByText('X')).not.toBeInTheDocument()
+    expect(outside).toHaveFocus()
+  })
+
   it('pins the pause instead of restarting the 8 s countdown (N2)', async () => {
     vi.useFakeTimers()
     vi.mocked(api.listReviews).mockResolvedValue(page([]))
