@@ -252,13 +252,16 @@ def test_instructions_splits_only_on_the_first_newline(sm, app_engine):
 
 
 def test_instructions_shows_the_latest_present_entry_over_an_earlier_one(session, sm, app_engine, orchestrator):
-    """Review m5: LoadInstructions can run more than once for one case (e.g. a re-plan after
-    the patient uploads a document) - the LATEST entry wins, never the first."""
+    """Review m5: the fixed plan loads instructions once (the upload below goes straight back to
+    AssessingReadiness, no re-plan), but nothing in the Data Log limits a case to one
+    `instructions` entry - so a second one is recorded by hand here, and the LATEST entry wins,
+    never the first."""
     case_id = session.submit_request(PATIENT, REQUEST, identity_verified=True)
     assert orchestrator.run_case(case_id) is State.AWAITING_PATIENT_INPUT
     session.upload_document(PATIENT, case_id, "blood_test", "Blood test results: normal.")
     assert orchestrator.run_case(case_id) is State.COMPLETED
     with app_engine.begin() as conn:
+        assert len(data_log.entries(conn, case_id, data_log.DataKind.INSTRUCTIONS)) == 1  # loaded once
         data_log.record(conn, case_id, PATIENT, data_log.DataKind.INSTRUCTIONS,
                         "A newer title\nA newer text", sm.clock())
     view = session.patient_view(case_id)

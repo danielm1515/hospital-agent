@@ -227,10 +227,11 @@ else shown here.
     `HighRisk`/`CriticalRisk` is never shown, even when a human overrode a `PolicyReview`
     escalation to let the case proceed regardless;
   - the case's **latest** Data Log `instructions` entry (§12.3) is present (not tombstoned) -
-    `LoadInstructions` can run more than once for one case (e.g. a re-plan after the patient
-    uploads a document), so this is always the latest entry by recency; if that latest entry
-    was deleted, the result is `null`, and this never falls back to an older, still-present
-    entry.
+    the fixed plan loads instructions once (after the patient's upload, golden scenario 1 goes
+    straight back to `AssessingReadiness` with no re-plan), but nothing in the Data Log limits
+    a case to one such entry, so this is always the latest entry by recency; if that latest
+    entry was deleted, the result is `null`, and this never falls back to an older,
+    still-present entry.
   Exactly what was approved and shown, split into its title and body on the first newline.
   `null` whenever any of the above fails to hold, in particular for every status but
   `completed`.
@@ -240,9 +241,17 @@ else shown here.
   it - the text box, sent to `POST .../documents`. It is the same for every case of a running
   server, and present in every state.
 
-**Polling.** The case advances in the background, so after a submit or an upload the UI
-polls `GET /api/patient/requests/{case_id}` (every ~2 s is plenty) until `status` stops
-being `in_progress`.
+**Polling.** The case advances in the background, so the request screen polls
+`GET /api/patient/requests/{case_id}` (sub-project 18, the owner's request of 2026-09-26):
+
+- every 5 s while the case is moving (`received`, `in_progress`), with no time limit;
+- in every other non-final status (`needs_document`, `in_review`, `needs_reply`), every 5 s for
+  a 60 s window, which restarts on a status change, on a patient action (an upload or a reply)
+  and when the tab becomes visible again; after the window the screen shows when it was last
+  updated and a "רענון" button, which reads the case and restarts the window;
+- never in `completed` or `closed`.
+
+"הפניות שלי" (the request list) keeps its own 3 s refresh while a case is moving.
 
 ### POST /api/patient/requests
 
@@ -493,9 +502,13 @@ the counters the list above does not carry. `200`:
 `instruction_source_id` and `instruction_version` (sub-project 18, design D13) are read-only
 staff fields: the appointment the patient chose (if any) and the one the appointment-service
 actually resolved, its department and exam type, and the instruction source the policy
-approved for this case. Fix round 1 (M6): `appointment_id`, `answered_appointment_id`,
-`department` and `exam_type_label` are `null` on the mock path (`MockGateway` never sets them)
-and on a case that never resolved an appointment - but `instruction_source_id` and
+approved for this case. `appointment_id` is write-once: stored from the request at
+`REQUEST_SUBMITTED` and never changed afterwards (the service's own answer goes to
+`answered_appointment_id`, `docs/spec_corrections.md` row 92), so it is `null` exactly when
+the patient chose no appointment - on the mock path too. Fix round 1 (M6):
+`answered_appointment_id`, `department` and `exam_type_label` are `null` on the mock path
+(`MockGateway` never sets them) and on a case that never resolved an appointment - but
+`instruction_source_id` and
 `instruction_version` are **not**: even the mock path stores a source
 (`INSTR-PREP-COLONOSCOPY`/`3`, design D7), since every `LoadInstructions` needs one. Never
 shown to the patient.
@@ -1181,8 +1194,8 @@ GET /api/staff/instructions/{source_id}?version=
 
 The full text behind one appointment's `instruction` summary above (title only there). Read
 live from the appointment-service on every call, never cached and never stored - the same
-recorded exception as the appointment list itself (`docs/spec_corrections.md` row 89, extended
-by this row to cover this read too). The patient route answers for any `source_id`/`version`
+recorded exception as the appointment list itself (`docs/spec_corrections.md` row 89, which
+sub-project 18 extends to cover this read too). The patient route answers for any `source_id`/`version`
 the registry currently approves, not only ones on the patient's own appointments: the
 instruction texts are generic catalog content (one per exam type, not per patient) with nothing
 patient-specific in them, so the route needs no ownership check. The staff route is identical
@@ -1199,8 +1212,9 @@ appointment-service is configured at all (`404 instructions_not_enabled`) is che
 the id/version pattern - an unconfigured server answers 404 regardless of what the path or
 query looks like. Only once a client exists are `source_id`/`version` validated
 (`422 invalid_instruction`); only once that holds is the Approved Source Registry consulted
-(`404 instruction_not_approved`); only once the registry approves is the appointment-service
-actually asked (`503 instructions_unavailable`).
+(`404 instruction_not_approved`, or `503 instructions_unavailable` when OPA itself cannot be
+asked); only once the registry approves is the appointment-service actually asked
+(`503 instructions_unavailable`).
 
 **The registry, never the service, approves.** The requested `source_id`/`version` is put to
 the real OPA binary - the same `policy.rego` rule (`instruction_source_approved`) the Policy
@@ -1209,8 +1223,11 @@ Service's own `decision` reads, over the same policy bundle
 its time parsing, and never trusting the appointment-service's own answer. OPA approves only
 when `source_id` is listed with `approved: true`, the exact same `version`, and the current
 time (OPA's own clock) inside `[valid_from, valid_until)`. Anything else - unlisted, the wrong
-version, not yet valid, expired, or OPA itself unavailable - is `404 instruction_not_approved`,
-and the appointment-service is never called for it.
+version, not yet valid, or expired - is `404 instruction_not_approved`, and the
+appointment-service is never called for it. When OPA itself cannot be asked (the binary
+missing, a crash or non-zero exit, a timeout, or output that is not `opa eval`'s own shape),
+that is not a verdict on the source: the answer is `503 instructions_unavailable` instead, and
+it is exactly as closed - nothing is approved and the appointment-service is never called.
 
 `200`:
 
@@ -1236,8 +1253,11 @@ The answer is exactly the requested `source_id` + `version`, with a non-empty `t
   `version` is missing.
 - `404 instruction_not_approved` - the Approved Source Registry does not currently approve this
   exact `source_id` + `version` (unlisted, a different version, not yet valid, or expired). The
-  appointment-service is never asked in this case.
-- `503 instructions_unavailable` - the appointment-service did not answer, answered something
+  appointment-service is never asked in this case. Only OPA's own answer is a deny; OPA being
+  unavailable is the `503` below, never this.
+- `503 instructions_unavailable` - OPA itself could not be asked (the binary missing, a crash or
+  non-zero exit, a timeout, or unreadable output; the appointment-service is then never asked),
+  or the appointment-service did not answer, answered something
   other than its documented 200 shape, answered for a different source or version than asked,
   itself answered `404 instruction_not_found` (the registry and the service disagree - never
   delivered as though approved), or the client itself was misconfigured (e.g. an invalid API
@@ -1246,6 +1266,7 @@ The answer is exactly the requested `source_id` + `version`, with a non-empty `t
   for every *service-call* outcome (success included) - never for the checks above it
   (not-configured, a bad id/version, or the registry's own denial, which are a fixed verdict on
   the request itself, not a call to the appointment-service) - where `<code>` is `ok`,
-  `not_found`, one of the client's own codes (`no_answer`, `status_<n>`, `invalid_response`), or
-  `client_error` (the client's defensive `ValueError`) - never the source_id, the title or the
-  text (§12.3).
+  `not_found`, one of the client's own codes (`no_answer`, `status_<n>`, `invalid_response`),
+  `client_error` (the client's defensive `ValueError`), or `policy_unavailable` (OPA itself
+  could not be asked, so the appointment-service was not either) - never the source_id, the
+  title or the text (§12.3).

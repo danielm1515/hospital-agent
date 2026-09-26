@@ -552,9 +552,10 @@ class SessionService:
     @staticmethod
     def _instructions(conn, case_id: str) -> PatientInstructions | None:
         """Sub-project 18 (design D11): the case's own Data Log `instructions` entry - exactly
-        what was approved and shown (§12.3). `LoadInstructions` can run more than once for one
-        case (e.g. a re-plan after the patient uploads a document), so this is the LATEST entry
-        by recency. Fix round 1 (I1/I2, gate d): if that latest entry is tombstoned, this is
+        what was approved and shown (§12.3). The fixed plan loads instructions once (after the
+        patient's upload, golden scenario 1 goes straight back to AssessingReadiness with no
+        re-plan), but nothing in the Data Log limits a case to one such entry, so this is the
+        LATEST entry by recency. Fix round 1 (I1/I2, gate d): if that latest entry is tombstoned, this is
         `None` - it never falls back to an earlier, still-present entry, since a deletion must
         hide the instructions text, not merely revert to a stale copy of it. `None` too when
         there is no entry at all.
