@@ -183,15 +183,17 @@ const MIME_KIND: Record<string, 'pdf' | 'jpeg' | 'png'> = {
 /**
  * A file whose extension says PDF, JPEG or PNG, and whose type (when the browser reports one)
  * agrees with that same kind - a photo taken on a phone often has no reported type at all, so
- * an empty one is accepted by extension alone, exactly like the previous PDF-only check did.
+ * an empty one is accepted by extension alone, exactly like the previous PDF-only check did. A
+ * file with no extension this client recognises is judged by its reported type alone. Either
+ * way the document-service sniffs the bytes and refuses anything else.
  */
 export function isAcceptedDocumentFile(file: File): boolean {
   const extension = file.name.split('.').pop()?.toLowerCase() ?? ''
-  const kind = EXTENSION_KIND[extension]
+  const kind = Object.hasOwn(EXTENSION_KIND, extension) ? EXTENSION_KIND[extension] : undefined
   if (!kind) {
     // No extension this client recognises (or none at all, e.g. a camera app's own naming):
     // fall back to the reported MIME type alone, when the browser gave one.
-    return file.type in MIME_KIND
+    return Object.hasOwn(MIME_KIND, file.type)
   }
   if (file.type === '') return true
   return MIME_KIND[file.type] === kind

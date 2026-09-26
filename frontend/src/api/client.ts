@@ -212,7 +212,7 @@ export function uploadDocument(caseId: string, body: UploadDocumentBody): Promis
 }
 
 /**
- * Sub-project 13 (`docs/api.md` §4): uploads a PDF as `multipart/form-data`, one part
+ * Sub-project 13 (`docs/api.md` §4): uploads a document (PDF, JPEG or PNG) as `multipart/form-data`, one part
  * named `file` carrying the filename. Offered only when `document_upload === 'file'`.
  */
 export function uploadDocumentFile(caseId: string, file: File): Promise<PdfUploadResponse> {

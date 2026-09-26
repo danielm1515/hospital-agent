@@ -115,7 +115,7 @@ export interface PatientView {
   history: StatusChange[]
   /**
    * Which upload the `needs_document` screen offers (sub-project 13, `docs/api.md` §4):
-   * `'file'` for a PDF picker sent to `POST .../documents/file` when the server is
+   * `'file'` for a document picker (PDF, JPEG or PNG) sent to `POST .../documents/file` when the server is
    * configured with the document-service, `'text'` for the text form sent to
    * `POST .../documents` otherwise. The same for every case of a running server.
    */
