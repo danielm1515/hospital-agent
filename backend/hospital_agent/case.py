@@ -56,9 +56,13 @@ class CaseRecord:
     human_engaged: bool = False
     reply_kind: str | None = None  # "question" | "document" while AwaitingPatientReply
     requested_document: str | None = None  # the catalog type a document request asks for
-    # Sub-project 18 (design D5/D6): the patient-chosen appointment (set once, when the case is
-    # opened) and the facts CheckAppointment's answer carries about it (RECORD_RETRIEVAL).
+    # Sub-project 18 (design D5/D6): the patient-chosen appointment - write-once, set only by
+    # REQUEST_SUBMITTED's creation insert, never touched by RECORD_RETRIEVAL again (fix round 1,
+    # I2). answered_appointment_id is the service's own echo of the appointment it resolved -
+    # deliberately a separate column: the two must never be conflated, since the request always
+    # sends appointment_id back, never answered_appointment_id.
     appointment_id: str | None = None
+    answered_appointment_id: str | None = None
     department: str | None = None
     exam_type_label: str | None = None
     instruction_source_id: str | None = None

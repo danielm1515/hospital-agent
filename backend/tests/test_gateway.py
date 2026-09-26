@@ -70,7 +70,7 @@ def test_the_mock_carries_the_demo_colonoscopy_instruction_source():
 
 def test_each_system_supplies_only_its_own_facts():
     """Design §5.1: the appointment system owns the requirements, the document system what is held."""
-    assert RESULT_FIELDS["CheckAppointment"] == ("appointment_at", "required_documents", "appointment_id",
+    assert RESULT_FIELDS["CheckAppointment"] == ("appointment_at", "required_documents", "answered_appointment_id",
                                                   "department", "exam_type_label", "instruction_source_id",
                                                   "instruction_version", "upcoming_count")
     assert RESULT_FIELDS["CheckDocuments"] == ("held_documents",)

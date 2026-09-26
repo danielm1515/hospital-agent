@@ -14,6 +14,7 @@ from __future__ import annotations
 import http.client as http_client
 import json
 import os
+import re
 import urllib.parse
 from collections.abc import Callable, Mapping
 from datetime import UTC, datetime
@@ -26,6 +27,13 @@ from .http import HttpResponse, MAX_BODY_BYTES, no_answer_result
 
 TIMEOUT_SECONDS = 5
 _TRANSIENT = {500: "unavailable", 502: "unavailable", 503: "unavailable", 504: "timeout"}
+
+# Fix round 1 (M2): the same id shape POST /api/patient/requests validates appointment_id
+# against (api/schemas.py's NewRequest) - the service's own appointment_id, instruction
+# source_id and version must all be this shape too, fail closed otherwise.
+ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
+MAX_LABEL_LENGTH = 200  # department, exam_type_label (M2)
+MAX_UPCOMING_COUNT = 2**31 - 1  # M1: a signed 32-bit bound, and never negative
 
 # (url, headers, timeout) -> the response; raises OSError when there is no answer at all.
 Transport = Callable[[str, Mapping[str, str], float], HttpResponse]
@@ -57,16 +65,47 @@ def _optional_str(value: Any) -> tuple[bool, str | None]:
     return False, None
 
 
-def _optional_int(value: Any) -> tuple[bool, int | None]:
+def _optional_id(value: Any) -> tuple[bool, str | None]:
+    """M2: appointment_id, instruction source_id and version must be the same id shape the
+    patient's own appointment_id is validated against (api/schemas.py's NewRequest)."""
+    ok, s = _optional_str(value)
+    if not ok:
+        return False, None
+    if s is not None and not ID_PATTERN.fullmatch(s):
+        return False, None
+    return True, s
+
+
+def _optional_label(value: Any) -> tuple[bool, str | None]:
+    """M2: department and exam_type_label are free text, capped at MAX_LABEL_LENGTH."""
+    ok, s = _optional_str(value)
+    if not ok:
+        return False, None
+    if s is not None and len(s) > MAX_LABEL_LENGTH:
+        return False, None
+    return True, s
+
+
+def _optional_bounded_count(value: Any) -> tuple[bool, int | None]:
+    """M1: upcoming_count must be a plain int (never a bool), 0..MAX_UPCOMING_COUNT."""
     if value is None:
         return True, None
-    if isinstance(value, int) and not isinstance(value, bool):
+    if isinstance(value, int) and not isinstance(value, bool) and 0 <= value <= MAX_UPCOMING_COUNT:
         return True, value
     return False, None
 
 
-def map_response(response: HttpResponse, *, now: datetime) -> ToolResult:
-    """design §2.6, row by row."""
+def map_response(response: HttpResponse, *, now: datetime, requested_patient_id: str,
+                 requested_appointment_id: str | None = None) -> ToolResult:
+    """design §2.6, row by row.
+
+    Fix round 1 (I1): the caller's own request is now part of what is checked, not just the
+    answer's shape - `requested_patient_id` is who CheckAppointment asked about (closing a
+    pre-existing gap: the answer's own `patient_id`, when present, must equal it, or the
+    service is describing someone else's appointment), and `requested_appointment_id` is the
+    id the patient chose, when any (D5) - when set, the answer's `appointment_id` must be
+    present and equal to it, never merely absent or a different one.
+    """
     if response.status in _TRANSIENT:
         return ToolResult(TRANSIENT_FAILURE, {"error": _TRANSIENT[response.status]})
     if response.status in (401, 403):
@@ -98,13 +137,25 @@ def map_response(response: HttpResponse, *, now: datetime) -> ToolResult:
     required = _required_documents(appointment.get("required_documents"))
     if required is None:
         return _error("invalid_response")
-    # Sub-project 18 (design §2, D3/D6): every field below is optional (an older service simply
-    # omits it - absent means None, never a substitute value) - but a *present* field with an
-    # invalid shape is invalid_response, fail closed.
-    ok, appointment_id = _optional_str(appointment.get("appointment_id"))
+    # I1: the answer's own patient_id, when present, must name the patient that was asked
+    # about - never silently trusted as someone else's appointment.
+    ok, answered_patient_id = _optional_str(appointment.get("patient_id"))
     if not ok:
         return _error("invalid_response")
-    ok, department = _optional_str(appointment.get("department"))
+    if answered_patient_id is not None and answered_patient_id != requested_patient_id:
+        return _error("invalid_response")
+    # Sub-project 18 (design §2, D3/D6): every field below is optional (an older service simply
+    # omits it - absent means None, never a substitute value) - but a *present* field with an
+    # invalid shape is invalid_response, fail closed. M2: id-shaped fields and free-text labels
+    # each have their own cap.
+    ok, answered_appointment_id = _optional_id(appointment.get("appointment_id"))
+    if not ok:
+        return _error("invalid_response")
+    # I1: a chosen appointment_id must come back exactly as answered_appointment_id - never
+    # merely absent (an older/wrong service echoing nothing) and never a different one.
+    if requested_appointment_id is not None and answered_appointment_id != requested_appointment_id:
+        return _error("invalid_response")
+    ok, department = _optional_label(appointment.get("department"))
     if not ok:
         return _error("invalid_response")
     exam_type_label = None
@@ -112,7 +163,7 @@ def map_response(response: HttpResponse, *, now: datetime) -> ToolResult:
     if exam_type is not None:
         if not isinstance(exam_type, dict):
             return _error("invalid_response")
-        ok, exam_type_label = _optional_str(exam_type.get("label"))
+        ok, exam_type_label = _optional_label(exam_type.get("label"))
         if not ok or exam_type_label is None:
             return _error("invalid_response")
     instruction_source_id = instruction_version = None
@@ -120,18 +171,18 @@ def map_response(response: HttpResponse, *, now: datetime) -> ToolResult:
     if instruction is not None:
         if not isinstance(instruction, dict):
             return _error("invalid_response")
-        ok, instruction_source_id = _optional_str(instruction.get("source_id"))
+        ok, instruction_source_id = _optional_id(instruction.get("source_id"))
         if not ok or instruction_source_id is None:
             return _error("invalid_response")
-        ok, instruction_version = _optional_str(instruction.get("version"))
+        ok, instruction_version = _optional_id(instruction.get("version"))
         if not ok or instruction_version is None:
             return _error("invalid_response")
-    ok, upcoming_count = _optional_int(body.get("upcoming_count"))
+    ok, upcoming_count = _optional_bounded_count(body.get("upcoming_count"))
     if not ok:
         return _error("invalid_response")
     data: dict[str, Any] = {"appointment_at": at, "required_documents": required}
-    if appointment_id is not None:
-        data["appointment_id"] = appointment_id
+    if answered_appointment_id is not None:
+        data["answered_appointment_id"] = answered_appointment_id
     if department is not None:
         data["department"] = department
     if exam_type_label is not None:
@@ -182,8 +233,9 @@ class AppointmentServiceGateway:
             return _error("invalid_request")
         url = f"{self._base_url}/api/v1/patients/{urllib.parse.quote(patient_id, safe='')}/appointment"
         appointment_id = parameters.get("appointment_id")
-        if isinstance(appointment_id, str) and appointment_id:
-            url += f"?appointment_id={urllib.parse.quote(appointment_id, safe='')}"
+        requested_appointment_id = appointment_id if isinstance(appointment_id, str) and appointment_id else None
+        if requested_appointment_id is not None:
+            url += f"?appointment_id={urllib.parse.quote(requested_appointment_id, safe='')}"
         headers = {"X-API-Key": self._api_key, "X-Execution-ID": idempotency_key, "Accept": "application/json"}
         try:
             answer = self._transport(url, headers, self._timeout)
@@ -192,7 +244,8 @@ class AppointmentServiceGateway:
             # answer, just not in HTTP the gateway can trust (IncompleteRead, BadStatusLine, ...) -
             # not the same as no answer at all, so not a transient_failure.
             return no_answer_result(exc)
-        return map_response(answer, now=self._clock())
+        return map_response(answer, now=self._clock(), requested_patient_id=patient_id,
+                            requested_appointment_id=requested_appointment_id)
 
 
 def build_gateway(env: Mapping[str, str] | None = None,

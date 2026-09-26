@@ -336,13 +336,32 @@ def _valid_string_list(value: object) -> bool:
     return isinstance(value, list) and all(isinstance(item, str) and item.strip() != "" for item in value)
 
 
+# Sub-project 18 fix round 1 (M3): a defence-in-depth cap on CheckAppointment's own new facts,
+# in case something other than the validated appointment_service gateway (execution/
+# appointment_service.py's own id pattern / MAX_LABEL_LENGTH / MAX_UPCOMING_COUNT, which this
+# deliberately mirrors rather than imports - guards.py stays a core module, never depending on
+# the execution layer) ever reaches DATA_RETRIEVED with these keys.
+_ID_FIELD_MAX_LENGTH = 64
+_LABEL_FIELD_MAX_LENGTH = 200
+_TOOL_RESULT_STRING_CAPS = {
+    "answered_appointment_id": _ID_FIELD_MAX_LENGTH,
+    "instruction_source_id": _ID_FIELD_MAX_LENGTH,
+    "instruction_version": _ID_FIELD_MAX_LENGTH,
+    "department": _LABEL_FIELD_MAX_LENGTH,
+    "exam_type_label": _LABEL_FIELD_MAX_LENGTH,
+}
+_MAX_UPCOMING_COUNT = 2**31 - 1
+
+
 def valid_tool_result(ctx: GuardContext) -> str | None:
     """F3(c): required_documents / held_documents, when present, must be lists of non-empty strings.
 
     Otherwise a string payload silently becomes a list of characters in apply_effects().
     appointment_at (Execution design §5), when present, must be a timezone-aware datetime.
     safety_level (LLM design §5: the Safety Classifier's re-check of retrieved content), when
-    present, must be one of the four SafetyLevel values.
+    present, must be one of the four SafetyLevel values. Sub-project 18 fix round 1 (M3):
+    CheckAppointment's own new facts, when present, must be non-empty strings within their
+    cap, or (upcoming_count) a non-negative, bounded plain int (never a bool).
     """
     payload = ctx.payload
     for key in ("required_documents", "held_documents"):
@@ -354,6 +373,15 @@ def valid_tool_result(ctx: GuardContext) -> str | None:
             return "invalid_tool_result"
     if "safety_level" in payload and payload["safety_level"] not in {s.value for s in SafetyLevel}:
         return "invalid_tool_result"
+    for key, cap in _TOOL_RESULT_STRING_CAPS.items():
+        if key in payload:
+            value = payload[key]
+            if not (isinstance(value, str) and value.strip() != "" and len(value) <= cap):
+                return "invalid_tool_result"
+    if "upcoming_count" in payload:
+        count = payload["upcoming_count"]
+        if not (isinstance(count, int) and not isinstance(count, bool) and 0 <= count <= _MAX_UPCOMING_COUNT):
+            return "invalid_tool_result"
     return None
 
 

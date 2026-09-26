@@ -139,22 +139,38 @@ def test_effects_record_the_new_appointment_facts_only_when_present():
     """Sub-project 18 (D6): each of CheckAppointment's new facts is stored on RECORD_RETRIEVAL
     only when the payload actually carries it, and a later retrieval that omits them (an older
     service, or the mock's other steps) leaves what is already stored untouched - exactly like
-    appointment_at/required_documents."""
+    appointment_at/required_documents. answered_appointment_id (fix round 1, I2) is the
+    service's own echo of the appointment it resolved - a separate column from appointment_id,
+    which RECORD_RETRIEVAL never touches (see test_a_chosen_appointment_id_survives_data_retrieved)."""
     retrieving = replace(new_case("CASE-1", "P-1", NOW), state=State.RETRIEVING_DATA,
                          ordered_steps=PLAN, current_step=1)
     row = _row(State.RETRIEVING_DATA, Event.DATA_RETRIEVED, State.PLANNING)
-    payload = {"appointment_at": NOW, "required_documents": [], "appointment_id": "APT-8391",
+    payload = {"appointment_at": NOW, "required_documents": [], "answered_appointment_id": "APT-8391",
               "department": "Cardiology", "exam_type_label": "מבחן מאמץ",
               "instruction_source_id": "INSTR-CARD-STRESS", "instruction_version": "1", "upcoming_count": 2}
     after = apply_effects(retrieving, row, ctx(retrieving, Event.DATA_RETRIEVED, payload))
-    assert after.appointment_id == "APT-8391"
+    assert after.answered_appointment_id == "APT-8391"
     assert after.department == "Cardiology"
     assert after.exam_type_label == "מבחן מאמץ"
     assert (after.instruction_source_id, after.instruction_version) == ("INSTR-CARD-STRESS", "1")
     assert after.upcoming_count == 2
 
     again = apply_effects(after, row, ctx(after, Event.DATA_RETRIEVED, {"instruction_ids": ["x:1"]}))
-    assert again.appointment_id == "APT-8391" and again.upcoming_count == 2
+    assert again.answered_appointment_id == "APT-8391" and again.upcoming_count == 2
+
+
+def test_a_chosen_appointment_id_survives_data_retrieved():
+    """Fix round 1 (I2): appointment_id is write-once from REQUEST_SUBMITTED - RECORD_RETRIEVAL
+    must never overwrite it, even when the service's own answered_appointment_id differs (a
+    round-trip mismatch is refused earlier, by map_response's I1 check; this only proves the
+    FSM effect itself is incapable of touching the column at all)."""
+    retrieving = replace(new_case("CASE-1", "P-1", NOW, appointment_id="APT-8391"),
+                         state=State.RETRIEVING_DATA, ordered_steps=PLAN, current_step=1)
+    row = _row(State.RETRIEVING_DATA, Event.DATA_RETRIEVED, State.PLANNING)
+    payload = {"appointment_at": NOW, "required_documents": [], "answered_appointment_id": "SERVICE-ANSWERED"}
+    after = apply_effects(retrieving, row, ctx(retrieving, Event.DATA_RETRIEVED, payload))
+    assert after.appointment_id == "APT-8391"
+    assert after.answered_appointment_id == "SERVICE-ANSWERED"
 
 
 def test_valid_upload_is_held_once():

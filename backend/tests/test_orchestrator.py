@@ -474,3 +474,28 @@ def test_check_appointment_sends_only_patient_id_without_a_chosen_appointment(ru
     assert patient.case.appointment_id is None
     check = next(call for call in gateway.calls if call[0] == "CheckAppointment")
     assert check[1] == {"patient_id": patient.patient_id}
+
+
+@pytest.mark.parametrize("appointment_id", ["APT-8391", None])
+def test_policy_patient_fields_match_what_the_gateway_actually_received(run, appointment_id):
+    """M4: the OPA input's declared patient_fields for CheckAppointment must be exactly the
+    keys the Tool Executor's own parameters carry - neither more (an unminimized leak the
+    policy never actually checked) nor less (a field sent to the real system without ever
+    being declared to the policy) - whether or not the patient chose an appointment."""
+    gateway = MockGateway()
+    patient, agent = run(gateway=gateway)
+    captured: list[tuple[str, ...]] = []
+    original_apply = agent.policy.apply
+
+    def spy(sm, case_id, request):
+        if request.proposed_action.action == "CheckAppointment":
+            captured.append(request.proposed_action.patient_fields)
+        return original_apply(sm, case_id, request)
+
+    agent.policy.apply = spy
+    patient.submit(appointment_id=appointment_id)
+    patient.validate()
+    agent.run_case(patient.case_id)
+    check = next(call for call in gateway.calls if call[0] == "CheckAppointment")
+    assert len(captured) == 1
+    assert set(captured[0]) == set(check[1])

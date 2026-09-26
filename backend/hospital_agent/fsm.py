@@ -301,8 +301,11 @@ def apply_effects(case: CaseRecord, row: Transition, ctx: GuardContext) -> CaseR
                 # Sub-project 18 (D6): CheckAppointment's own facts about the appointment it
                 # read, each stored only when the answer actually carried it (older services,
                 # or the mock, omit some of these - absent means "leave unchanged", never None).
-                if "appointment_id" in p:
-                    changes["appointment_id"] = p["appointment_id"]
+                # appointment_id itself is NEVER written here (fix round 1, I2): it is the
+                # patient's write-once choice from REQUEST_SUBMITTED, and RECORD_RETRIEVAL must
+                # never overwrite it with the service's own answered_appointment_id.
+                if "answered_appointment_id" in p:
+                    changes["answered_appointment_id"] = p["answered_appointment_id"]
                 if "department" in p:
                     changes["department"] = p["department"]
                 if "exam_type_label" in p:

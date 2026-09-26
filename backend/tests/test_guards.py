@@ -187,6 +187,27 @@ def test_valid_tool_result_requires_lists_of_non_empty_strings():
     assert GUARDS["valid_tool_result"](ctx(payload={"held_documents": ["referral", ""]})) == "invalid_tool_result"
 
 
+@pytest.mark.parametrize("field, cap", [("answered_appointment_id", 64), ("instruction_source_id", 64),
+                                        ("instruction_version", 64), ("department", 200), ("exam_type_label", 200)])
+def test_valid_tool_result_caps_check_appointments_new_string_fields(field, cap):
+    """Sub-project 18 fix round 1 (M3): defence in depth, mirroring map_response's own caps."""
+    assert GUARDS["valid_tool_result"](ctx(payload={field: "x" * cap})) is None
+    assert GUARDS["valid_tool_result"](ctx(payload={field: "x" * (cap + 1)})) == "invalid_tool_result"
+    assert GUARDS["valid_tool_result"](ctx(payload={field: ""})) == "invalid_tool_result"
+    assert GUARDS["valid_tool_result"](ctx(payload={field: "   "})) == "invalid_tool_result"
+    assert GUARDS["valid_tool_result"](ctx(payload={field: 123})) == "invalid_tool_result"
+
+
+def test_valid_tool_result_bounds_upcoming_count():
+    """Sub-project 18 fix round 1 (M1/M3): non-negative, bounded, never a bool."""
+    assert GUARDS["valid_tool_result"](ctx(payload={"upcoming_count": 0})) is None
+    assert GUARDS["valid_tool_result"](ctx(payload={"upcoming_count": 2**31 - 1})) is None
+    assert GUARDS["valid_tool_result"](ctx(payload={"upcoming_count": -1})) == "invalid_tool_result"
+    assert GUARDS["valid_tool_result"](ctx(payload={"upcoming_count": 2**31})) == "invalid_tool_result"
+    assert GUARDS["valid_tool_result"](ctx(payload={"upcoming_count": True})) == "invalid_tool_result"
+    assert GUARDS["valid_tool_result"](ctx(payload={"upcoming_count": "3"})) == "invalid_tool_result"
+
+
 def test_deadline_registered_requires_a_future_aware_datetime():
     """F3(d): MISSING_INFORMATION_DETECTED must carry a deadline PatientSlaExpired can later check."""
     assert GUARDS["deadline_registered"](ctx(payload={"patient_deadline": NOW + timedelta(hours=1)})) is None

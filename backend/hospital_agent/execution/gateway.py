@@ -47,12 +47,15 @@ def present_patient_fields(case: CaseRecord, action: str) -> tuple[str, ...]:
 # system supplies only its own facts, so e.g. the instruction system cannot set held_documents.
 # design §5.1 (sub-projects 11-13): the appointment system owns what an appointment requires,
 # the document system what the patient holds. Sub-project 18 (D6): the appointment system also
-# owns appointment_id, department, exam_type_label, instruction_source_id, instruction_version
-# and upcoming_count - each optional in its answer (design §2, an older service omits some).
+# owns answered_appointment_id, department, exam_type_label, instruction_source_id,
+# instruction_version and upcoming_count - each optional in its answer (design §2, an older
+# service omits some). Fix round 1 (I2): the *request's* appointment_id is deliberately not
+# here - it is write-once from REQUEST_SUBMITTED, never a DATA_RETRIEVED result field, so it
+# can never be overwritten by the service's own answered_appointment_id.
 RESULT_FIELDS: dict[str, tuple[str, ...]] = {
-    Action.CHECK_APPOINTMENT.value: ("appointment_at", "required_documents", "appointment_id", "department",
-                                     "exam_type_label", "instruction_source_id", "instruction_version",
-                                     "upcoming_count"),
+    Action.CHECK_APPOINTMENT.value: ("appointment_at", "required_documents", "answered_appointment_id",
+                                     "department", "exam_type_label", "instruction_source_id",
+                                     "instruction_version", "upcoming_count"),
     Action.CHECK_DOCUMENTS.value: ("held_documents",),
     Action.LOAD_INSTRUCTIONS.value: ("instruction_ids",),  # instruction_text goes to the Data Log, not the event
     Action.SEND_STATUS_UPDATE.value: ("delivered",),

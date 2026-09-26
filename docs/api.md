@@ -232,11 +232,12 @@ Request:
 
 `text` is trimmed, and must then be 1-2000 characters. `appointment_id` (sub-project 18,
 design D5) is optional - the appointment the patient picked from their own upcoming list
-(`GET /api/patient/appointments`, §9); omit it (or send "the nearest appointment") for the
-old behaviour. When 1-64 characters of `A-Z a-z 0-9 . _ -`, starting with a letter or digit.
-It is stored on the case as it is opened and is never read from anywhere else - the LLM
-never supplies it - and `CheckAppointment` (§11) reads it back to answer about that exact
-appointment.
+(`GET /api/patient/appointments`, §9). Omit the field entirely for "the nearest appointment"
+(there is no value that means that - it is the field's absence, not any particular string).
+When present, it must be 1-64 characters of `A-Z a-z 0-9 . _ -`, starting with a letter or
+digit. It is stored on the case as it is opened and is never read from anywhere else - the
+LLM never supplies it - and `CheckAppointment` (§11) reads it back to answer about that
+exact appointment.
 
 `201`: the patient view. A verified patient's case starts in `in_progress`; `P-30000`'s
 case comes back `in_review` at once.
