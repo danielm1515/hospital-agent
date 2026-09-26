@@ -179,12 +179,26 @@ export interface PdfUploadResponse {
 
 // ---- Staff: Case Monitor --------------------------------------------------
 
-/** `GET /api/staff/cases` item. */
+/**
+ * `GET /api/staff/cases` item (staff-fixes design Task 3): every column the Case Monitor
+ * table shows, so the client renders each row straight from the list.
+ */
 export interface CaseSummary {
   case_id: string
+  patient_id: string
   state: State
+  intent: string | null
+  safety_level: SafetyLevel | null
   escalation_kind: EscalationKind | null
+  escalated_from_state: State | null
+  created_at: IsoDateTime
   updated_at: IsoDateTime
+}
+
+/** `GET /api/staff/cases` → 200 (staff-fixes design Task 3): keyset-paginated. */
+export interface CaseListPage {
+  items: CaseSummary[]
+  next_cursor: string | null
 }
 
 /** One step of the plan, as `ordered_steps` carries it (`docs/api.md` §5). */

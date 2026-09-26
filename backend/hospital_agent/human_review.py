@@ -159,6 +159,29 @@ class HumanReviewService:
             for case in cases
         ]
 
+    def queue_item(self, case_id: str) -> ReviewItem:
+        """Staff-fixes design Task 3: one queue item, without loading every other case's
+        trace - `GET /api/staff/reviews/{case_id}`, so `ReviewCase` stops fetching the
+        whole queue just to find its own row. Raises NotInReview when the case is not
+        (or no longer) in AwaitingHumanReview (API 404 "not_in_review")."""
+        case = self._load(case_id)
+        if case.state is not State.AWAITING_HUMAN_REVIEW:
+            raise NotInReview(case_id)
+        with self.engine.connect() as conn:
+            trace = repository.load_trace(conn, case_id)
+        return ReviewItem(
+            case_id=case.case_id,
+            patient_id=case.patient_id,
+            escalation_kind=case.escalation_kind.value if case.escalation_kind else "",
+            escalated_from_state=case.escalated_from_state.value if case.escalated_from_state else None,
+            reasons=_escalation_reasons(trace),
+            allowed_decisions=_allowed(case),
+            required_fields=[] if case.human_engaged else list(RESUMABLE.get(case.escalation_kind, ())),
+            updated_at=case.updated_at,
+            human_engaged=case.human_engaged,
+            returned_by=_returned_by(trace),
+        )
+
     def context(self, case_id: str) -> ReviewContext:
         case = self._load(case_id)
         with self.engine.connect() as conn:

@@ -4,6 +4,7 @@ import * as api from '../../api/client'
 import type { CaseDetail, CaseSummary, ReviewContext, State } from '../../api/types'
 import { STATES } from '../../api/types'
 import { Alert } from '../../components/Alert'
+import { Button } from '../../components/Button'
 import { StatusPill } from '../../components/StatusPill'
 import { AuditTimeline } from './AuditTimeline'
 import { PatientThread } from './PatientThread'
@@ -19,22 +20,28 @@ import {
 
 /**
  * The Case Monitor (§1), behind staff authentication: every case from
- * `GET /api/staff/cases`, filtered by State, with the case detail, the correspondence
- * and the Audit trace of a row that is expanded. The list route carries only id, State,
- * escalation kind and time, so patient, intent and safety come from
- * `GET /api/staff/cases/{id}` per row.
+ * `GET /api/staff/cases` (staff-fixes design Task 3), filtered by State, with the case
+ * detail, the correspondence and the Audit trace of a row that is expanded. The list
+ * route now carries every column the table shows - id, patient, State, intent, safety
+ * level, escalation kind and time - so a row renders straight from the list with no
+ * per-row follow-up call; only expanding a row fetches its plan/document detail
+ * (`GET /api/staff/cases/{id}`) and its correspondence (`GET /api/staff/cases/{id}/context`).
+ * The list is keyset-paginated: "טעינת עוד" asks for the page after `next_cursor`.
  *
- * An expanded row reads `GET /api/staff/cases/{id}/context`, which answers for a case in
- * any State (`docs/api.md` §5) and carries the Data Log and the trace together. Nothing
- * here decides anything, so its `shown_context_ref` is not used - that binds a decision,
- * and decisions are made on the review screen.
+ * An expanded row's context answers for a case in any State (`docs/api.md` §5) and
+ * carries the Data Log and the trace together. Nothing here decides anything, so its
+ * `shown_context_ref` is not used - that binds a decision, and decisions are made on the
+ * review screen.
  */
 export function CaseMonitor() {
   const [filter, setFilter] = useState<State | ''>('')
   const [rows, setRows] = useState<CaseSummary[] | null>(null)
-  const [details, setDetails] = useState<Record<string, CaseDetail>>({})
+  const [nextCursor, setNextCursor] = useState<string | null>(null)
+  const [loadingMore, setLoadingMore] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
+  const [details, setDetails] = useState<Record<string, CaseDetail>>({})
+  const [detailErrors, setDetailErrors] = useState<Record<string, string>>({})
   const [expanded, setExpanded] = useState<string | null>(null)
   const [contexts, setContexts] = useState<Record<string, ReviewContext>>({})
   const [contextErrors, setContextErrors] = useState<Record<string, string>>({})
@@ -43,26 +50,21 @@ export function CaseMonitor() {
     let cancelled = false
     async function load() {
       setRows(null)
+      setNextCursor(null)
       setError(null)
+      setExpanded(null)
+      // A filter change makes every previously loaded detail/context stale (a different
+      // row set, possibly the same case id reused across filters is not a concern here,
+      // but a stale cache would still show yesterday's content on next expand).
+      setDetails({})
+      setDetailErrors({})
+      setContexts({})
+      setContextErrors({})
       try {
-        const list = await api.listCases(filter === '' ? undefined : filter)
+        const page = await api.listCases({ state: filter === '' ? undefined : filter })
         if (cancelled) return
-        setRows(list)
-        const loaded = await Promise.all(
-          list.map(async (row) => {
-            try {
-              return await api.getCase(row.case_id)
-            } catch {
-              return null
-            }
-          }),
-        )
-        if (cancelled) return
-        const byId: Record<string, CaseDetail> = {}
-        for (const detail of loaded) {
-          if (detail) byId[detail.case_id] = detail
-        }
-        setDetails(byId)
+        setRows(page.items)
+        setNextCursor(page.next_cursor)
       } catch (caught) {
         if (!cancelled) setError(detailOf(caught))
       }
@@ -73,18 +75,41 @@ export function CaseMonitor() {
     }
   }, [filter])
 
+  async function loadMore() {
+    if (nextCursor === null) return
+    setLoadingMore(true)
+    try {
+      const page = await api.listCases({ state: filter === '' ? undefined : filter, cursor: nextCursor })
+      setRows((previous) => [...(previous ?? []), ...page.items])
+      setNextCursor(page.next_cursor)
+    } catch (caught) {
+      setError(detailOf(caught))
+    } finally {
+      setLoadingMore(false)
+    }
+  }
+
   async function toggle(caseId: string) {
     if (expanded === caseId) {
       setExpanded(null)
       return
     }
     setExpanded(caseId)
-    if (contexts[caseId]) return
-    try {
-      const context = await api.getContext(caseId)
-      setContexts((previous) => ({ ...previous, [caseId]: context }))
-    } catch (caught) {
-      setContextErrors((previous) => ({ ...previous, [caseId]: detailOf(caught) }))
+    if (!details[caseId] && !detailErrors[caseId]) {
+      try {
+        const detail = await api.getCase(caseId)
+        setDetails((previous) => ({ ...previous, [caseId]: detail }))
+      } catch (caught) {
+        setDetailErrors((previous) => ({ ...previous, [caseId]: detailOf(caught) }))
+      }
+    }
+    if (!contexts[caseId] && !contextErrors[caseId]) {
+      try {
+        const context = await api.getContext(caseId)
+        setContexts((previous) => ({ ...previous, [caseId]: context }))
+      } catch (caught) {
+        setContextErrors((previous) => ({ ...previous, [caseId]: detailOf(caught) }))
+      }
     }
   }
 
@@ -147,13 +172,13 @@ export function CaseMonitor() {
             </thead>
             <tbody>
               {rows.map((row) => {
-                const detail = details[row.case_id]
                 const open = expanded === row.case_id
                 return (
                   <ExpandableRow
                     key={row.case_id}
                     row={row}
-                    detail={detail}
+                    detail={details[row.case_id]}
+                    detailError={detailErrors[row.case_id]}
                     open={open}
                     context={contexts[row.case_id]}
                     contextError={contextErrors[row.case_id]}
@@ -163,6 +188,13 @@ export function CaseMonitor() {
               })}
             </tbody>
           </table>
+          {nextCursor !== null && (
+            <div className="table-footer">
+              <Button variant="secondary" busy={loadingMore} onClick={() => void loadMore()}>
+                טעינת עוד
+              </Button>
+            </div>
+          )}
         </div>
       )}
     </section>
@@ -172,13 +204,14 @@ export function CaseMonitor() {
 interface RowProps {
   row: CaseSummary
   detail?: CaseDetail
+  detailError?: string
   open: boolean
   context?: ReviewContext
   contextError?: string
   onToggle: () => void
 }
 
-function ExpandableRow({ row, detail, open, context, contextError, onToggle }: RowProps) {
+function ExpandableRow({ row, detail, detailError, open, context, contextError, onToggle }: RowProps) {
   return (
     <>
       <tr className="row-link" onClick={onToggle}>
@@ -195,16 +228,16 @@ function ExpandableRow({ row, detail, open, context, contextError, onToggle }: R
             {row.case_id}
           </button>
         </td>
-        <td className="mono">{detail?.patient_id ?? '—'}</td>
+        <td className="mono">{row.patient_id}</td>
         <td>
           <StatusPill state={row.state} />
           <span className="cell-sub">{stateLabel(row.state)}</span>
         </td>
         <td>
-          <Coded label={intentLabel(detail?.intent)} code={detail?.intent} />
+          <Coded label={intentLabel(row.intent)} code={row.intent} />
         </td>
         <td>
-          <Coded label={safetyLabel(detail?.safety_level)} code={detail?.safety_level} />
+          <Coded label={safetyLabel(row.safety_level)} code={row.safety_level} />
         </td>
         <td>
           <Coded label={escalationLabel(row.escalation_kind)} code={row.escalation_kind} />
@@ -215,7 +248,17 @@ function ExpandableRow({ row, detail, open, context, contextError, onToggle }: R
         <tr className="detail-row">
           <td colSpan={7}>
             <div className="case-detail">
-              {detail ? <CaseFacts detail={detail} /> : <p className="empty-note">פרטי הפנייה לא נטענו.</p>}
+              {detail ? (
+                <CaseFacts detail={detail} />
+              ) : detailError ? (
+                <Alert variant="error" title="טעינת פרטי הפנייה נכשלה">
+                  <span className="mono">{detailError}</span>
+                </Alert>
+              ) : (
+                <p className="page-loading" role="status">
+                  טוען…
+                </p>
+              )}
 
               {detail?.ordered_steps && detail.ordered_steps.length > 0 && (
                 <section className="fact-group">

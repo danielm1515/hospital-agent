@@ -163,17 +163,21 @@ describe('patient routes', () => {
 describe('staff routes', () => {
   beforeEach(() => api.setToken('tok-1'))
 
-  it('filters the monitor by state', async () => {
-    mockOnce(200, [])
+  it('filters the monitor by state, and paginates with a cursor and a limit', async () => {
+    mockOnce(200, { items: [], next_cursor: null })
     await api.listCases()
     expect(lastCall()[0]).toBe('/api/staff/cases')
 
-    mockOnce(200, [])
-    await api.listCases('AwaitingHumanReview')
+    mockOnce(200, { items: [], next_cursor: null })
+    await api.listCases({ state: 'AwaitingHumanReview' })
     expect(lastCall()[0]).toBe('/api/staff/cases?state=AwaitingHumanReview')
+
+    mockOnce(200, { items: [], next_cursor: null })
+    await api.listCases({ state: 'AwaitingHumanReview', cursor: 'abc==', limit: 100 })
+    expect(lastCall()[0]).toBe('/api/staff/cases?state=AwaitingHumanReview&cursor=abc%3D%3D&limit=100')
   })
 
-  it('reads a case, its audit, the queue and the context', async () => {
+  it('reads a case, its audit, the queue, one queue item and the context', async () => {
     mockOnce(200, {})
     await api.getCase('CASE-1')
     expect(lastCall()[0]).toBe('/api/staff/cases/CASE-1')
@@ -185,6 +189,10 @@ describe('staff routes', () => {
     mockOnce(200, [])
     await api.listReviews()
     expect(lastCall()[0]).toBe('/api/staff/reviews')
+
+    mockOnce(200, {})
+    await api.getReviewItem('CASE-1')
+    expect(lastCall()[0]).toBe('/api/staff/reviews/CASE-1')
 
     mockOnce(200, {})
     await api.getContext('CASE-1')

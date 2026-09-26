@@ -23,6 +23,7 @@ from .schemas import (
     AppointmentsView,
     AuditRecord,
     CaseDetail,
+    CaseListPage,
     CaseSummary,
     DecisionRequest,
     DecisionResponse,
@@ -35,13 +36,30 @@ from .schemas import (
 
 router = APIRouter(prefix="/api/staff", tags=["staff"], dependencies=[Depends(require_staff)])
 
+MAX_LIST_LIMIT = 200
+DEFAULT_LIST_LIMIT = 50
+
 
 # --- the Case Monitor (Core design §9), now behind staff auth --------------------------------
 
-@router.get("/cases", response_model=list[CaseSummary])
-def list_cases(state: State | None = None, db: Engine = Depends(get_engine)) -> list[CaseSummary]:
+@router.get("/cases", response_model=CaseListPage)
+def list_cases(state: State | None = None, limit: int = DEFAULT_LIST_LIMIT, cursor: str | None = None,
+               db: Engine = Depends(get_engine)) -> CaseListPage:
+    """Staff-fixes design Task 3: one call, keyset-paginated. Every column the Case Monitor
+    table shows, so the client makes no per-row `getCase` follow-up."""
+    if not (1 <= limit <= MAX_LIST_LIMIT):
+        raise HTTPException(status_code=422, detail="invalid_limit")
+    parsed_cursor = None
+    if cursor is not None:
+        try:
+            parsed_cursor = repository.decode_cases_cursor(cursor)
+        except ValueError:
+            raise HTTPException(status_code=422, detail="invalid_cursor") from None
+    states = [state] if state is not None else None
     with db.connect() as conn:
-        return [CaseSummary.model_validate(case) for case in repository.list_cases(conn, state)]
+        rows, has_more = repository.list_cases_page(conn, states, limit, parsed_cursor)
+    next_cursor = repository.encode_cases_cursor(rows[-1].updated_at, rows[-1].case_id) if has_more and rows else None
+    return CaseListPage(items=[CaseSummary.model_validate(row) for row in rows], next_cursor=next_cursor)
 
 
 @router.get("/cases/{case_id}", response_model=CaseDetail)
@@ -86,6 +104,18 @@ def system_status(request: Request) -> SystemStatusView:
 @router.get("/reviews", response_model=list[ReviewItem])
 def review_queue(reviews: HumanReviewService = Depends(get_reviews)) -> list[ReviewItem]:
     return [ReviewItem.model_validate(item) for item in reviews.queue()]
+
+
+@router.get("/reviews/{case_id}", response_model=ReviewItem)
+def review_item(case_id: str, reviews: HumanReviewService = Depends(get_reviews)) -> ReviewItem:
+    """Staff-fixes design Task 3: one queue item, so `ReviewCase` stops fetching the whole
+    queue just to find its own row."""
+    try:
+        return ReviewItem.model_validate(reviews.queue_item(case_id))
+    except CaseNotFound:
+        raise HTTPException(status_code=404, detail="case_not_found") from None
+    except NotInReview:
+        raise HTTPException(status_code=404, detail="not_in_review") from None
 
 
 @router.get("/cases/{case_id}/context", response_model=ReviewContext)

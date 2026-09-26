@@ -10,7 +10,7 @@ import { ReviewCase } from './ReviewCase'
 vi.mock('../../api/client', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../api/client')>()),
   getContext: vi.fn(),
-  listReviews: vi.fn(),
+  getReviewItem: vi.fn(),
   decide: vi.fn(),
   tombstone: vi.fn(),
   getMessageTemplates: vi.fn(),
@@ -129,7 +129,7 @@ function renderCase(role: 'clinical_staff' | 'admin_staff' = 'clinical_staff') {
 
 beforeEach(() => {
   vi.mocked(api.getContext).mockResolvedValue(context())
-  vi.mocked(api.listReviews).mockResolvedValue([MEDICAL_ITEM])
+  vi.mocked(api.getReviewItem).mockResolvedValue(MEDICAL_ITEM)
   vi.mocked(api.decide).mockResolvedValue({ case_id: CASE_ID, state: 'Completed' })
   vi.mocked(api.tombstone).mockResolvedValue(undefined)
   vi.mocked(api.getMessageTemplates).mockResolvedValue([])
@@ -239,7 +239,7 @@ describe('ReviewCase', () => {
   })
 
   it('does not mount the clinical answer block for a non-MedicalQuestion escalation', async () => {
-    vi.mocked(api.listReviews).mockResolvedValue([Z3_ITEM])
+    vi.mocked(api.getReviewItem).mockResolvedValue(Z3_ITEM)
     renderCase()
 
     await screen.findByRole('button', { name: 'אישור והמשך' })
@@ -255,7 +255,7 @@ describe('ReviewCase', () => {
   })
 
   it('renders the required field of a Z3Counterexample approval', async () => {
-    vi.mocked(api.listReviews).mockResolvedValue([Z3_ITEM])
+    vi.mocked(api.getReviewItem).mockResolvedValue(Z3_ITEM)
     renderCase()
 
     expect(await screen.findByRole('button', { name: 'אישור והמשך' })).toBeInTheDocument()
@@ -278,7 +278,7 @@ describe('ReviewCase', () => {
   })
 
   it('sends verified_identity_ref with an approval that requires it', async () => {
-    vi.mocked(api.listReviews).mockResolvedValue([IDENTITY_ITEM])
+    vi.mocked(api.getReviewItem).mockResolvedValue(IDENTITY_ITEM)
     vi.mocked(api.decide).mockResolvedValue({ case_id: CASE_ID, state: 'Classifying' })
     renderCase()
 
@@ -374,7 +374,7 @@ describe('ReviewCase', () => {
   })
 
   it('says so when the case is not waiting for a decision', async () => {
-    vi.mocked(api.listReviews).mockResolvedValue([])
+    vi.mocked(api.getReviewItem).mockRejectedValue(new api.ApiError(404, 'not_in_review'))
     vi.mocked(api.getContext).mockResolvedValue(context({ state: 'Completed', escalation_kind: null, reasons: [] }))
     renderCase()
 
@@ -385,15 +385,13 @@ describe('ReviewCase', () => {
   it('shows the patient-request panel and no approve button when human_engaged, even on a resumable kind', async () => {
     // RetryExhausted normally allows `approve` (it just opens a new retry cycle) - the
     // absent button here has to come from `allowed_decisions`, not from the escalation kind.
-    vi.mocked(api.listReviews).mockResolvedValue([
-      {
-        ...MEDICAL_ITEM,
-        escalation_kind: 'RetryExhausted',
-        escalated_from_state: 'RetrievingData',
-        human_engaged: true,
-        allowed_decisions: ['resolve', 'reject'],
-      },
-    ])
+    vi.mocked(api.getReviewItem).mockResolvedValue({
+      ...MEDICAL_ITEM,
+      escalation_kind: 'RetryExhausted',
+      escalated_from_state: 'RetrievingData',
+      human_engaged: true,
+      allowed_decisions: ['resolve', 'reject'],
+    })
     vi.mocked(api.getMessageTemplates).mockResolvedValue(TEMPLATES)
     renderCase()
 
@@ -402,7 +400,7 @@ describe('ReviewCase', () => {
   })
 
   it('sends a closing template with the resolve decision', async () => {
-    vi.mocked(api.listReviews).mockResolvedValue([Z3_ITEM])
+    vi.mocked(api.getReviewItem).mockResolvedValue(Z3_ITEM)
     vi.mocked(api.getMessageTemplates).mockResolvedValue(TEMPLATES)
     renderCase()
 
@@ -423,7 +421,7 @@ describe('ReviewCase', () => {
   it('never sends a message when approving, even if a closing message was chosen', async () => {
     // Z3_ITEM allows approve and requires patient_deadline; a closing message picked while
     // it was on screen must not leak into an approve body (a closing message is resolve/reject only).
-    vi.mocked(api.listReviews).mockResolvedValue([Z3_ITEM])
+    vi.mocked(api.getReviewItem).mockResolvedValue(Z3_ITEM)
     vi.mocked(api.getMessageTemplates).mockResolvedValue(TEMPLATES)
     renderCase()
 

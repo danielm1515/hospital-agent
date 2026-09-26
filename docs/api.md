@@ -68,15 +68,16 @@ methods: `GET`, `POST`, `DELETE`, `OPTIONS`. Allowed headers: `Authorization`,
 | GET | `/api/patient/requests` | patient | My requests |
 | GET | `/api/patient/requests/{case_id}` | patient | One of my requests |
 | POST | `/api/patient/requests/{case_id}/documents` | patient | Upload a document |
-| POST | `/api/patient/requests/{case_id}/documents/file` | patient | Upload a PDF, forwarded to the document-service (sub-project 13) |
+| POST | `/api/patient/requests/{case_id}/documents/file` | patient | Upload a document (PDF, JPEG or PNG), forwarded to the document-service (sub-project 13) |
 | POST | `/api/patient/requests/{case_id}/reply` | patient | Answer a staff question (sub-project 15) |
 | POST | `/api/patient/requests/{case_id}/reply/file` | patient | Upload the document (PDF, JPEG or PNG) a staff member asked for (sub-project 15) |
 | GET | `/api/patient/appointments` | patient | My appointments (`?from=&to=`, sub-project 16) |
-| GET | `/api/staff/cases` | staff | All cases (`?state=`) |
-| GET | `/api/staff/cases/{case_id}` | staff | One case, in full |
+| GET | `/api/staff/cases` | staff | All cases, keyset-paginated (`?state=&limit=&cursor=`, staff-fixes design Task 3) |
+| GET | `/api/staff/cases/{case_id}` | staff | One case, in full (plan, documents, counters) |
 | GET | `/api/staff/cases/{case_id}/audit` | staff | The case's audit trace |
 | GET | `/api/staff/cases/{case_id}/appointments` | staff | The case's patient's appointments (`?from=&to=`, sub-project 16) |
 | GET | `/api/staff/reviews` | staff | The human-review queue |
+| GET | `/api/staff/reviews/{case_id}` | staff | One queue item (staff-fixes design Task 3) |
 | GET | `/api/staff/cases/{case_id}/context` | staff | What the reviewer is shown |
 | POST | `/api/staff/cases/{case_id}/decision` | staff | Approve / resolve / reject |
 | POST | `/api/staff/cases/{case_id}/answer` | staff | Answer a `MedicalQuestion` with an approved clinical message |
@@ -363,26 +364,46 @@ Every route needs a `clinical_staff` or `admin_staff` token; a patient token get
 
 ### GET /api/staff/cases
 
-Optional `?state=<State>`; an unknown state is `422 invalid_body`. `200`:
+Staff-fixes design Task 3: one call, with every column the Case Monitor table shows, so
+the client makes no per-row follow-up call. Optional `?state=<State>`; an unknown state is
+`422 invalid_body`. Keyset pagination: `?limit=` (default 50, at most 200; anything else is
+`422 invalid_limit`) and `?cursor=` (the previous response's `next_cursor`; a malformed or
+foreign cursor is `422 invalid_cursor`). `200`:
 
 ```json
-[
-  {
-    "case_id": "CASE-23FE645294B7",
-    "state": "Completed",
-    "escalation_kind": null,
-    "updated_at": "2026-09-19T22:12:48.986200Z"
-  }
-]
+{
+  "items": [
+    {
+      "case_id": "CASE-23FE645294B7",
+      "patient_id": "P-10041",
+      "state": "Completed",
+      "intent": "AppointmentPreparation",
+      "safety_level": "MediumRisk",
+      "escalation_kind": null,
+      "escalated_from_state": null,
+      "created_at": "2026-09-19T22:12:38.560531Z",
+      "updated_at": "2026-09-19T22:12:48.986200Z"
+    }
+  ],
+  "next_cursor": null
+}
 ```
+
+The items are ordered `updated_at` descending, `case_id` descending (a tie-break, since
+`updated_at` alone is not unique). `next_cursor` is an opaque string (base64 of
+`updated_at|case_id`); `null` means there is no next page. Ask for the next page with
+`?cursor=<next_cursor>&state=...` (repeat the same filter).
 
 States: `Received`, `Classifying`, `Classified`, `Planning`, `RetrievingData`,
 `Delivering`, `AssessingReadiness`, `AwaitingPatientInput`, `AwaitingHumanReview`, `Ready`,
-`Completed`, `Failed`, `AwaitingPatientReply` (sub-project 15, §8).
+`Completed`, `Failed`, `AwaitingPatientReply` (sub-project 15, §8). `intent` is
+`AppointmentPreparation`, `MedicalQuestion` or `Unsupported`; `safety_level` is `LowRisk`,
+`MediumRisk`, `HighRisk` or `CriticalRisk`.
 
 ### GET /api/staff/cases/{case_id}
 
-`200`:
+The expanded row's detail only (staff-fixes design Task 3): the plan, the documents and
+the counters the list above does not carry. `200`:
 
 ```json
 {
@@ -484,6 +505,13 @@ The queue of cases in `AwaitingHumanReview`, oldest update first. `200`:
   `PatientSlaExpired`); otherwise `[]`. Render them in the approve form; the server
   refuses an approve without them (`409 verified_identity_ref_required` /
   `409 patient_deadline_required`).
+
+### GET /api/staff/reviews/{case_id}
+
+Staff-fixes design Task 3: one queue item, in the same shape as a `GET /api/staff/reviews`
+item (above) - so `ReviewCase` reads its own row without fetching the whole queue. `200` is
+the single object (not wrapped in a list); `404 not_in_review` when the case is not (or no
+longer) in `AwaitingHumanReview`; `404 case_not_found` for an unknown case.
 
 ### GET /api/staff/cases/{case_id}/context
 

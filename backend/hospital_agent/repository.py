@@ -4,11 +4,13 @@ Every function takes an open Connection: the caller owns the transaction.
 """
 from __future__ import annotations
 
+import base64
+import binascii
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import insert, select, update
+from sqlalchemy import insert, select, tuple_, update
 from sqlalchemy.engine import Connection, RowMapping
 
 from .case import ApprovalRecord, CaseRecord, ExecutionRecord
@@ -109,6 +111,91 @@ def list_cases(conn: Connection, state: State | None = None) -> list[CaseRecord]
     if state is not None:
         query = query.where(cases.c.state == state.value)
     return [_case_from_row(row) for row in conn.execute(query).mappings()]
+
+
+@dataclass(frozen=True)
+class CaseListRow:
+    """One `GET /api/staff/cases` item's columns (staff-fixes design Task 3): an explicit
+    column list that skips the JSONB `ordered_steps` / `held_documents` / `required_documents`
+    the list screen never shows."""
+
+    case_id: str
+    patient_id: str
+    state: State
+    intent: str | None
+    safety_level: SafetyLevel | None
+    escalation_kind: EscalationKind | None
+    escalated_from_state: State | None
+    created_at: datetime
+    updated_at: datetime
+
+
+_CASE_LIST_COLUMNS = (
+    cases.c.case_id,
+    cases.c.patient_id,
+    cases.c.state,
+    cases.c.intent,
+    cases.c.safety_level,
+    cases.c.escalation_kind,
+    cases.c.escalated_from_state,
+    cases.c.created_at,
+    cases.c.updated_at,
+)
+
+
+def _case_list_row(row: RowMapping) -> CaseListRow:
+    return CaseListRow(
+        case_id=row["case_id"],
+        patient_id=row["patient_id"],
+        state=State(row["state"]),
+        intent=row["intent"],
+        safety_level=SafetyLevel(row["safety_level"]) if row["safety_level"] else None,
+        escalation_kind=EscalationKind(row["escalation_kind"]) if row["escalation_kind"] else None,
+        escalated_from_state=State(row["escalated_from_state"]) if row["escalated_from_state"] else None,
+        created_at=row["created_at"],
+        updated_at=row["updated_at"],
+    )
+
+
+def encode_cases_cursor(updated_at: datetime, case_id: str) -> str:
+    """The opaque `next_cursor` (staff-fixes design Task 3): base64 of `updated_at|case_id`."""
+    raw = f"{updated_at.isoformat()}|{case_id}"
+    return base64.urlsafe_b64encode(raw.encode("utf-8")).decode("ascii")
+
+
+def decode_cases_cursor(cursor: str) -> tuple[datetime, str]:
+    """Raises ValueError on anything that is not a cursor this endpoint produced (API 422
+    `invalid_cursor`)."""
+    try:
+        raw = base64.urlsafe_b64decode(cursor.encode("ascii")).decode("utf-8")
+        at_text, case_id = raw.split("|", 1)
+        at = datetime.fromisoformat(at_text)
+    except (binascii.Error, ValueError, UnicodeDecodeError) as error:
+        raise ValueError("invalid_cursor") from error
+    if not case_id:
+        raise ValueError("invalid_cursor")
+    return at, case_id
+
+
+def list_cases_page(
+    conn: Connection,
+    states: list[State] | None,
+    limit: int,
+    cursor: tuple[datetime, str] | None,
+) -> tuple[list[CaseListRow], bool]:
+    """Keyset-paginated (staff-fixes design Task 3): one `SELECT` with an explicit column
+    list, ordered `updated_at DESC, case_id DESC`. Fetches `limit + 1` rows so the caller
+    knows whether there is a next page without a second query."""
+    query = select(*_CASE_LIST_COLUMNS)
+    if states is not None:
+        query = query.where(cases.c.state.in_([s.value for s in states]))
+    if cursor is not None:
+        at, case_id = cursor
+        query = query.where(tuple_(cases.c.updated_at, cases.c.case_id) < tuple_(at, case_id))
+    query = query.order_by(cases.c.updated_at.desc(), cases.c.case_id.desc()).limit(limit + 1)
+    rows = [_case_list_row(row) for row in conn.execute(query).mappings()]
+    has_more = len(rows) > limit
+    return rows[:limit], has_more
 
 
 def list_patient_cases(conn: Connection, patient_id: str) -> list[CaseRecord]:

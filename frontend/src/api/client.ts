@@ -13,7 +13,7 @@ import type {
   AppointmentList,
   AuditRecord,
   CaseDetail,
-  CaseSummary,
+  CaseListPage,
   DecisionBody,
   DecisionResult,
   LoginResponse,
@@ -222,9 +222,17 @@ export function uploadDocumentFile(caseId: string, file: File): Promise<PdfUploa
 
 // ---- Staff ----------------------------------------------------------------
 
-export function listCases(state?: State): Promise<CaseSummary[]> {
-  const query = state ? `?state=${id(state)}` : ''
-  return request<CaseSummary[]>('GET', `/staff/cases${query}`)
+/**
+ * `GET /api/staff/cases` (staff-fixes design Task 3): one call, keyset-paginated.
+ * `options.cursor` asks for the page after the previous response's `next_cursor`.
+ */
+export function listCases(options: { state?: State; cursor?: string; limit?: number } = {}): Promise<CaseListPage> {
+  const params = new URLSearchParams()
+  if (options.state) params.set('state', options.state)
+  if (options.cursor) params.set('cursor', options.cursor)
+  if (options.limit) params.set('limit', String(options.limit))
+  const query = params.toString()
+  return request<CaseListPage>('GET', `/staff/cases${query ? `?${query}` : ''}`)
 }
 
 export function getCase(caseId: string): Promise<CaseDetail> {
@@ -237,6 +245,15 @@ export function getAudit(caseId: string): Promise<AuditRecord[]> {
 
 export function listReviews(): Promise<ReviewItem[]> {
   return request<ReviewItem[]>('GET', '/staff/reviews')
+}
+
+/**
+ * `GET /api/staff/reviews/{case_id}` (staff-fixes design Task 3): one queue item, so
+ * `ReviewCase` does not fetch the whole queue just to find its own row. `404
+ * not_in_review` when the case is not (or no longer) in `AwaitingHumanReview`.
+ */
+export function getReviewItem(caseId: string): Promise<ReviewItem> {
+  return request<ReviewItem>('GET', `/staff/reviews/${id(caseId)}`)
 }
 
 export function getContext(caseId: string): Promise<ReviewContext> {

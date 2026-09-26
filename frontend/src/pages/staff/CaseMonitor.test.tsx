@@ -3,7 +3,7 @@ import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import * as api from '../../api/client'
-import type { CaseDetail, CaseSummary, ReviewContext } from '../../api/types'
+import type { CaseDetail, CaseListPage, CaseSummary, ReviewContext } from '../../api/types'
 import { CaseMonitor } from './CaseMonitor'
 
 vi.mock('../../api/client', async (importOriginal) => ({
@@ -15,20 +15,37 @@ vi.mock('../../api/client', async (importOriginal) => ({
 
 const DONE: CaseSummary = {
   case_id: 'CASE-23FE645294B7',
+  patient_id: 'P-10041',
   state: 'Completed',
+  intent: 'AppointmentPreparation',
+  safety_level: 'MediumRisk',
   escalation_kind: null,
+  escalated_from_state: null,
+  created_at: '2026-09-19T22:12:38.560531Z',
   updated_at: '2026-09-19T22:12:48.986200Z',
 }
 
 const IN_REVIEW: CaseSummary = {
   case_id: 'CASE-6FFF40DFB8DA',
+  patient_id: 'P-10041',
   state: 'AwaitingHumanReview',
+  intent: 'AppointmentPreparation',
+  safety_level: 'MediumRisk',
   escalation_kind: 'MedicalQuestion',
+  escalated_from_state: 'Classifying',
+  created_at: '2026-09-19T22:12:38.560531Z',
   updated_at: '2026-09-19T22:12:39.693277Z',
 }
 
+function page(items: CaseSummary[], next_cursor: string | null = null): CaseListPage {
+  return { items, next_cursor }
+}
+
 const DETAIL: CaseDetail = {
-  ...DONE,
+  case_id: DONE.case_id,
+  state: DONE.state,
+  escalation_kind: DONE.escalation_kind,
+  updated_at: DONE.updated_at,
   patient_id: 'P-10041',
   state_version: 27,
   intent: 'AppointmentPreparation',
@@ -97,31 +114,36 @@ function renderMonitor() {
 }
 
 beforeEach(() => {
-  vi.mocked(api.listCases).mockResolvedValue([DONE, IN_REVIEW])
+  vi.mocked(api.listCases).mockResolvedValue(page([DONE, IN_REVIEW]))
   vi.mocked(api.getCase).mockImplementation(async (caseId: string) => ({ ...DETAIL, case_id: caseId }))
   vi.mocked(api.getContext).mockImplementation(async (caseId: string) => ({ ...CONTEXT, case_id: caseId }))
 })
 
 describe('CaseMonitor', () => {
-  it('lists every case with the details the API returns', async () => {
+  it('lists every case straight from the one call, with no per-row detail call', async () => {
     renderMonitor()
 
     expect(await screen.findByText('CASE-23FE645294B7')).toBeInTheDocument()
     expect(screen.getByText('CASE-6FFF40DFB8DA')).toBeInTheDocument()
     expect(screen.getAllByText('Completed').length).toBeGreaterThan(0)
-    await waitFor(() => expect(screen.getAllByText('AppointmentPreparation')).toHaveLength(2))
+    expect(screen.getAllByText('AppointmentPreparation')).toHaveLength(2)
     expect(screen.getAllByText('MediumRisk')).toHaveLength(2)
     expect(screen.getAllByText('P-10041').length).toBeGreaterThan(0)
+
+    // The N+1 this design fixes: before, 1 (listCases) + N (getCase per row); after, 1.
+    expect(api.listCases).toHaveBeenCalledTimes(1)
+    expect(api.getCase).not.toHaveBeenCalled()
+    expect(api.getContext).not.toHaveBeenCalled()
   })
 
-  it('filters by state', async () => {
+  it('filters by state, asking the API for the filtered page', async () => {
     renderMonitor()
     await screen.findByText('CASE-23FE645294B7')
 
-    vi.mocked(api.listCases).mockResolvedValue([DONE])
+    vi.mocked(api.listCases).mockResolvedValue(page([DONE]))
     await userEvent.selectOptions(screen.getByLabelText('סינון לפי State'), 'Completed')
 
-    expect(api.listCases).toHaveBeenLastCalledWith('Completed')
+    expect(api.listCases).toHaveBeenLastCalledWith({ state: 'Completed' })
     await waitFor(() => expect(screen.queryByText('CASE-6FFF40DFB8DA')).not.toBeInTheDocument())
   })
 
@@ -132,17 +154,52 @@ describe('CaseMonitor', () => {
     await userEvent.selectOptions(screen.getByLabelText('סינון לפי State'), 'Completed')
     await userEvent.selectOptions(screen.getByLabelText('סינון לפי State'), '')
 
-    expect(api.listCases).toHaveBeenLastCalledWith(undefined)
+    expect(api.listCases).toHaveBeenLastCalledWith({ state: undefined })
   })
 
-  it('expands a row to the case detail and its audit trace', async () => {
+  it('expands a row to the case detail and its audit trace, fetching only that row', async () => {
     renderMonitor()
 
     await userEvent.click(await screen.findByRole('button', { name: 'CASE-23FE645294B7' }))
 
     expect(await screen.findByText('REQUEST_SUBMITTED')).toBeInTheDocument()
     expect(screen.getByText('CheckAppointment')).toBeInTheDocument()
+    expect(api.getCase).toHaveBeenCalledTimes(1)
+    expect(api.getCase).toHaveBeenCalledWith('CASE-23FE645294B7')
+    expect(api.getContext).toHaveBeenCalledTimes(1)
     expect(api.getContext).toHaveBeenCalledWith('CASE-23FE645294B7')
+  })
+
+  it('offers a "load more" button when the API says there is a next page, and appends the next page', async () => {
+    vi.mocked(api.listCases).mockResolvedValue(page([DONE], 'CURSOR-1'))
+    renderMonitor()
+    await screen.findByText('CASE-23FE645294B7')
+    expect(screen.queryByText('CASE-6FFF40DFB8DA')).not.toBeInTheDocument()
+
+    vi.mocked(api.listCases).mockResolvedValue(page([IN_REVIEW], null))
+    await userEvent.click(screen.getByRole('button', { name: 'טעינת עוד' }))
+
+    expect(api.listCases).toHaveBeenLastCalledWith({ state: undefined, cursor: 'CURSOR-1' })
+    expect(await screen.findByText('CASE-6FFF40DFB8DA')).toBeInTheDocument()
+    // Both pages stay on screen; the first row was not replaced.
+    expect(screen.getByText('CASE-23FE645294B7')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'טעינת עוד' })).not.toBeInTheDocument()
+  })
+
+  it('clears the context cache on a filter change, so a re-expanded case is fetched again', async () => {
+    renderMonitor()
+    await userEvent.click(await screen.findByRole('button', { name: 'CASE-23FE645294B7' }))
+    await screen.findByText('REQUEST_SUBMITTED')
+    expect(api.getContext).toHaveBeenCalledTimes(1)
+
+    vi.mocked(api.listCases).mockResolvedValue(page([DONE]))
+    await userEvent.selectOptions(screen.getByLabelText('סינון לפי State'), 'Completed')
+    await screen.findByText('CASE-23FE645294B7')
+
+    // The row collapsed on the filter change; expanding it again must not reuse a stale context.
+    await userEvent.click(screen.getByRole('button', { name: 'CASE-23FE645294B7' }))
+    await screen.findByText('REQUEST_SUBMITTED')
+    expect(api.getContext).toHaveBeenCalledTimes(2)
   })
 
   it('reads in Hebrew and still shows every code the API returned', async () => {
@@ -152,7 +209,7 @@ describe('CaseMonitor', () => {
     // A label always sits next to its code, never instead of it.
     expect(screen.getAllByText('הושלמה').length).toBeGreaterThan(0)
     expect(screen.getAllByText('Completed').length).toBeGreaterThan(0)
-    await waitFor(() => expect(screen.getAllByText('הכנה לתור')).toHaveLength(2))
+    expect(screen.getAllByText('הכנה לתור')).toHaveLength(2)
     expect(screen.getAllByText('AppointmentPreparation')).toHaveLength(2)
     expect(screen.getAllByText('סיכון בינוני')).toHaveLength(2)
     expect(screen.getAllByText('MediumRisk')).toHaveLength(2)
@@ -184,6 +241,16 @@ describe('CaseMonitor', () => {
     // And the plan shows which step is the current one.
     expect(container.querySelector('.plan-steps .step-current')).toHaveTextContent('CheckDocuments')
     expect(container.querySelector('.plan-steps .step-done')).toHaveTextContent('CheckAppointment')
+  })
+
+  it('shows a Hebrew error, not a blank panel, when the row detail call fails', async () => {
+    vi.mocked(api.getCase).mockRejectedValue(new api.ApiError(404, 'case_not_found'))
+    renderMonitor()
+
+    await userEvent.click(await screen.findByRole('button', { name: 'CASE-23FE645294B7' }))
+
+    expect(await screen.findByText('טעינת פרטי הפנייה נכשלה')).toBeInTheDocument()
+    expect(screen.getByText('case_not_found')).toBeInTheDocument()
   })
 
   it('shows the sub-project 11 catalog codes with their Hebrew label beside them', async () => {
@@ -268,7 +335,7 @@ describe('CaseMonitor', () => {
   })
 
   it('shows an empty state when no case matches', async () => {
-    vi.mocked(api.listCases).mockResolvedValue([])
+    vi.mocked(api.listCases).mockResolvedValue(page([]))
     renderMonitor()
 
     expect(await screen.findByText('אין פניות להצגה')).toBeInTheDocument()

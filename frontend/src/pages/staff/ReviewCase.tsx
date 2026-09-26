@@ -61,12 +61,21 @@ export function ReviewCase() {
 
   const load = useCallback(async () => {
     try {
-      const [fresh, queue] = await Promise.all([api.getContext(caseId), api.listReviews()])
+      const fresh = await api.getContext(caseId)
       setContext(fresh)
-      setItem(queue.find((entry) => entry.case_id === caseId) ?? null)
       setLoadError(null)
     } catch (caught) {
       setLoadError(detailOf(caught))
+      return
+    }
+    // A case not (or no longer) in AwaitingHumanReview is 404 not_in_review - not a load
+    // failure, just no decision to offer (staff-fixes design Task 3: one queue item,
+    // instead of fetching the whole queue just to find this case's row).
+    try {
+      setItem(await api.getReviewItem(caseId))
+    } catch (caught) {
+      if (caught instanceof api.ApiError && caught.status === 404) setItem(null)
+      else setLoadError(detailOf(caught))
     }
   }, [caseId])
 

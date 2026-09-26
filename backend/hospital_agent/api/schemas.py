@@ -14,15 +14,37 @@ from ..naming import EscalationKind, SafetyLevel, State
 
 
 class CaseSummary(BaseModel):
+    """One `GET /api/staff/cases` item (staff-fixes design Task 3): every column the Case
+    Monitor table shows, so the client renders each row straight from the list and makes
+    no per-row follow-up call."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    case_id: str
+    patient_id: str
+    state: State
+    intent: str | None
+    safety_level: SafetyLevel | None
+    escalation_kind: EscalationKind | None
+    escalated_from_state: State | None
+    created_at: datetime
+    updated_at: datetime
+
+
+class CaseListPage(BaseModel):
+    """`GET /api/staff/cases` (staff-fixes design Task 3): keyset-paginated."""
+
+    items: list[CaseSummary]
+    next_cursor: str | None
+
+
+class CaseDetail(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     case_id: str
     state: State
     escalation_kind: EscalationKind | None
     updated_at: datetime
-
-
-class CaseDetail(CaseSummary):
     patient_id: str
     state_version: int
     intent: str | None
