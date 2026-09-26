@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
 import * as api from '../../api/client'
 import type { ReviewItem } from '../../api/types'
@@ -20,7 +20,12 @@ export interface QueueNotice {
  * timed-out request re-enters and jumps to the top, since it needs attention again. Every
  * column comes from the response - the escalation kind is shown with its code, and
  * `reasons` exactly as the API returned them. Keyset-paginated: "טעינת עוד" asks for the
- * page after `next_cursor`; each poll still reloads the first page from the top.
+ * page after `next_cursor`.
+ *
+ * Fix round 1 (I1): a poll tick asks for a page sized to cover every row already loaded
+ * (through one or more "load more" clicks), so it never shrinks the list back to the
+ * first page; a generation counter drops any `loadMore` (or poll) response that is no
+ * longer the latest request, so a slow one arriving late can't clobber a newer reload.
  */
 export function ReviewQueue() {
   const navigate = useNavigate()
@@ -31,18 +36,26 @@ export function ReviewQueue() {
   const [nextCursor, setNextCursor] = useState<string | null>(null)
   const [loadingMore, setLoadingMore] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [loadMoreError, setLoadMoreError] = useState<string | null>(null)
+
+  const itemsRef = useRef<ReviewItem[]>([])
+  const generationRef = useRef(0)
 
   useEffect(() => {
     let cancelled = false
     async function load() {
+      const generation = ++generationRef.current
+      // Covers every row loaded so far, so a poll tick does not undo a "load more" (I1).
+      const limit = Math.min(200, Math.max(50, itemsRef.current.length))
       try {
-        const page = await api.listReviews()
-        if (cancelled) return
+        const page = await api.listReviews({ limit })
+        if (cancelled || generation !== generationRef.current) return
+        itemsRef.current = page.items
         setItems(page.items)
         setNextCursor(page.next_cursor)
         setError(null)
       } catch (caught) {
-        if (!cancelled) setError(detailOf(caught))
+        if (!cancelled && generation === generationRef.current) setError(detailOf(caught))
       }
     }
     void load()
@@ -55,15 +68,20 @@ export function ReviewQueue() {
 
   async function loadMore() {
     if (nextCursor === null) return
+    const generation = ++generationRef.current
     setLoadingMore(true)
+    setLoadMoreError(null)
     try {
       const page = await api.listReviews({ cursor: nextCursor })
-      setItems((previous) => [...(previous ?? []), ...page.items])
+      if (generation !== generationRef.current) return // a poll/reload has since replaced the list
+      const merged = [...itemsRef.current, ...page.items]
+      itemsRef.current = merged
+      setItems(merged)
       setNextCursor(page.next_cursor)
     } catch (caught) {
-      setError(detailOf(caught))
+      if (generation === generationRef.current) setLoadMoreError(detailOf(caught))
     } finally {
-      setLoadingMore(false)
+      if (generation === generationRef.current) setLoadingMore(false)
     }
   }
 
@@ -169,6 +187,11 @@ export function ReviewQueue() {
               <Button variant="secondary" busy={loadingMore} onClick={() => void loadMore()}>
                 טעינת עוד
               </Button>
+              {loadMoreError && (
+                <Alert variant="error" title="טעינת העוד נכשלה">
+                  <span className="mono">{loadMoreError}</span>
+                </Alert>
+              )}
             </div>
           )}
         </div>

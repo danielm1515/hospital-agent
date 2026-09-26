@@ -146,6 +146,25 @@ def test_queue_orders_by_entry_time_not_created_at(review, sm, app_engine):
     assert has_more is False
 
 
+def test_queue_item_agrees_with_queue_for_a_case_missing_its_entry_row(review, sm, app_engine):
+    """Fix round 1 (M4): queue_item() (GET /api/staff/reviews/{case_id}, one case's own
+    trace) and queue() (the SQL LATERAL, outer-joined) must fall back the same way for a
+    case with no Transition row into AwaitingHumanReview - forced here by moving
+    `cases.state` directly, bypassing the FSM."""
+    from sqlalchemy import text
+
+    d = Driver(sm, app_engine, patient_id="P-53000")
+    d.submit()
+    with app_engine.begin() as conn:
+        conn.execute(text("UPDATE cases SET state = 'AwaitingHumanReview' WHERE case_id = :c"),
+                    {"c": d.case_id})
+
+    item = review.queue_item(d.case_id)
+    assert item.entered_at == d.case.updated_at
+    assert item.reasons == []
+    assert item.returned_by is None
+
+
 # --- context -------------------------------------------------------------------------------
 
 def test_the_context_is_deterministic(review, sm, app_engine):

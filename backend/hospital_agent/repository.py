@@ -10,7 +10,7 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import and_, insert, or_, select, true, tuple_, update
+from sqlalchemy import and_, func, insert, or_, select, text, true, tuple_, update
 from sqlalchemy.engine import Connection, RowMapping
 
 from .case import ApprovalRecord, CaseRecord, ExecutionRecord
@@ -157,24 +157,57 @@ def _case_list_row(row: RowMapping) -> CaseListRow:
     )
 
 
-def encode_cases_cursor(updated_at: datetime, case_id: str) -> str:
-    """The opaque `next_cursor` (staff-fixes design Task 3): base64 of `updated_at|case_id`."""
-    raw = f"{updated_at.isoformat()}|{case_id}"
-    return base64.urlsafe_b64encode(raw.encode("utf-8")).decode("ascii")
+# Staff-fixes design Task 3/5 fix round 1 (M5): each keyset cursor carries a one-letter
+# prefix naming which list produced it, so a cursor from `GET /api/staff/cases` (or a
+# hand-crafted one) is refused - not silently misread - by `GET /api/staff/reviews`, and
+# the other way around.
+_CASES_CURSOR_KIND = "c"
+_QUEUE_CURSOR_KIND = "r"
 
 
-def decode_cases_cursor(cursor: str) -> tuple[datetime, str]:
-    """Raises ValueError on anything that is not a cursor this endpoint produced (API 422
-    `invalid_cursor`)."""
+def _encode_cursor(kind: str, at: datetime, case_id: str) -> str:
+    raw = f"{at.isoformat()}|{case_id}"
+    payload = base64.urlsafe_b64encode(raw.encode("utf-8")).decode("ascii")
+    return f"{kind}|{payload}"
+
+
+def _decode_cursor(kind: str, cursor: str) -> tuple[datetime, str]:
+    """Raises ValueError on anything that is not a cursor this list produced (API 422
+    `invalid_cursor`): a malformed cursor, one built for the other list (wrong kind
+    prefix), or a bare `case_id` with no timezone offset (M5: a naive datetime is refused
+    rather than silently compared to the aware `entered_at`/`updated_at` columns)."""
+    prefix, sep, payload = cursor.partition("|")
+    if not sep or prefix != kind:
+        raise ValueError("invalid_cursor")
     try:
-        raw = base64.urlsafe_b64decode(cursor.encode("ascii")).decode("utf-8")
+        raw = base64.urlsafe_b64decode(payload.encode("ascii")).decode("utf-8")
         at_text, case_id = raw.split("|", 1)
         at = datetime.fromisoformat(at_text)
     except (binascii.Error, ValueError, UnicodeDecodeError) as error:
         raise ValueError("invalid_cursor") from error
-    if not case_id:
+    if at.tzinfo is None or not case_id:
         raise ValueError("invalid_cursor")
     return at, case_id
+
+
+def encode_cases_cursor(updated_at: datetime, case_id: str) -> str:
+    """The opaque `next_cursor` of `GET /api/staff/cases` (staff-fixes design Task 3): a
+    `c|` kind prefix over base64 of `updated_at|case_id` (design Task 5 fix round 1, M5)."""
+    return _encode_cursor(_CASES_CURSOR_KIND, updated_at, case_id)
+
+
+def decode_cases_cursor(cursor: str) -> tuple[datetime, str]:
+    return _decode_cursor(_CASES_CURSOR_KIND, cursor)
+
+
+def encode_queue_cursor(entered_at: datetime, case_id: str) -> str:
+    """The opaque `next_cursor` of `GET /api/staff/reviews` (staff-fixes design Task 5): an
+    `r|` kind prefix, so it can never be mistaken for a case-list cursor (M5)."""
+    return _encode_cursor(_QUEUE_CURSOR_KIND, entered_at, case_id)
+
+
+def decode_queue_cursor(cursor: str) -> tuple[datetime, str]:
+    return _decode_cursor(_QUEUE_CURSOR_KIND, cursor)
 
 
 def list_cases_page(
@@ -286,6 +319,14 @@ def queue_page(
     same row, replacing the Python-side `_escalation_reasons` / `_returned_by` scan of the
     whole trace. Ordered `entered_at DESC, case_id ASC`, keyset-paginated the same way as
     Task 3's case list, fetching `limit + 1` rows to know whether there is a next page.
+
+    Fix round 1 (M4): the join is a LEFT (outer) LATERAL, and `entered_at`/`reasons` are
+    read through `COALESCE(..., cases.updated_at)` / `COALESCE(..., '[]')` - every place
+    the raw `entry` columns would otherwise appear, including the keyset predicate and the
+    ORDER BY. A case in AwaitingHumanReview always has its entry row in practice (only
+    EscalationCoordinator.signal() writes that State, in the same transaction as the row),
+    but an INNER join would silently drop the case from the queue if that ever stopped
+    holding - a queue that loses cases is worse than one that shows a fallback time.
     """
     entry = (
         select(
@@ -303,6 +344,8 @@ def queue_page(
         .limit(1)
         .lateral("entry")
     )
+    entered_at_expr = func.coalesce(entry.c.entered_at, cases.c.updated_at)
+    reasons_expr = func.coalesce(entry.c.reasons, text("'[]'::jsonb"))
     query = (
         select(
             cases.c.case_id,
@@ -310,21 +353,22 @@ def queue_page(
             cases.c.escalation_kind,
             cases.c.escalated_from_state,
             cases.c.human_engaged,
-            entry.c.entered_at,
-            entry.c.reasons,
+            entered_at_expr.label("entered_at"),
+            reasons_expr.label("reasons"),
             entry.c.event,
             entry.c.state_before,
         )
-        .select_from(cases.join(entry, true()))
+        .select_from(cases.join(entry, true(), isouter=True))
         .where(cases.c.state == State.AWAITING_HUMAN_REVIEW.value)
     )
     if cursor is not None:
         at, case_id = cursor
         # entered_at DESC, case_id ASC: "after the cursor" is an earlier entered_at, or the
         # same entered_at with a greater case_id (the tuple_() shortcut needs both columns
-        # sorted the same direction, which is not the case here).
-        query = query.where(or_(entry.c.entered_at < at, and_(entry.c.entered_at == at, cases.c.case_id > case_id)))
-    query = query.order_by(entry.c.entered_at.desc(), cases.c.case_id.asc()).limit(limit + 1)
+        # sorted the same direction, which is not the case here). Repeats entered_at_expr,
+        # not the "entered_at" select-list label: a WHERE clause cannot reference that.
+        query = query.where(or_(entered_at_expr < at, and_(entered_at_expr == at, cases.c.case_id > case_id)))
+    query = query.order_by(entered_at_expr.desc(), cases.c.case_id.asc()).limit(limit + 1)
     rows = [_queue_row(row) for row in conn.execute(query).mappings()]
     has_more = len(rows) > limit
     return rows[:limit], has_more

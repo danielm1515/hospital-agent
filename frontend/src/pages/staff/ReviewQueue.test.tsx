@@ -1,10 +1,10 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import * as api from '../../api/client'
 import type { ReviewItem, ReviewQueuePage } from '../../api/types'
-import { ReviewQueue } from './ReviewQueue'
+import { QUEUE_POLL_MS, ReviewQueue } from './ReviewQueue'
 
 vi.mock('../../api/client', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../api/client')>()),
@@ -51,6 +51,10 @@ function renderQueue(route = '/staff') {
     </MemoryRouter>,
   )
 }
+
+afterEach(() => {
+  vi.useRealTimers()
+})
 
 describe('ReviewQueue', () => {
   it('renders a row per queue item, with the Hebrew label and the code', async () => {
@@ -136,5 +140,37 @@ describe('ReviewQueue', () => {
     expect(await screen.findByText('CASE-23FE645294B7')).toBeInTheDocument()
     expect(screen.getByText('CASE-6FFF40DFB8DA')).toBeInTheDocument()
     await waitFor(() => expect(screen.queryByRole('button', { name: 'טעינת עוד' })).not.toBeInTheDocument())
+  })
+
+  it('keeps rows loaded by "load more" across a poll tick, with no duplicate keys (I1)', async () => {
+    vi.useFakeTimers()
+    vi.mocked(api.listReviews)
+      .mockResolvedValueOnce(page([MEDICAL], 'CURSOR-1')) // initial mount
+      .mockResolvedValueOnce(page([Z3], null)) // "load more" click
+      .mockResolvedValueOnce(page([MEDICAL, Z3], null)) // poll tick after "load more"
+    renderQueue()
+
+    await act(async () => {
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    expect(screen.getByText('CASE-6FFF40DFB8DA')).toBeInTheDocument()
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'טעינת עוד' }))
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    expect(screen.getByText('CASE-23FE645294B7')).toBeInTheDocument()
+
+    await act(() => vi.advanceTimersByTimeAsync(QUEUE_POLL_MS))
+
+    // The poll's own request covers both rows (limit sized to what was already loaded),
+    // and both are still on screen afterwards - no row was dropped, and none duplicated.
+    expect(api.listReviews).toHaveBeenNthCalledWith(3, { limit: 50 })
+    expect(screen.getByText('CASE-6FFF40DFB8DA')).toBeInTheDocument()
+    expect(screen.getByText('CASE-23FE645294B7')).toBeInTheDocument()
+    const rows = screen.getAllByRole('row')
+    expect(rows).toHaveLength(3) // header + exactly one row per case - no duplicate keys
   })
 })

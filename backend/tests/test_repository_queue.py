@@ -54,6 +54,29 @@ def test_tie_break_is_case_id_ascending(sm, app_engine):
     assert has_more is False
 
 
+def test_tie_boundary_pagination_is_case_id_ascending_across_pages(sm, app_engine):
+    """Fix round 1 (I2): 4 cases forced to the exact same entered_at, walked one row per
+    page (limit=1) - the tie-break has to hold across the page boundary too, not just
+    within one query's result set, or the walk would duplicate or skip a row."""
+    made = [escalate(sm, app_engine, f"P-5100{i}") for i in range(4)]
+    same_time = datetime.now(UTC).replace(microsecond=0)
+    for d in made:
+        _insert_entry_at(app_engine, d.case_id, d.patient_id, same_time)
+    expected = sorted(d.case_id for d in made)
+
+    seen: list[str] = []
+    cursor = None
+    for _ in range(len(made) + 1):
+        with app_engine.connect() as conn:
+            rows, has_more = repository.queue_page(conn, 1, cursor)
+        seen.extend(row.case_id for row in rows if row.case_id in {d.case_id for d in made})
+        if not has_more:
+            break
+        cursor = (rows[-1].entered_at, rows[-1].case_id)
+
+    assert seen == expected  # exact order, no duplicates, none missing
+
+
 def test_a_blocked_row_with_state_after_ahr_is_ignored(sm, app_engine):
     """Live data has a Blocked self-loop row with `state_after=AwaitingHumanReview` (a
     rejected HUMAN_APPROVED) - the FSM has no Transition from AwaitingHumanReview back into
@@ -99,6 +122,30 @@ def test_pagination_across_pages_has_no_duplicates_and_nothing_missing(sm, app_e
     assert pages == 3  # 2 + 2 + 1
     assert len(seen) == len(set(seen))  # no duplicates across pages
     assert set(seen) >= case_ids  # nothing missing
+
+
+def test_a_case_with_no_transition_row_is_never_dropped_from_the_queue(sm, app_engine):
+    """Fix round 1 (M4): the LATERAL join must be LEFT (outer), not inner - a case in
+    AwaitingHumanReview always has its entry row in practice (only
+    EscalationCoordinator.signal() writes that state, in the same transaction), but this
+    forces the case in anyway (by moving `cases.state` directly, bypassing the FSM) to
+    prove an inner join can never silently vanish a real case from the queue. `entered_at`
+    falls back to `cases.updated_at`, `reasons` to `[]`."""
+    from sqlalchemy import text
+
+    d = Driver(sm, app_engine, patient_id="P-52000")
+    d.submit()  # Received - no Transition row into AwaitingHumanReview exists for this case
+    with app_engine.begin() as conn:
+        conn.execute(text("UPDATE cases SET state = 'AwaitingHumanReview' WHERE case_id = :c"),
+                    {"c": d.case_id})
+
+    with app_engine.connect() as conn:
+        rows, _ = repository.queue_page(conn, 50, None)
+    [row] = [r for r in rows if r.case_id == d.case_id]
+
+    assert row.entered_at == d.case.updated_at
+    assert row.reasons == []
+    assert row.returned_by is None
 
 
 def test_returned_by_and_reasons_come_from_the_latest_entry_row(sm, app_engine):

@@ -366,16 +366,22 @@ Every route needs a `clinical_staff` or `admin_staff` token; a patient token get
 
 Staff-fixes design Task 3: one call, with every column the Case Monitor table shows, so
 the client makes no per-row follow-up call. Optional `?state=<State>`; an unknown state is
-`422 invalid_body`. Keyset pagination: `?limit=` (default 50, at most 200; anything else is
-`422 invalid_limit`) and `?cursor=` (the previous response's `next_cursor`; a malformed or
-foreign cursor is `422 invalid_cursor`).
+`422 invalid_body`, and so is a non-integer `?limit=` (FastAPI's own query-parsing 422,
+turned into the same body every route uses for a malformed request). Keyset pagination:
+`?limit=` (default 50, at most 200; an integer outside that range is `422 invalid_limit`)
+and `?cursor=` (the previous response's `next_cursor`; a malformed cursor, or a foreign one
+- one built for `GET /api/staff/reviews`, or by hand - is `422 invalid_cursor`; fix round 1
+(M5): every cursor this endpoint's `next_cursor` carries starts `c|`, and a `GET
+/api/staff/reviews` cursor starts `r|`, so "foreign" is caught by the prefix alone).
 
 Staff-fixes design Task 4: `?group=<staff|patient|automatic|done|rejected>` filters by one
 of the fixed groups instead of one exact State (`hospital_agent.state_groups.STATE_GROUPS`,
-mirrored in the frontend's `labels.ts`); an unknown group is `422 invalid_filter`.
+mirrored in the frontend's `labels.ts`); an unknown group is `422 invalid_filter`, and so is
+sending `?state=` and `?group=` together (fix round 1, I3) - they are alternative filters,
+never combined into a narrower one.
 `?escalation_kind=<EscalationKind>` narrows `group=staff` further to one escalation kind
 (an unknown kind is `422 invalid_filter`); with any other group, or with no `group` at all,
-`escalation_kind` is `422 invalid_filter`. `?state=` keeps working, unaffected by `?group=`.
+`escalation_kind` is `422 invalid_filter`.
 `200`:
 
 ```json
@@ -482,10 +488,13 @@ message or document text - only ids, decisions and hashes (§12.3). `404 case_no
 The queue of cases in `AwaitingHumanReview`, **newest entry into that State first**
 (staff-fixes design Task 5) - a case that returns from a patient's reply or a request that
 ran out of time re-enters and jumps to the top, since it needs attention again. One
-statement (a LATERAL join to each case's latest entry row), keyset-paginated the same way
-as `GET /api/staff/cases`: `?limit=` (default 50, at most 200; otherwise `422
-invalid_limit`) and `?cursor=` (opaque, base64 of `entered_at|case_id`; a bad cursor is
-`422 invalid_cursor`). `200`:
+statement (a LEFT LATERAL join to each case's latest entry row, fix round 1 M4 - a case
+somehow missing that row is never dropped from the queue, only shown with its
+`cases.updated_at` as a fallback `entered_at` and `reasons: []`), keyset-paginated the same
+way as `GET /api/staff/cases`: `?limit=` (default 50, at most 200; otherwise `422
+invalid_limit`) and `?cursor=` (opaque, an `r|` kind prefix over base64 of
+`entered_at|case_id` - distinct from `GET /api/staff/cases`'s `c|` prefix, so a cursor from
+one list is `422 invalid_cursor` on the other, fix round 1 M5). `200`:
 
 ```json
 {

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import * as api from '../../api/client'
 import type { CaseDetail, CaseSummary, EscalationKind, ReviewContext, StateGroup } from '../../api/types'
@@ -44,6 +44,7 @@ export function CaseMonitor() {
   const [nextCursor, setNextCursor] = useState<string | null>(null)
   const [loadingMore, setLoadingMore] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [loadMoreError, setLoadMoreError] = useState<string | null>(null)
 
   const [details, setDetails] = useState<Record<string, CaseDetail>>({})
   const [detailErrors, setDetailErrors] = useState<Record<string, string>>({})
@@ -51,12 +52,19 @@ export function CaseMonitor() {
   const [contexts, setContexts] = useState<Record<string, ReviewContext>>({})
   const [contextErrors, setContextErrors] = useState<Record<string, string>>({})
 
+  // Fix round 1 (M6): a generation counter, bumped on every filter-driven reload, so a
+  // "load more" response that arrives after the filter has since changed is dropped
+  // instead of appending stale rows onto a list that no longer matches the filter shown.
+  const generationRef = useRef(0)
+
   useEffect(() => {
     let cancelled = false
+    const generation = ++generationRef.current
     async function load() {
       setRows(null)
       setNextCursor(null)
       setError(null)
+      setLoadMoreError(null)
       setExpanded(null)
       // A filter change makes every previously loaded detail/context stale (a different
       // row set, possibly the same case id reused across filters is not a concern here,
@@ -70,11 +78,11 @@ export function CaseMonitor() {
           group: group === '' ? undefined : group,
           escalationKind: escalationKind === '' ? undefined : escalationKind,
         })
-        if (cancelled) return
+        if (cancelled || generation !== generationRef.current) return
         setRows(page.items)
         setNextCursor(page.next_cursor)
       } catch (caught) {
-        if (!cancelled) setError(detailOf(caught))
+        if (!cancelled && generation === generationRef.current) setError(detailOf(caught))
       }
     }
     void load()
@@ -85,27 +93,30 @@ export function CaseMonitor() {
 
   async function loadMore() {
     if (nextCursor === null) return
+    const generation = generationRef.current
     setLoadingMore(true)
+    setLoadMoreError(null)
     try {
       const page = await api.listCases({
         group: group === '' ? undefined : group,
         escalationKind: escalationKind === '' ? undefined : escalationKind,
         cursor: nextCursor,
       })
+      if (generation !== generationRef.current) return // the filter changed meanwhile
       setRows((previous) => [...(previous ?? []), ...page.items])
       setNextCursor(page.next_cursor)
     } catch (caught) {
-      setError(detailOf(caught))
+      if (generation === generationRef.current) setLoadMoreError(detailOf(caught))
     } finally {
-      setLoadingMore(false)
+      if (generation === generationRef.current) setLoadingMore(false)
     }
   }
 
   function selectGroup(value: StateGroup | '') {
     setGroup(value)
-    // required_fields note: escalation_kind is only accepted with group=staff (docs/api.md
-    // §5); leaving it set while switching to another group would otherwise ask the API
-    // for an invalid_filter combination on the very next load.
+    // escalation_kind is only accepted with group=staff (docs/api.md §5); leaving it set
+    // while switching to another group would otherwise ask the API for an invalid_filter
+    // combination on the very next load.
     if (value !== 'staff') setEscalationKind('')
   }
 
@@ -199,7 +210,7 @@ export function CaseMonitor() {
         </p>
       ) : rows.length === 0 ? (
         <Alert variant="info" title="אין פניות להצגה">
-          לא נמצאו פניות במצב שנבחר.
+          אין פניות בקבוצה שנבחרה.
         </Alert>
       ) : (
         <div className="table-wrap card">
@@ -238,6 +249,11 @@ export function CaseMonitor() {
               <Button variant="secondary" busy={loadingMore} onClick={() => void loadMore()}>
                 טעינת עוד
               </Button>
+              {loadMoreError && (
+                <Alert variant="error" title="טעינת העוד נכשלה">
+                  <span className="mono">{loadMoreError}</span>
+                </Alert>
+              )}
             </div>
           )}
         </div>

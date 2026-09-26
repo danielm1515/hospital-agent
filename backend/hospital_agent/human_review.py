@@ -55,7 +55,10 @@ MAX_MESSAGE_LENGTH = 2000
 
 
 class NotInReview(Exception):
-    """The case is not in AwaitingHumanReview (API 409 "not_in_review")."""
+    """The case is not in AwaitingHumanReview: 409 "not_in_review" on decide()/request()/
+    answer(), 404 "not_in_review" on queue_item() (`GET /api/staff/reviews/{case_id}`,
+    staff-fixes design Task 3 - a GET reports a missing/mismatched resource as 404, not
+    409, which is reserved for a state conflict on a write)."""
 
 
 class ContextChanged(Exception):

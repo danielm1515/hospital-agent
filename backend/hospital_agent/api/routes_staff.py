@@ -54,6 +54,11 @@ def list_cases(state: State | None = None, group: str | None = None, escalation_
     table shows, so the client makes no per-row `getCase` follow-up."""
     if not (1 <= limit <= MAX_LIST_LIMIT):
         raise HTTPException(status_code=422, detail="invalid_limit")
+    if state is not None and group is not None:
+        # Fix round 1 (I3): the two are alternative filters, not a narrower combination of
+        # both - silently picking one of them would surprise whichever the client thought
+        # was in effect.
+        raise HTTPException(status_code=422, detail="invalid_filter")
     if escalation_kind is not None and group != "staff":
         raise HTTPException(status_code=422, detail="invalid_filter")
     parsed_kind: EscalationKind | None = None
@@ -132,11 +137,11 @@ def review_queue(limit: int = DEFAULT_LIST_LIMIT, cursor: str | None = None,
     parsed_cursor = None
     if cursor is not None:
         try:
-            parsed_cursor = repository.decode_cases_cursor(cursor)
+            parsed_cursor = repository.decode_queue_cursor(cursor)
         except ValueError:
             raise HTTPException(status_code=422, detail="invalid_cursor") from None
     items, has_more = reviews.queue(limit=limit, cursor=parsed_cursor)
-    next_cursor = (repository.encode_cases_cursor(items[-1].entered_at, items[-1].case_id)
+    next_cursor = (repository.encode_queue_cursor(items[-1].entered_at, items[-1].case_id)
                   if has_more and items else None)
     return ReviewQueuePage(items=[ReviewItem.model_validate(item) for item in items], next_cursor=next_cursor)
 

@@ -5,6 +5,7 @@ The reviewer's identity comes from the token only (§18.3): the body carries no 
 """
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import text
 
 from hospital_agent import data_log, repository
 from hospital_agent.api.app import create_app
@@ -94,7 +95,35 @@ def test_cases_cursor_round_trips():
 
     at = datetime(2026, 9, 19, 22, 12, 48, 986200, tzinfo=UTC)
     cursor = repository.encode_cases_cursor(at, "CASE-23FE645294B7")
+    assert cursor.startswith("c|")
     assert repository.decode_cases_cursor(cursor) == (at, "CASE-23FE645294B7")
+
+
+def test_a_queue_cursor_is_refused_on_the_case_list_and_vice_versa(client, staff, sm, app_engine):
+    """Fix round 1 (M5): a `c|` kind prefix on the case list, `r|` on the queue - a cursor
+    from one is 422 invalid_cursor on the other, not silently misread."""
+    from datetime import UTC, datetime
+
+    at = datetime.now(UTC)
+    queue_cursor = repository.encode_queue_cursor(at, "CASE-1")
+    cases_cursor = repository.encode_cases_cursor(at, "CASE-1")
+    assert queue_cursor.startswith("r|") and cases_cursor.startswith("c|")
+
+    on_cases = client.get("/api/staff/cases", params={"cursor": queue_cursor}, headers=staff)
+    assert on_cases.status_code == 422 and on_cases.json() == {"detail": "invalid_cursor"}
+
+    on_reviews = client.get("/api/staff/reviews", params={"cursor": cases_cursor}, headers=staff)
+    assert on_reviews.status_code == 422 and on_reviews.json() == {"detail": "invalid_cursor"}
+
+
+def test_cursor_with_a_naive_datetime_is_refused(client, staff):
+    """Fix round 1 (M5): decode_cases_cursor/decode_queue_cursor both refuse a cursor whose
+    timestamp carries no timezone offset, rather than comparing it against an aware column."""
+    import base64
+
+    naive = base64.urlsafe_b64encode(b"2026-09-19T22:12:48.986200|CASE-1").decode("ascii")
+    response = client.get("/api/staff/cases", params={"cursor": f"c|{naive}"}, headers=staff)
+    assert response.status_code == 422 and response.json() == {"detail": "invalid_cursor"}
 
 
 def test_cases_list_is_paginated_with_a_keyset_cursor(client, staff, sm, app_engine):
@@ -180,6 +209,44 @@ def test_cases_list_rejects_an_escalation_kind_filter_outside_group_staff(client
     assert other_group.status_code == 422 and other_group.json() == {"detail": "invalid_filter"}
 
 
+def test_cases_list_rejects_state_and_group_together(client, staff, sm, app_engine):
+    """Fix round 1 (I3): `?state=` and `?group=` are alternative filters - combining them is
+    refused rather than silently picking one."""
+    medical_question(sm, app_engine)
+
+    response = client.get("/api/staff/cases", params={"state": "AwaitingHumanReview", "group": "staff"},
+                          headers=staff)
+    assert response.status_code == 422 and response.json() == {"detail": "invalid_filter"}
+
+
+def test_cases_list_tie_break_is_case_id_descending(client, staff, sm, app_engine):
+    """Fix round 1 (I2): several cases with the exact same updated_at must still come out
+    in one deterministic order - case_id descending - walked page by page with limit=1."""
+    cases = [Driver(sm, app_engine, patient_id=f"P-8000{i}") for i in range(4)]
+    for d in cases:
+        d.submit()
+    same_time = cases[0].case.updated_at
+    with app_engine.begin() as conn:
+        for d in cases:
+            conn.execute(text("UPDATE cases SET updated_at = :at WHERE case_id = :c"),
+                        {"at": same_time, "c": d.case_id})
+    expected = sorted((d.case_id for d in cases), reverse=True)
+
+    seen: list[str] = []
+    cursor = None
+    for _ in range(len(cases) + 1):
+        params = {"limit": 1}
+        if cursor is not None:
+            params["cursor"] = cursor
+        page = client.get("/api/staff/cases", params=params, headers=staff).json()
+        seen.extend(c["case_id"] for c in page["items"] if c["case_id"] in expected)
+        cursor = page["next_cursor"]
+        if cursor is None:
+            break
+
+    assert seen == expected
+
+
 def test_cases_list_runs_one_sql_statement_regardless_of_row_count(client, staff, sm, app_engine):
     """Staff-fixes design Task 3: before, the Case Monitor's N+1 was in the browser (one
     `getCase` per row); the list route itself was always one `SELECT`. This pins that it
@@ -249,6 +316,36 @@ def test_the_review_queue_shape(client, staff, sm, app_engine):
     assert queue[1]["allowed_decisions"] == ["resolve", "reject"]
     assert queue[0]["allowed_decisions"] == ["approve", "resolve", "reject"]
     assert queue[0]["required_fields"] == []
+
+
+def test_the_review_queue_runs_one_sql_statement_regardless_of_row_count(client, staff, sm, app_engine):
+    """M8: before Task 5, the queue ran 1 + N SQL queries (list_cases + load_trace per
+    case). Pins that GET /api/staff/reviews stays exactly one statement as escalated cases
+    accumulate."""
+    from sqlalchemy import event
+
+    for i in range(4):
+        d = Driver(sm, app_engine, patient_id=f"P-9000{i}")
+        d.to_classified()
+        d.plan()
+        d.propose()
+        d.allow()
+        d.retry_exhausted()
+
+    statements = []
+
+    def _count(conn, cursor, statement, parameters, context, executemany):
+        statements.append(statement)
+
+    event.listen(app_engine, "before_cursor_execute", _count)
+    try:
+        response = client.get("/api/staff/reviews", headers=staff)
+    finally:
+        event.remove(app_engine, "before_cursor_execute", _count)
+
+    assert response.status_code == 200
+    assert len(response.json()["items"]) == 4
+    assert len(statements) == 1
 
 
 def test_one_review_item_by_case_id(client, staff, sm, app_engine):

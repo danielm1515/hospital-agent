@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -217,6 +217,47 @@ describe('CaseMonitor', () => {
     expect(screen.queryByRole('button', { name: 'טעינת עוד' })).not.toBeInTheDocument()
   })
 
+  it('drops a stale "load more" response if the filter changed meanwhile (M6)', async () => {
+    vi.mocked(api.listCases).mockResolvedValue(page([DONE], 'CURSOR-1'))
+    renderMonitor()
+    await screen.findByText('CASE-23FE645294B7')
+
+    let resolveLoadMore: (value: CaseListPage) => void = () => {}
+    vi.mocked(api.listCases).mockImplementation(
+      () => new Promise((resolve) => { resolveLoadMore = resolve }),
+    )
+    await userEvent.click(screen.getByRole('button', { name: 'טעינת עוד' }))
+
+    // The group filter changes before that "load more" call resolves.
+    vi.mocked(api.listCases).mockResolvedValue(page([IN_REVIEW]))
+    await userEvent.selectOptions(screen.getByLabelText('סינון לפי קבוצה'), 'staff')
+    await screen.findByText('CASE-6FFF40DFB8DA')
+    expect(screen.queryByText('CASE-23FE645294B7')).not.toBeInTheDocument()
+
+    // The stale "load more" now resolves - it must not resurrect the old row.
+    await act(async () => {
+      resolveLoadMore(page([DONE], null))
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    expect(screen.queryByText('CASE-23FE645294B7')).not.toBeInTheDocument()
+    expect(screen.getByText('CASE-6FFF40DFB8DA')).toBeInTheDocument()
+  })
+
+  it('shows a failed "load more" as an inline error beside the button, not a replacement for the table (M6)', async () => {
+    vi.mocked(api.listCases).mockResolvedValue(page([DONE], 'CURSOR-1'))
+    renderMonitor()
+    await screen.findByText('CASE-23FE645294B7')
+
+    vi.mocked(api.listCases).mockRejectedValue(new api.ApiError(500, 'server_error'))
+    await userEvent.click(screen.getByRole('button', { name: 'טעינת עוד' }))
+
+    expect(await screen.findByText('טעינת העוד נכשלה')).toBeInTheDocument()
+    // The table (and its already-loaded row) is still there, not replaced by the error.
+    expect(screen.getByText('CASE-23FE645294B7')).toBeInTheDocument()
+    expect(screen.getByRole('table')).toBeInTheDocument()
+  })
+
   it('clears the context cache on a filter change, so a re-expanded case is fetched again', async () => {
     renderMonitor()
     await userEvent.click(await screen.findByRole('button', { name: 'CASE-23FE645294B7' }))
@@ -365,10 +406,11 @@ describe('CaseMonitor', () => {
     expect(await screen.findByText(/לא נשמר תוכן לפנייה הזו/)).toBeInTheDocument()
   })
 
-  it('shows an empty state when no case matches', async () => {
+  it('shows an empty state when no case matches, naming the group (M7)', async () => {
     vi.mocked(api.listCases).mockResolvedValue(page([]))
     renderMonitor()
 
     expect(await screen.findByText('אין פניות להצגה')).toBeInTheDocument()
+    expect(screen.getByText('אין פניות בקבוצה שנבחרה.')).toBeInTheDocument()
   })
 })
