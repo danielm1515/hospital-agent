@@ -111,6 +111,7 @@ def test_a_non_zero_exit_is_unavailable(monkeypatch):
     '{"result": []}',                        # a result with no expression
     '{"result": [{"expressions": []}]}',
     '{"result": [{"expressions": [{}]}]}',   # an expression with no value
+    '{"errors": []}',                        # an object without "result" that is not exactly {}
 ])
 def test_unreadable_output_is_unavailable(monkeypatch, stdout):
     monkeypatch.setattr(subprocess, "run", lambda *a, **k: _Done(stdout))

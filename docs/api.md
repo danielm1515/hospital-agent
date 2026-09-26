@@ -228,10 +228,10 @@ else shown here.
     escalation to let the case proceed regardless;
   - the case's **latest** Data Log `instructions` entry (§12.3) is present (not tombstoned) -
     the fixed plan loads instructions once (after the patient's upload, golden scenario 1 goes
-    straight back to `AssessingReadiness` with no re-plan), but nothing in the Data Log limits
-    a case to one such entry, so this is always the latest entry by recency; if that latest
-    entry was deleted, the result is `null`, and this never falls back to an older,
-    still-present entry.
+    back through `Classifying` to `AssessingReadiness`, with no re-plan), but nothing in the
+    Data Log limits a case to one such entry, so this is always the latest entry by recency;
+    if that latest entry was deleted, the result is `null`, and this never falls back to an
+    older, still-present entry.
   Exactly what was approved and shown, split into its title and body on the first newline.
   `null` whenever any of the above fails to hold, in particular for every status but
   `completed`.
@@ -1263,9 +1263,10 @@ The answer is exactly the requested `source_id` + `version`, with a non-empty `t
   delivered as though approved), or the client itself was misconfigured (e.g. an invalid API
   key header the transport rejects before a request is even sent - an operator's mistake, never
   the caller's). The application log records one line, `instruction read: <code> in <n> ms`,
-  for every *service-call* outcome (success included) - never for the checks above it
-  (not-configured, a bad id/version, or the registry's own denial, which are a fixed verdict on
-  the request itself, not a call to the appointment-service) - where `<code>` is `ok`,
+  for every *service-call* outcome (success included), and for an OPA outage
+  (`policy_unavailable`) - never for the checks above it (not-configured, a bad id/version,
+  or the registry's own denial, which are a fixed verdict on the request itself, not a call
+  to the appointment-service) - where `<code>` is `ok`,
   `not_found`, one of the client's own codes (`no_answer`, `status_<n>`, `invalid_response`),
   `client_error` (the client's defensive `ValueError`), or `policy_unavailable` (OPA itself
   could not be asked, so the appointment-service was not either) - never the source_id, the

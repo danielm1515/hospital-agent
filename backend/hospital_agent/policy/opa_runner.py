@@ -67,7 +67,7 @@ def instruction_source_approved(source_id: str, version: str, *, opa_binary: str
     - `True`  - OPA answered, and the rule holds (the value is literally `true`).
     - `False` - OPA answered, and it is a deny. `instruction_source_approved` is a partial rule
       (no `else` branch), so OPA's own "no" is *undefined* - `opa eval --format json` then
-      prints `{}` with no `"result"` key - whenever the body doesn't hold (unlisted source,
+      prints exactly `{}` - whenever the body doesn't hold (unlisted source,
       wrong version, empty version, not yet valid, expired, or any date the registry stores in
       a shape `time.parse_rfc3339_ns` can't parse). A value that is not literally `true` is a
       deny too.
@@ -92,8 +92,10 @@ def instruction_source_approved(source_id: str, version: str, *, opa_binary: str
         return None
     if not isinstance(answer, dict):
         return None
+    if answer == {}:
+        return False  # undefined: OPA's own deny, printed as exactly {}
     if "result" not in answer:
-        return False  # undefined: OPA's own deny
+        return None  # any other object without "result" (e.g. {"errors": [...]}) is unreadable
     try:
         value = answer["result"][0]["expressions"][0]["value"]
     except (KeyError, IndexError, TypeError):
