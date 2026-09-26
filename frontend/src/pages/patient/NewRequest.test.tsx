@@ -1,4 +1,5 @@
-import { render, screen, waitFor, within } from '@testing-library/react'
+import { StrictMode } from 'react'
+import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -246,9 +247,18 @@ describe('NewRequest: the pre-send check (design D5)', () => {
     ).toBeInTheDocument()
   })
 
-  it('switches to that appointment and sends', async () => {
+  it('switches to that appointment only, and leaves sending to the patient (fix round 1, item 1)', async () => {
     const user = await chooseNeuroAndWrite('מה ההכנה למבחן מאמץ?')
     await user.click(screen.getByRole('button', { name: 'כן, לעבור לתור הזה' }))
+
+    expect(createRequest).not.toHaveBeenCalled()
+    expect(picker().value).toBe('APT-8392')
+    expect(screen.queryByRole('button', { name: 'כן, לעבור לתור הזה' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'שליחת הפנייה' })).toHaveFocus()
+
+    // The patient sends the new choice themselves; the text now matches it, so no second offer.
+    await user.click(screen.getByRole('button', { name: 'שליחת הפנייה' }))
+    expect(createRequest).toHaveBeenCalledTimes(1)
     expect(createRequest).toHaveBeenCalledWith('מה ההכנה למבחן מאמץ?', 'APT-8392')
   })
 
@@ -271,14 +281,31 @@ describe('NewRequest: the pre-send check (design D5)', () => {
   })
 })
 
-describe('NewRequest: unmount safety', () => {
-  it('ignores a list that answers after the screen is gone', async () => {
-    let resolve: (value: AppointmentList) => void = () => {}
-    listMyAppointments.mockReturnValue(new Promise((done) => (resolve = done)))
-    const { unmount } = renderNew()
-    unmount()
-    resolve(list([neuro]))
-    await Promise.resolve()
-    expect(listMyAppointments).toHaveBeenCalledTimes(1)
+describe('NewRequest: StrictMode and late answers', () => {
+  it('keeps the answer of the live mount, never a late one from StrictMode’s throw-away mount', async () => {
+    // StrictMode mounts, cleans up and mounts again: two list reads. The first (the
+    // cancelled mount's) answers last, with a different list - it must never land.
+    const answers: Array<(value: AppointmentList) => void> = []
+    listMyAppointments.mockImplementation(() => new Promise((done) => answers.push(done)))
+    render(
+      <StrictMode>
+        <MemoryRouter initialEntries={['/patient/new']}>
+          <TestAuthProvider value={authValue({ user: PATIENT_USER })}>
+            <Routes>
+              <Route path="/patient/new" element={<NewRequest />} />
+            </Routes>
+          </TestAuthProvider>
+        </MemoryRouter>
+      </StrictMode>,
+    )
+    await waitFor(() => expect(answers).toHaveLength(2))
+
+    await act(async () => answers[1](list([neuro])))
+    await waitFor(() => expect(picker().value).toBe('APT-8391'))
+    await act(async () => answers[0](list([neuro, stress])))
+
+    // Still the live mount's one appointment, pre-selected, with "the nearest" beside it.
+    expect(optionTexts()).toHaveLength(2)
+    expect(picker().value).toBe('APT-8391')
   })
 })

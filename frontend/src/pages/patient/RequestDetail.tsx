@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import * as api from '../../api/client'
 import { DOCUMENT_FORMATS } from '../../api/types'
-import type { DocumentFormat, PatientView, StatusChange } from '../../api/types'
+import type { DocumentFormat, PatientStatus, PatientView, StatusChange } from '../../api/types'
 import { Alert } from '../../components/Alert'
 import { Button } from '../../components/Button'
 import { Loading } from '../../components/Loading'
@@ -75,14 +75,40 @@ export function RequestDetail() {
     }
   }, [])
 
-  const show = useCallback((next: PatientView, ticket: number) => {
-    if (!alive.current || ticket < shown.current) return false
-    shown.current = ticket
-    setView(next)
-    setError(null)
-    setLoadedAt(new Date())
-    return true
+  // The status last put on screen, kept beside `shown` so `show` knows - in the very update
+  // that puts a new status on screen - whether the window must open (fix round 1, item 4):
+  // opening it from an effect a render later let "עודכן לאחרונה" flash for one frame.
+  const shownStatus = useRef<PatientStatus | null>(null)
+
+  /** Opens (or restarts) the 60 s window for a non-final status; closes it for a final one. */
+  const openWindow = useCallback((next: PatientStatus) => {
+    if (isFinal(next)) {
+      setWindowOpen(false)
+      return
+    }
+    setWindowOpen(true)
+    setWindowKey((key) => key + 1)
   }, [])
+
+  /**
+   * Puts an answer on screen unless a newer one is already there (or the screen is gone).
+   * Entering the screen and every status change open the window in the same update;
+   * `restart` does so for an unchanged status too (the patient's own action).
+   */
+  const show = useCallback(
+    (next: PatientView, ticket: number, restart = false) => {
+      if (!alive.current || ticket < shown.current) return false
+      shown.current = ticket
+      const changed = next.status !== shownStatus.current
+      shownStatus.current = next.status
+      setView(next)
+      setError(null)
+      setLoadedAt(new Date())
+      if (changed || restart) openWindow(next.status)
+      return true
+    },
+    [openWindow],
+  )
 
   const load = useCallback(async () => {
     const ticket = ++asked.current
@@ -94,32 +120,28 @@ export function RequestDetail() {
     }
   }, [caseId, show])
 
-  const status = view?.status ?? null
-  const statusRef = useRef(status)
-  statusRef.current = status
-
+  /** "רענון" and the tab shown again: restart the window of the status on screen, if non-final. */
   const restartWindow = useCallback(() => {
-    const current = statusRef.current
+    const current = shownStatus.current
     if (current === null || isFinal(current)) return
-    setWindowOpen(true)
-    setWindowKey((key) => key + 1)
-  }, [])
+    openWindow(current)
+  }, [openWindow])
 
   useEffect(() => {
-    void load()
+    // Through a microtask, and cancelled by the cleanup: StrictMode's throw-away first mount
+    // never loads, so the screen asks exactly once on entry (fix round 1, item 8).
+    let cancelled = false
+    void Promise.resolve().then(() => {
+      if (!cancelled) void load()
+    })
+    return () => {
+      cancelled = true
+    }
   }, [load])
 
   useEffect(() => {
     setUploadNotice(null)
   }, [caseId])
-
-  // Entering the screen, and every status change after it, (re)starts the window; a final
-  // status closes it for good.
-  useEffect(() => {
-    if (status === null) return
-    if (isFinal(status)) setWindowOpen(false)
-    else restartWindow()
-  }, [status, restartWindow])
 
   useEffect(() => {
     if (!windowOpen) return
@@ -131,7 +153,7 @@ export function RequestDetail() {
   useEffect(() => {
     function onVisibility() {
       if (document.visibilityState !== 'visible') return
-      const current = statusRef.current
+      const current = shownStatus.current
       if (current === null || isFinal(current)) return
       restartWindow()
       void load()
@@ -140,21 +162,13 @@ export function RequestDetail() {
     return () => document.removeEventListener('visibilitychange', onVisibility)
   }, [load, restartWindow])
 
+  const status = view?.status ?? null
   const polling = status !== null && !isFinal(status) && (isMoving(status) || windowOpen)
   usePolling(polling, () => void load(), REQUEST_POLL_MS)
   const pollingStopped = status !== null && !isFinal(status) && !polling
 
   /** The patient's own successful action (upload, reply): show its answer, restart the window. */
-  const applyChange = useCallback(
-    (next: PatientView) => {
-      if (!show(next, ++asked.current)) return
-      if (!isFinal(next.status)) {
-        statusRef.current = next.status
-        restartWindow()
-      }
-    },
-    [show, restartWindow],
-  )
+  const applyChange = useCallback((next: PatientView) => void show(next, ++asked.current, true), [show])
 
   async function refresh() {
     setRefreshing(true)

@@ -39,8 +39,14 @@ const ERROR_LABELS: Record<string, string> = {
   // Sub-project 18 (`docs/api.md` §9): the instruction-text read.
   instructions_unavailable: 'מערכת הוראות ההכנה אינה זמינה',
   invalid_instruction: 'מזהה הוראות ההכנה אינו תקין',
-  instruction_mismatch: 'התקבלה גרסה אחרת של הוראות ההכנה',
 }
+
+/**
+ * The panel's own refusal of an answer for another source or version than it asked for. Not
+ * an API code, so it is never printed as one - staff see only its Hebrew line (fix round 1).
+ */
+const MISMATCH = 'instruction_mismatch'
+const MISMATCH_TEXT = 'התקבלה גרסה אחרת של הוראות ההכנה.'
 
 const INVALID_DATES_ERROR = 'יש לבחור שני תאריכים תקינים'
 const RANGE_ORDER_ERROR = 'תאריך הסיום חייב להיות אחרי תאריך ההתחלה או באותו יום'
@@ -310,6 +316,9 @@ function AppointmentRow({
       )}
       {appointment.instruction && (
         <AppointmentInstructions
+          // A new source or version is a new component: no cached text, and no answer still
+          // in flight for the old one, can ever show under it (fix round 1, item 2).
+          key={`${appointment.instruction.source_id}@${appointment.instruction.version}`}
           instruction={appointment.instruction}
           audience={audience}
           loadInstruction={loadInstruction}
@@ -358,12 +367,13 @@ function AppointmentInstructions({
     setBusy(true)
     setProblem(null)
     Promise.resolve()
-      .then(() => read(instruction.source_id, instruction.version))
+      // A read superseded - or a row unmounted - before its microtask ran never starts.
+      .then(() => (id === requestId.current ? read(instruction.source_id, instruction.version) : null))
       .then((answer) => {
-        if (id !== requestId.current) return
+        if (id !== requestId.current || answer === null) return
         // Only the exact source and version that was asked for is ever shown.
         if (answer.source_id !== instruction.source_id || answer.version !== instruction.version) {
-          setProblem('instruction_mismatch')
+          setProblem(MISMATCH)
         } else {
           setText(answer)
           setOpen(true)
@@ -393,12 +403,15 @@ function AppointmentInstructions({
       <div className="appointment-instructions-row">
         <p className="hint">
           לא הצלחנו לטעון את הוראות ההכנה כרגע.
-          {audience === 'staff' && (
-            <>
-              {' '}
-              {ERROR_LABELS[problem] ?? 'שגיאה לא צפויה'} <span className="mono">{problem}</span>
-            </>
-          )}
+          {audience === 'staff' &&
+            (problem === MISMATCH ? (
+              <> {MISMATCH_TEXT}</>
+            ) : (
+              <>
+                {' '}
+                {ERROR_LABELS[problem] ?? 'שגיאה לא צפויה'} <span className="mono">{problem}</span>
+              </>
+            ))}
         </p>
         <Button variant="quiet" busy={busy} onClick={() => fetchText(loadInstruction)}>
           נסו שוב
@@ -407,7 +420,14 @@ function AppointmentInstructions({
     )
   } else if (loadInstruction) {
     control = (
-      <Button variant="quiet" busy={busy} aria-expanded={open} aria-controls={textId} onClick={toggle}>
+      <Button
+        variant="quiet"
+        busy={busy}
+        aria-expanded={open}
+        // Only while the text is actually there to point at (fix round 1, item 7).
+        aria-controls={open && text ? textId : undefined}
+        onClick={toggle}
+      >
         {open ? 'הסתרת הוראות ההכנה' : 'הצגת הוראות ההכנה'}
       </Button>
     )

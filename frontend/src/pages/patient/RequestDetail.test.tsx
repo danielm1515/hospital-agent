@@ -1,3 +1,4 @@
+import { StrictMode } from 'react'
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
@@ -28,8 +29,8 @@ const uploadDocumentFile = vi.mocked(api.uploadDocumentFile)
 const replyToRequest = vi.mocked(api.replyToRequest)
 const replyWithFile = vi.mocked(api.replyWithFile)
 
-function renderDetail(caseId = 'CASE-1') {
-  return render(
+function renderDetail(caseId = 'CASE-1', { strict = false }: { strict?: boolean } = {}) {
+  const tree = (
     <MemoryRouter initialEntries={[`/patient/requests/${caseId}`]}>
       <TestAuthProvider value={authValue({ user: PATIENT_USER })}>
         <Routes>
@@ -37,8 +38,9 @@ function renderDetail(caseId = 'CASE-1') {
           <Route path="/patient/requests/:caseId" element={<RequestDetail />} />
         </Routes>
       </TestAuthProvider>
-    </MemoryRouter>,
+    </MemoryRouter>
   )
+  return render(strict ? <StrictMode>{tree}</StrictMode> : tree)
 }
 
 const needsDocument = (overrides: Partial<PatientView> = {}) =>
@@ -561,6 +563,30 @@ describe('RequestDetail polling (sub-project 18, addition A)', () => {
 
   const stoppedLine = () => screen.queryByText(/^עודכן לאחרונה ב־\d{2}:\d{2}$/)
 
+  /**
+   * Records whether `text` was ever put into the page, even for a single commit that a later
+   * render took away again - what the final DOM alone cannot show.
+   */
+  function watchFor(text: string) {
+    let seen = false
+    const check = (records: MutationRecord[]) => {
+      for (const record of records) {
+        for (const node of Array.from(record.addedNodes)) {
+          if (node.textContent?.includes(text)) seen = true
+        }
+      }
+    }
+    const observer = new MutationObserver(check)
+    observer.observe(document.body, { childList: true, subtree: true })
+    return {
+      seen: () => {
+        check(observer.takeRecords())
+        return seen
+      },
+      stop: () => observer.disconnect(),
+    }
+  }
+
   function becomeVisible() {
     Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => 'visible' })
     act(() => {
@@ -711,15 +737,94 @@ describe('RequestDetail polling (sub-project 18, addition A)', () => {
     expect(stoppedLine()).not.toBeInTheDocument()
   })
 
-  it('drops a poll that answers after the screen is gone', async () => {
-    let resolve: (value: PatientView) => void = () => {}
-    getRequest.mockReturnValue(new Promise((done) => (resolve = done)))
-    const { unmount } = renderDetail()
-    unmount()
-    await act(async () => {
-      resolve(patientView({ status: 'in_review' }))
+  it('asks exactly once on entry and adds no second interval under StrictMode (fix round 1, item 8)', async () => {
+    getRequest.mockResolvedValue(patientView({ status: 'in_progress' }))
+    renderDetail('CASE-1', { strict: true })
+    await advance(0)
+    expect(getRequest).toHaveBeenCalledTimes(1)
+
+    await advance(4999)
+    expect(getRequest).toHaveBeenCalledTimes(1)
+    await advance(1)
+    expect(getRequest).toHaveBeenCalledTimes(2)
+    await advance(90_000)
+    expect(getRequest).toHaveBeenCalledTimes(20)
+  })
+
+  it('never shows the stopped line, even for one frame, on entering a waiting status (fix round 1, item 4)', async () => {
+    const watch = watchFor('עודכן לאחרונה')
+    getRequest.mockResolvedValue(patientView({ status: 'in_review' }))
+    await renderLoaded()
+    await advance(5000)
+    expect(watch.seen()).toBe(false)
+    // It does appear once the window really ends - the watcher itself works.
+    await advance(60_000)
+    expect(watch.seen()).toBe(true)
+    watch.stop()
+  })
+
+  it('never flashes the stopped line when a long-moving case starts waiting (fix round 1, item 4)', async () => {
+    getRequest.mockResolvedValue(patientView({ status: 'in_progress' }))
+    await renderLoaded()
+    await advance(70_000) // past the entry window, still polling because the case moves
+    const watch = watchFor('עודכן לאחרונה')
+    getRequest.mockResolvedValue(patientView({ status: 'in_review' }))
+    await advance(5000)
+    await advance(5000)
+    expect(watch.seen()).toBe(false)
+    watch.stop()
+  })
+
+  it('keeps the patient’s newer answer when an older poll lands after it (fix round 1, item 3)', async () => {
+    getRequest.mockResolvedValue(needsDocument({ missing_document_ids: ['blood_test'] }))
+    uploadDocument.mockResolvedValue(patientView({ case_id: 'CASE-1', status: 'in_progress' }))
+    const { container } = renderDetail()
+    await advance(0)
+
+    // The poll at 5 s is held open.
+    let answerPoll: (value: PatientView) => void = () => {}
+    getRequest.mockReturnValueOnce(new Promise((done) => (answerPoll = done)))
+    await advance(5000)
+    expect(getRequest).toHaveBeenCalledTimes(2)
+
+    // Meanwhile the patient's upload answers with the new status.
+    const form = screen.getByRole('region', { name: 'העלאת מסמך blood_test' })
+    act(() => {
+      fireEvent.change(within(form).getByLabelText('תוכן המסמך'), { target: { value: 'תוצאות' } })
     })
+    act(() => {
+      fireEvent.click(within(form).getByRole('button', { name: 'שליחת המסמך' }))
+    })
+    await advance(0)
+    expect(container.querySelector('.req-head .pill')).toHaveTextContent('בטיפול')
+
+    // The held poll now answers with the old status: it must not take the screen back.
+    await act(async () => {
+      answerPoll(needsDocument({ missing_document_ids: ['blood_test'] }))
+    })
+    await advance(0)
+    expect(container.querySelector('.req-head .pill')).toHaveTextContent('בטיפול')
+    expect(screen.queryByRole('region', { name: 'העלאת מסמך blood_test' })).not.toBeInTheDocument()
+  })
+
+  it('leaves no interval, timeout or listener behind once the screen is gone', async () => {
+    getRequest.mockResolvedValue(patientView({ status: 'in_review' }))
+    const { unmount } = renderDetail()
+    await advance(0)
+    expect(vi.getTimerCount()).toBeGreaterThan(0) // the interval and the window's timeout
+    unmount()
+    expect(vi.getTimerCount()).toBe(0)
+
+    becomeVisible()
     await advance(120_000)
     expect(getRequest).toHaveBeenCalledTimes(1)
+  })
+
+  it('never asks when the screen is gone before its first load starts', async () => {
+    getRequest.mockResolvedValue(patientView({ status: 'in_review' }))
+    const { unmount } = renderDetail()
+    unmount()
+    await advance(0)
+    expect(getRequest).not.toHaveBeenCalled()
   })
 })

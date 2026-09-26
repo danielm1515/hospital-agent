@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import * as api from '../../api/client'
 import type { Appointment } from '../../api/types'
@@ -35,7 +35,8 @@ type AppointmentChoices = { phase: 'loading' } | { phase: 'failed' } | { phase: 
  * appointment is pre-selected, with "התור הקרוב ביותר" beside it; with more than one the
  * choice is mandatory; a list that fails to load leaves only "the nearest". Before sending,
  * a deterministic check (`appointmentChoice.ts`) offers to switch when the text seems to be
- * about another of the patient's appointments - the patient may switch or send as is. The
+ * about another of the patient's appointments - the patient may switch (and then send the new
+ * choice themselves) or send as is. The
  * text is sent trimmed, and the case the server answers with decides where we go next - the
  * screen assumes nothing (`docs/api.md` §6, "nothing is optimistic").
  */
@@ -49,6 +50,7 @@ export function NewRequest() {
   const [selected, setSelected] = useState(NEAREST)
   const [choiceError, setChoiceError] = useState<string | null>(null)
   const [suggestion, setSuggestion] = useState<Appointment | null>(null)
+  const formRef = useRef<HTMLFormElement>(null)
 
   useEffect(() => {
     // Guarded: an answer that lands after the screen is gone (or after StrictMode's
@@ -118,6 +120,15 @@ export function NewRequest() {
     await send(trimmed, id)
   }
 
+  /**
+   * "כן, לעבור לתור הזה" switches the choice only - it never sends. The notice goes away and
+   * focus moves to the send button, so the patient looks at the new choice and sends it.
+   */
+  function switchTo(appointment: Appointment) {
+    choose(appointment.appointment_id)
+    formRef.current?.querySelector<HTMLButtonElement>('button[type="submit"]')?.focus()
+  }
+
   function choose(value: string) {
     setSelected(value)
     setChoiceError(null)
@@ -142,7 +153,7 @@ export function NewRequest() {
         </Alert>
       )}
 
-      <form className="form" onSubmit={submit}>
+      <form className="form" ref={formRef} onSubmit={submit}>
         {choices.phase === 'loading' ? (
           <Loading size="inline" label="טוען את התורים שלך" />
         ) : (
@@ -213,10 +224,7 @@ export function NewRequest() {
               <Button
                 variant="secondary"
                 busy={busy}
-                onClick={() => {
-                  setSelected(suggestion.appointment_id)
-                  void send(text.trim(), suggestion.appointment_id)
-                }}
+                onClick={() => switchTo(suggestion)}
               >
                 כן, לעבור לתור הזה
               </Button>

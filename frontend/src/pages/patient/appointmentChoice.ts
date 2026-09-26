@@ -43,13 +43,32 @@ export function israelDayMonth(iso: string): DayMonth | null {
   return { day, month }
 }
 
-/** A d/m or d.m date, optionally followed by a year; never digits inside a longer number. */
-const DATE_RE = /(?<!\d)(\d{1,2})[./](\d{1,2})(?:[./](?:\d{4}|\d{2}))?(?!\d)/g
+/**
+ * A d/m or d.m date, optionally followed by a year. Never digits inside a longer number or a
+ * longer dotted run ("1.2.3", "9.10.5" - a version, a list number): neither a digit nor
+ * "digit." / "digit/" may precede it, and no ".digit" or "/digit" may follow it.
+ */
+const DATE_RE = /(?<!\d)(?<!\d[./])(\d{1,2})[./](\d{1,2})(?:[./](?:\d{4}|\d{2}))?(?!\d)(?![./]\d)/g
 
-/** Every plausible d/m (or d.m) date in `text`, in order; an impossible day or month is dropped. */
+/**
+ * An amount, not a date, when a unit follows it: "1/2 כוס", "3.5 שעות", "2.5 מ"ג" (fix round
+ * 1, item 5). A short closed list - hours and minutes, cups and spoons, weights and volumes.
+ */
+const UNIT_AFTER = /^\s*(?:שעות|שעה|שעתיים|דקות|דקה|שניות|כוסות|כוס|כפות|כף|כפיות|כפית|מ["״]ג|ק["״]ג|מ["״]ל|גרם|ליטרים|ליטר|טבליות|יחידות|אחוז|%|mg|kg|ml)(?![\p{L}])/iu
+
+/** A time of day, not a date, when "שעה" (with its prefixes) comes right before it: "בשעה 9.10". */
+const HOUR_BEFORE = /(?:^|[^\p{L}])[והבלמשכ]{0,2}שעה[\s:\-־]*$/u
+
+/**
+ * Every plausible d/m (or d.m) date in `text`, in order. An impossible day or month is
+ * dropped, and so is an amount with a unit after it or a time of day after "בשעה".
+ */
 export function datesInText(text: string): DayMonth[] {
   const found: DayMonth[] = []
   for (const match of text.matchAll(DATE_RE)) {
+    const start = match.index ?? 0
+    const end = start + match[0].length
+    if (UNIT_AFTER.test(text.slice(end)) || HOUR_BEFORE.test(text.slice(0, start))) continue
     const day = Number(match[1])
     const month = Number(match[2])
     if (day >= 1 && day <= 31 && month >= 1 && month <= 12) found.push({ day, month })

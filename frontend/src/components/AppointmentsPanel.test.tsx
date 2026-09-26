@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ApiError } from '../api/client'
 import type { Appointment, AppointmentList } from '../api/types'
 import { AppointmentsPanel } from './AppointmentsPanel'
+import type { InstructionLoader } from './AppointmentsPanel'
 
 function appointmentList(overrides: Partial<AppointmentList> = {}): AppointmentList {
   return {
@@ -661,17 +662,126 @@ describe('AppointmentsPanel - exam type and preparation instructions (sub-projec
     expect(screen.queryByRole('button', { name: 'הצגת הוראות ההכנה' })).not.toBeInTheDocument()
   })
 
-  it('drops a text that answers after the panel is gone', async () => {
-    const user = userEvent.setup()
-    let resolve: (value: typeof instructionText) => void = () => {}
-    const loadInstruction = vi.fn().mockReturnValue(new Promise((done) => (resolve = done)))
+  it('never calls the instruction reader when the panel is gone before its microtask runs', async () => {
+    const loadInstruction = vi.fn().mockResolvedValue(instructionText)
     const { unmount } = renderPanel('patient', loadInstruction)
     await screen.findByText('מבחן מאמץ')
+
+    // The click only schedules the read; unmounting in the same tick must cancel it outright.
+    fireEvent.click(toggle())
+    unmount()
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(loadInstruction).not.toHaveBeenCalled()
+  })
+
+  /** A panel whose first list has v1 of the instruction, and whose next list (after הצגה) has v2. */
+  async function renderWithVersions(loadInstruction: InstructionLoader) {
+    const v2 = withInstruction({
+      instruction: { source_id: 'INSTR-CARD-STRESS', version: '2', title: 'לפני מבחן מאמץ (גרסה חדשה)' },
+    })
+    const load = vi
+      .fn()
+      .mockResolvedValueOnce(appointmentList({ appointments: [withInstruction()] }))
+      .mockResolvedValueOnce(appointmentList({ appointments: [v2] }))
+    const view = render(<AppointmentsPanel audience="patient" load={load} loadInstruction={loadInstruction} />)
+    await screen.findByText('הוראות הכנה: לפני מבחן מאמץ')
+    return {
+      ...view,
+      showVersion2: async () => {
+        fireEvent.submit(view.container.querySelector('form')!)
+        await screen.findByText('הוראות הכנה: לפני מבחן מאמץ (גרסה חדשה)')
+      },
+    }
+  }
+
+  it('drops the v1 text when the row’s instruction becomes v2, and loads v2 (fix round 1, item 2)', async () => {
+    const user = userEvent.setup()
+    const loadInstruction = vi
+      .fn()
+      .mockResolvedValueOnce(instructionText)
+      .mockResolvedValueOnce({ ...instructionText, version: '2', text: 'טקסט גרסה 2.' })
+    const { showVersion2 } = await renderWithVersions(loadInstruction)
+
+    await user.click(toggle())
+    expect(await screen.findByText(/צום 3 שעות\./)).toBeInTheDocument()
+
+    await showVersion2()
+    expect(screen.queryByText(/צום 3 שעות\./)).not.toBeInTheDocument()
+    expect(toggle()).toHaveAttribute('aria-expanded', 'false')
+
+    await user.click(toggle())
+    expect(loadInstruction).toHaveBeenLastCalledWith('INSTR-CARD-STRESS', '2')
+    expect(await screen.findByText('טקסט גרסה 2.')).toBeInTheDocument()
+  })
+
+  it('never lets an in-flight v1 answer land under v2 (fix round 1, item 2)', async () => {
+    const user = userEvent.setup()
+    const v1 = deferred<typeof instructionText>()
+    const loadInstruction = vi.fn().mockReturnValueOnce(v1.promise)
+    const { showVersion2 } = await renderWithVersions(loadInstruction)
+
     await user.click(toggle())
     await waitFor(() => expect(loadInstruction).toHaveBeenCalledTimes(1))
-    unmount()
-    resolve(instructionText)
-    await Promise.resolve()
-    expect(document.body).not.toHaveTextContent('צום')
+    await showVersion2()
+
+    v1.resolve(instructionText)
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(screen.queryByText(/צום 3 שעות\./)).not.toBeInTheDocument()
+    expect(toggle()).toHaveAttribute('aria-expanded', 'false')
+    expect(toggle()).not.toHaveAttribute('aria-busy')
+  })
+
+  it('shows staff a mismatched answer in Hebrew only, never as an API-looking code (fix round 1, item 6)', async () => {
+    const user = userEvent.setup()
+    renderPanel('staff', vi.fn().mockResolvedValue({ ...instructionText, version: '2' }))
+    await screen.findByText('מבחן מאמץ')
+    await user.click(toggle())
+
+    expect(await screen.findByText(/התקבלה גרסה אחרת של הוראות ההכנה/)).toBeInTheDocument()
+    expect(document.body).not.toHaveTextContent('instruction_mismatch')
+  })
+
+  it('points aria-controls at the text only while it is open (fix round 1, item 7)', async () => {
+    const user = userEvent.setup()
+    renderPanel('patient', vi.fn().mockResolvedValue(instructionText))
+    await screen.findByText('מבחן מאמץ')
+    expect(toggle()).not.toHaveAttribute('aria-controls')
+
+    await user.click(toggle())
+    const hide = await screen.findByRole('button', { name: 'הסתרת הוראות ההכנה' })
+    const controlled = document.getElementById(hide.getAttribute('aria-controls') ?? '')
+    expect(controlled).toHaveTextContent('צום 3 שעות.')
+
+    await user.click(hide)
+    expect(toggle()).not.toHaveAttribute('aria-controls')
+  })
+})
+
+describe('AppointmentsPanel - overlapping list loads (fix round 1, item 3)', () => {
+  it('a late answer from a superseded load never lands after a failed load and its retry', async () => {
+    const user = userEvent.setup()
+    const first = deferred<AppointmentList>()
+    const load = vi
+      .fn()
+      .mockReturnValueOnce(first.promise) // the mount's load, answered last
+      .mockRejectedValueOnce(new ApiError(503, 'appointments_unavailable')) // הצגה
+      .mockResolvedValueOnce(
+        appointmentList({ appointments: [appointment({ appointment_id: 'NEW', department: 'Ophthalmology' })] }),
+      ) // נסה שוב
+    const { container } = render(<AppointmentsPanel audience="patient" load={load} />)
+    await waitFor(() => expect(load).toHaveBeenCalledTimes(1))
+
+    fireEvent.submit(container.querySelector('form')!)
+    expect(await screen.findByText('לא הצלחנו לטעון את התורים')).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'נסה שוב' }))
+    expect(await screen.findByText('עיניים')).toBeInTheDocument()
+
+    first.resolve(appointmentList({ appointments: [appointment({ appointment_id: 'OLD', department: 'Cardiology' })] }))
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(screen.queryByText('קרדיולוגיה')).not.toBeInTheDocument()
+    expect(screen.getByText('עיניים')).toBeInTheDocument()
   })
 })

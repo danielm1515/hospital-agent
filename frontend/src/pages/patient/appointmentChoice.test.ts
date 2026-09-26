@@ -55,6 +55,29 @@ describe('datesInText', () => {
   it('ignores digits that are part of a longer number', () => {
     expect(datesInText('טלפון 0521/234')).toEqual([])
   })
+
+  it('does not read a fraction or an amount with a unit as a date (fix round 1, item 5)', () => {
+    expect(datesInText('לשתות 1/2 כוס מים')).toEqual([])
+    expect(datesInText('צום של 3.5 שעות')).toEqual([])
+    expect(datesInText('2.5 מ"ג, 1/4 כוסות, 10.5 ק״ג, 1.5 ליטר')).toEqual([])
+  })
+
+  it('does not read a time of day after "בשעה" as a date (fix round 1, item 5)', () => {
+    expect(datesInText('התור בשעה 9.10')).toEqual([])
+    expect(datesInText('שעה: 8.30, ובשעה 10/15')).toEqual([])
+  })
+
+  it('does not read a run of numbers such as a version as a date (fix round 1, item 5)', () => {
+    expect(datesInText('גרסה 1.2.3')).toEqual([])
+    expect(datesInText('9.10.5')).toEqual([])
+  })
+
+  it('still finds a real date beside those', () => {
+    expect(datesInText('בשעה 9.10 ביום 7/10, צום 3.5 שעות לפני 13.10.2026')).toEqual([
+      { day: 7, month: 10 },
+      { day: 13, month: 10 },
+    ])
+  })
 })
 
 describe('upcomingScheduled', () => {
@@ -109,6 +132,12 @@ describe('suggestOtherAppointment', () => {
 
   it('says nothing for a text that names no appointment', () => {
     expect(suggestOtherAppointment('מתי התור שלי?', neuro, [stress, echo])).toBeNull()
+  })
+
+  it('says nothing for an amount or a time that only looks like another appointment’s date', () => {
+    // 7.10 is the stress test's date; here it is a time and an amount, never a date.
+    expect(suggestOtherAppointment('להגיע בשעה 7.10', neuro, [stress])).toBeNull()
+    expect(suggestOtherAppointment('לשתות 7/10 כוס', neuro, [stress])).toBeNull()
   })
 
   it('prefers the other appointment the text names most', () => {
