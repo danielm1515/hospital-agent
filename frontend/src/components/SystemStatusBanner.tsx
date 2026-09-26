@@ -36,11 +36,18 @@ function isNewer(a: string, b: string): boolean {
   return new Date(a).getTime() > new Date(b).getTime()
 }
 
-/** Whether the banner should show at all, and the code it should show beside the label. */
-function trouble(status: SystemStatus): string | null {
-  if (status.orchestrator !== 'running') return status.orchestrator ?? 'orchestrator_unavailable'
+/** Whether the banner should show at all, and the code (if any) to show beside the label.
+ * `code: null` happens only for a `null` `orchestrator` (an injected test server, never a real
+ * one - fix round 1, M4): there is no invented code for that, just the generic label. */
+interface Trouble {
+  code: string | null
+}
+
+function trouble(status: SystemStatus): Trouble | null {
+  if (status.orchestrator === null) return { code: null }
+  if (status.orchestrator !== 'running') return { code: status.orchestrator }
   const { last_error, last_ok_at, last_error_at } = status.llm
-  if (last_error && last_error_at && (!last_ok_at || isNewer(last_error_at, last_ok_at))) return last_error
+  if (last_error && last_error_at && (!last_ok_at || isNewer(last_error_at, last_ok_at))) return { code: last_error }
   return null
 }
 
@@ -67,12 +74,13 @@ export function SystemStatusBanner() {
   }, [])
 
   if (!status) return null
-  const code = trouble(status)
-  if (code === null) return null
+  const found = trouble(status)
+  if (found === null) return null
+  const label = found.code === null ? GENERIC_LABEL : systemStatusLabel(found.code)
 
   return (
-    <Alert variant="error" title={systemStatusLabel(code)}>
-      <span className="mono">{code}</span>
+    <Alert variant="error" title={label}>
+      {found.code === null ? undefined : <span className="mono">{found.code}</span>}
     </Alert>
   )
 }

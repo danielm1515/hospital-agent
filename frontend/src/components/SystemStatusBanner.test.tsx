@@ -114,6 +114,17 @@ describe('SystemStatusBanner', () => {
     expect(alert).toHaveTextContent('disabled: APPOINTMENT_API_KEY is not set')
   })
 
+  it('shows the generic label with no invented code when orchestrator is null', async () => {
+    // fix round 1, M4: a null orchestrator (an injected test server, never a real one) gets
+    // the generic label and no code - never a made-up "orchestrator_unavailable".
+    vi.mocked(api.getSystemStatus).mockResolvedValue(status({ orchestrator: null }))
+    render(<SystemStatusBanner />)
+
+    const alert = await screen.findByRole('alert')
+    expect(alert).toHaveTextContent('הסוכן האוטומטי אינו זמין')
+    expect(alert.querySelector('.mono')).not.toBeInTheDocument()
+  })
+
   it('re-polls every 60 seconds', async () => {
     vi.useFakeTimers()
     vi.mocked(api.getSystemStatus).mockResolvedValue(status())
@@ -125,5 +136,20 @@ describe('SystemStatusBanner', () => {
     expect(api.getSystemStatus).toHaveBeenCalledTimes(1)
     await act(() => vi.advanceTimersByTimeAsync(60000))
     expect(api.getSystemStatus).toHaveBeenCalledTimes(2)
+  })
+
+  it('stops polling once unmounted', async () => {
+    vi.useFakeTimers()
+    vi.mocked(api.getSystemStatus).mockResolvedValue(status())
+    const { unmount } = render(<SystemStatusBanner />)
+
+    await act(async () => {
+      await Promise.resolve() // let the mount effect's first load() settle
+    })
+    expect(api.getSystemStatus).toHaveBeenCalledTimes(1)
+
+    unmount()
+    await act(() => vi.advanceTimersByTimeAsync(60000 * 3))
+    expect(api.getSystemStatus).toHaveBeenCalledTimes(1) // no fetch after unmount, ever
   })
 })

@@ -50,6 +50,20 @@ def status() -> Status:
         return {"last_ok_at": _last_ok_at, "last_error": _last_error, "last_error_at": _last_error_at}
 
 
+def summary() -> str:
+    """`"ok" | "error" | "unknown"` for the public `/health` (fix round 1, M6): the detail -
+    the error code and both timestamps - stays staff-only, on `GET /api/staff/system-status`.
+    `"unknown"` only when no call has ever been recorded; otherwise `"error"` when the last
+    error is newer than the last success (or there has been no success yet), else `"ok"`."""
+    with _lock:
+        ok_at, error, error_at = _last_ok_at, _last_error, _last_error_at
+    if ok_at is None and error is None:
+        return "unknown"
+    if error is not None and (ok_at is None or datetime.fromisoformat(error_at) > datetime.fromisoformat(ok_at)):
+        return "error"
+    return "ok"
+
+
 def reset() -> None:
     """Tests only: clear the in-memory status between runs."""
     global _last_ok_at, _last_error, _last_error_at

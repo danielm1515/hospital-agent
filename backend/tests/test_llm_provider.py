@@ -242,6 +242,15 @@ def test_openai_timeout_is_unusable():
     (401, {"error": {"message": "bad key"}}, "api:AuthenticationError", False),  # no code at all
     (403, {"error": {"message": "denied"}}, "api:PermissionDeniedError", False),
     (404, {"error": {"message": "no such model"}}, "api:NotFoundError", False),
+    # Fix round 1, M5 - the live diagnosis's own shape: code is null, the quota signal is
+    # only in `type`.
+    (429, {"error": {"message": "no credit", "code": None, "type": "insufficient_quota"}},
+     "api:RateLimitError:insufficient_quota", False),
+    (429, {"error": {"message": "no credit", "code": None, "type": "credit_balance_exhausted"}},
+     "api:RateLimitError:credit_balance_exhausted", False),
+    # `type` is a fallback only: a real `code` always wins over `type`.
+    (429, {"error": {"message": "no credit", "code": "rate_limit_exceeded", "type": "insufficient_quota"}},
+     "api:RateLimitError:rate_limit_exceeded", True),
 ])
 def test_openai_carries_the_api_code_and_marks_it_retryable(status, body, reason, retryable):
     with pytest.raises(LLMUnusable, match=f"^{reason}$") as excinfo:

@@ -40,6 +40,32 @@ def test_an_ok_after_an_error_keeps_the_error_visible():
     assert status["last_error"] == "unparsable" and status["last_ok_at"] is not None
 
 
+def test_summary_is_unknown_before_any_call():
+    assert telemetry.summary() == "unknown"
+
+
+def test_summary_is_ok_after_a_success():
+    telemetry.record(Call.INTENT, "gpt-5.6-luna", 5, "ok")
+    assert telemetry.summary() == "ok"
+
+
+def test_summary_is_error_after_a_failure_with_no_prior_success():
+    telemetry.record(Call.INTENT, "gpt-5.6-luna", 5, "api:AuthenticationError")
+    assert telemetry.summary() == "error"
+
+
+def test_summary_is_error_when_the_last_error_is_newer_than_the_last_success():
+    telemetry.record(Call.INTENT, "gpt-5.6-luna", 5, "ok")
+    telemetry.record(Call.INTENT, "gpt-5.6-luna", 5, "api:AuthenticationError")
+    assert telemetry.summary() == "error"
+
+
+def test_summary_is_ok_when_a_later_success_follows_an_error():
+    telemetry.record(Call.INTENT, "gpt-5.6-luna", 5, "api:AuthenticationError")
+    telemetry.record(Call.INTENT, "gpt-5.6-luna", 5, "ok")
+    assert telemetry.summary() == "ok"
+
+
 def test_reset_clears_everything():
     telemetry.record(Call.INTENT, "gpt-5.6-luna", 5, "ok")
     telemetry.reset()
@@ -56,9 +82,10 @@ def test_record_logs_one_line_in_the_documented_format(caplog, outcome, level):
     assert record.name == "hospital_agent.llm"
     assert record.message == f"llm call=planner model=gpt-5.6-luna ms=123 outcome={outcome}"
 
-
-def test_record_never_logs_request_content(caplog):
-    """§12.3: the log line names the call, the model, the timing and the outcome code only."""
-    with caplog.at_level(logging.INFO, logger="hospital_agent.llm"):
-        telemetry.record(Call.EVALUATOR, "gpt-5.6-luna", 1, "ok")
-    assert all("patient" not in record.message.lower() for record in caplog.records)
+    # Fix round 1, M7: `record()`'s own signature (call, model, ms, outcome) structurally
+    # cannot carry request content - there is no parameter for it - so a test that only calls
+    # record() directly with a fixed message can never exercise a real leak path. The
+    # meaningful version of this check passes an actual sentinel through the real path that
+    # *could* leak it end to end: test_llm_provider.py's test_ask_logs_and_records_every_attempt,
+    # which sends "very private patient text" through ask()'s user_input and asserts it never
+    # reaches a log line.

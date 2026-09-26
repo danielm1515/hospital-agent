@@ -62,17 +62,19 @@ def test_info_from_a_child_logger_is_emitted_in_the_documented_format(clean_logg
     assert "llm call=intent model=gpt-5.6-luna ms=42 outcome=ok" in captured.err
 
 
-def test_configure_never_runs_for_an_injected_test_server(app_engine):
+def test_configure_never_runs_for_an_injected_test_server(clean_logger, app_engine):
     """The follow-up's core requirement: a test always injects an engine (create_app(app_engine)
-    is "not owned"), so configure() must never fire from that path - caplog stays untouched."""
+    is "not owned"), so configure() must never fire from that path - caplog stays untouched.
+
+    Fix round 1, M2: `clean_logger` guarantees the marker is False *before* this runs, so the
+    assertion is not vacuously true just because an earlier test happened to configure it."""
     from fastapi.testclient import TestClient
 
     from hospital_agent.api.app import create_app
 
-    logger = logging.getLogger(logging_setup.LOGGER_NAME)
-    was_configured = getattr(logger, "_hospital_agent_configured", False)
+    assert getattr(clean_logger, "_hospital_agent_configured", False) is False
 
     with TestClient(create_app(app_engine)):
         pass
 
-    assert getattr(logger, "_hospital_agent_configured", False) == was_configured
+    assert getattr(clean_logger, "_hospital_agent_configured", False) is False

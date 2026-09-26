@@ -108,10 +108,13 @@ class OpenAIProvider:
             data = json.loads(response.choices[0].message.content)
         except openai.OpenAIError as exc:
             reason = f"api:{type(exc).__name__}"
-            code = sanitize_code(getattr(exc, "code", None))
-            if code is None:
-                body = getattr(exc, "body", None)
-                code = sanitize_code(body.get("code")) if isinstance(body, Mapping) else None
+            body = getattr(exc, "body", None)
+            body_get = body.get if isinstance(body, Mapping) else lambda _key: None
+            # Fix round 1, M5: a 429 sometimes carries `code: null, type: "insufficient_quota"`
+            # (the live diagnosis's own example) - `.type`/`body["type"]` is the fallback, tried
+            # only once `.code`/`body["code"]` gave nothing, so a real code is never overridden.
+            code = (sanitize_code(getattr(exc, "code", None)) or sanitize_code(body_get("code"))
+                    or sanitize_code(getattr(exc, "type", None)) or sanitize_code(body_get("type")))
             raise LLMUnusable(f"{reason}:{code}" if code else reason) from None
         except (json.JSONDecodeError, TypeError, IndexError, AttributeError):
             raise LLMUnusable("unparsable") from None

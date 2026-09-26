@@ -101,8 +101,7 @@ in this document, so leaving them enabled is fine for the demo. A non-demo build
 ### GET /health
 
 ```json
-{"status": "ok", "database": "ok", "orchestrator": "running",
- "llm": {"last_ok_at": "2026-09-26T10:00:03.512Z", "last_error": null, "last_error_at": null},
+{"status": "ok", "database": "ok", "orchestrator": "running", "llm": "ok",
  "appointments": "mock", "documents": "mock"}
 ```
 
@@ -112,9 +111,11 @@ in this document, so leaving them enabled is fine for the demo. A non-demo build
 While it runs, `appointments` says where `CheckAppointment` goes: `"mock"`, or `"appointment-service"`
 when `APPOINTMENT_SERVICE_URL` is set (sub-project 10), and `documents` says where `CheckDocuments`
 goes: `"mock"`, or `"document-service"` when `DOCUMENT_SERVICE_URL` is set (sub-project 13) - the
-word only, never the URL. `llm` appears alongside `orchestrator` (staff-fixes design Task 1): the
-last time any of the four LLM calls (Intent, Safety, Planner, Response Evaluator) succeeded, and the
-last outcome code and time when one was unusable - both `null` until the first call. `503` with
+word only, never the URL. `llm` appears alongside `orchestrator` (staff-fixes design Task 1) as
+`"ok"` | `"error"` | `"unknown"` only - `"unknown"` until the first of the four LLM calls (Intent,
+Safety, Planner, Response Evaluator), `"error"` when the last one was unusable and no later one
+succeeded, `"ok"` otherwise. Being public, `/health` never carries the error code or a timestamp
+(fix round 1, M6) - that detail is staff-only, on `GET /api/staff/system-status` (§5). `503` with
 `{"status": "degraded", "database": "unavailable"}` when Postgres cannot be reached.
 
 ### POST /api/auth/login
@@ -631,14 +632,17 @@ Orchestrator run. `200`:
 
 ```json
 {"orchestrator": "running",
- "llm": {"last_ok_at": "2026-09-26T10:00:03.512Z", "last_error": null, "last_error_at": null}}
+ "llm": {"last_ok_at": "2026-09-26T10:00:03.512841+00:00", "last_error": null, "last_error_at": null}}
 ```
 
 - `orchestrator` is exactly `/health`'s field: `null` on an injected (test) server, `"running"`,
   or a `"disabled: ..."` reason.
-- `llm` is exactly `/health`'s `llm` field (see §3): the last success time and the last error
-  code and time, all `null` until the first LLM call. The error code is one of `unparsable`,
-  `schema_violation`, or `api:<ExceptionType>[:<code>]` (e.g. `api:AuthenticationError`,
+- `llm` carries the detail `/health`'s own `llm` field no longer does (fix round 1, M6 - `/health`
+  is public, this route is staff-only): the last success time and the last error code and time,
+  all `null` until the first LLM call, each timestamp `datetime.isoformat()` (a UTC offset,
+  `+00:00`, with microseconds). The error code is one of `unparsable`, `schema_violation`,
+  `worker_died` (the Response Evaluator's worker process died and was replaced), or
+  `api:<ExceptionType>[:<code>]` (e.g. `api:AuthenticationError`,
   `api:RateLimitError:insufficient_quota`) - never request text, a prompt or an answer.
 
 The staff UI shows a banner while `orchestrator` is not `"running"`, or `last_error` is set and

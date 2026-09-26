@@ -173,7 +173,8 @@ def create_app(engine: Engine | None = None, orchestrator: Orchestrator | None =
     @app.get("/health")
     def health(request: Request, db: Engine = Depends(get_engine)) -> JSONResponse:
         orchestrator_status = request.app.state.orchestrator_status
-        extra = {} if orchestrator_status is None else {"orchestrator": orchestrator_status, "llm": telemetry.status()}
+        extra = {} if orchestrator_status is None else {"orchestrator": orchestrator_status,
+                                                        "llm": telemetry.summary()}
         if request.app.state.appointments_source is not None:
             extra["appointments"] = request.app.state.appointments_source
         if request.app.state.documents_source is not None:
