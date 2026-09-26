@@ -66,6 +66,10 @@ export function CaseMonitor() {
       setNextCursor(null)
       setError(null)
       setLoadMoreError(null)
+      // A reload supersedes any "load more" in flight - its own result (if it ever arrives)
+      // is now guarded out below, so the button must not stay busy waiting for it (fix
+      // round 2, N1).
+      setLoadingMore(false)
       setExpanded(null)
       // A filter change makes every previously loaded detail/context stale (a different
       // row set, possibly the same case id reused across filters is not a concern here,
@@ -109,7 +113,10 @@ export function CaseMonitor() {
     } catch (caught) {
       if (generation === generationRef.current) setLoadMoreError(detailOf(caught))
     } finally {
-      if (generation === generationRef.current) setLoadingMore(false)
+      // Unconditional (fix round 2, N1): a generation that has since moved on still means
+      // this request is over - only the data write above stays guarded, not the busy flag,
+      // or the button would stay busy forever after a race with a filter change.
+      setLoadingMore(false)
     }
   }
 
@@ -249,7 +256,7 @@ export function CaseMonitor() {
                 טעינת עוד
               </Button>
               {loadMoreError && (
-                <Alert variant="error" title="טעינת העוד נכשלה">
+                <Alert variant="error" title="טעינת פניות נוספות נכשלה">
                   <span className="mono">{loadMoreError}</span>
                 </Alert>
               )}

@@ -72,6 +72,10 @@ export function ReviewQueue() {
     let cancelled = false
     async function load() {
       const generation = ++generationRef.current
+      // A reload/poll supersedes any "load more" in flight - its own result (if it ever
+      // arrives) is now guarded out below, so the button must not stay busy waiting for it
+      // (fix round 2, N1).
+      setLoadingMore(false)
       // Covers every row loaded so far, so a poll tick does not undo a "load more" (I1).
       const limit = Math.min(200, Math.max(50, itemsRef.current.length))
       try {
@@ -108,7 +112,10 @@ export function ReviewQueue() {
     } catch (caught) {
       if (generation === generationRef.current) setLoadMoreError(detailOf(caught))
     } finally {
-      if (generation === generationRef.current) setLoadingMore(false)
+      // Unconditional (fix round 2, N1): a generation that has since moved on still means
+      // this request is over - only the data write above stays guarded, not the busy flag,
+      // or the button would stay busy forever after a race with a poll/reload.
+      setLoadingMore(false)
     }
   }
 
@@ -213,7 +220,7 @@ export function ReviewQueue() {
                 טעינת עוד
               </Button>
               {loadMoreError && (
-                <Alert variant="error" title="טעינת העוד נכשלה">
+                <Alert variant="error" title="טעינת פניות נוספות נכשלה">
                   <span className="mono">{loadMoreError}</span>
                 </Alert>
               )}

@@ -148,6 +148,40 @@ def test_a_case_with_no_transition_row_is_never_dropped_from_the_queue(sm, app_e
     assert row.returned_by is None
 
 
+def test_a_fallback_case_is_reached_across_pages_at_its_coalesced_position(sm, app_engine):
+    """Fix round 1 (N4): the COALESCE fallback (M4) is untested across pagination - a case
+    with no Transition row must land at, and be reachable through, the page its
+    *coalesced* entered_at (cases.updated_at) puts it at, not vanish because the keyset
+    predicate compared the raw (null) entry.c.entered_at instead. Walked with limit=1."""
+    from sqlalchemy import text
+
+    newest = escalate(sm, app_engine, "P-53001")
+    oldest = escalate(sm, app_engine, "P-53002")
+    now = datetime.now(UTC).replace(microsecond=0)
+    _insert_entry_at(app_engine, newest.case_id, newest.patient_id, now)
+    _insert_entry_at(app_engine, oldest.case_id, oldest.patient_id, now - timedelta(hours=2))
+
+    fallback = Driver(sm, app_engine, patient_id="P-53003")
+    fallback.submit()  # no Transition row into AwaitingHumanReview at all
+    between = now - timedelta(hours=1)  # strictly between newest and oldest
+    with app_engine.begin() as conn:
+        conn.execute(text("UPDATE cases SET state = 'AwaitingHumanReview', updated_at = :at WHERE case_id = :c"),
+                    {"at": between, "c": fallback.case_id})
+
+    expected = [newest.case_id, fallback.case_id, oldest.case_id]
+    seen: list[str] = []
+    cursor = None
+    for _ in range(len(expected) + 1):
+        with app_engine.connect() as conn:
+            rows, has_more = repository.queue_page(conn, 1, cursor)
+        seen.extend(row.case_id for row in rows if row.case_id in expected)
+        if not has_more:
+            break
+        cursor = (rows[-1].entered_at, rows[-1].case_id)
+
+    assert seen == expected  # the fallback case sits between the two real entries, always
+
+
 def test_returned_by_and_reasons_come_from_the_latest_entry_row(sm, app_engine):
     """Pinned against the values `_escalation_reasons` / `_returned_by` used to compute by
     scanning the whole trace in Python (staff-fixes design Task 5's SQL replaces that scan,

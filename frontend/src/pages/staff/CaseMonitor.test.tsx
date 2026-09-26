@@ -262,6 +262,41 @@ describe('CaseMonitor', () => {
     expect(screen.getByText('CASE-6FFF40DFB8DA')).toBeInTheDocument()
   })
 
+  it('does not leave "load more" stuck busy after a filter change races it, and load more works again (fix round 2 N1)', async () => {
+    vi.mocked(api.listCases).mockResolvedValue(page([DONE], 'CURSOR-1'))
+    renderMonitor()
+    await screen.findByText('CASE-23FE645294B7')
+
+    let resolveStaleLoadMore: (value: CaseListPage) => void = () => {}
+    vi.mocked(api.listCases).mockImplementation(
+      () => new Promise((resolve) => { resolveStaleLoadMore = resolve }),
+    )
+    await userEvent.click(screen.getByRole('button', { name: 'טעינת עוד' }))
+    expect(screen.getByRole('button', { name: 'טעינת עוד' })).toHaveAttribute('aria-busy', 'true')
+
+    // The group filter changes before that "load more" call resolves.
+    vi.mocked(api.listCases).mockResolvedValue(page([IN_REVIEW], 'CURSOR-2'))
+    await userEvent.selectOptions(screen.getByLabelText('סינון לפי קבוצה'), 'staff')
+    await screen.findByText('CASE-6FFF40DFB8DA')
+
+    expect(screen.getByRole('button', { name: 'טעינת עוד' })).not.toHaveAttribute('aria-busy', 'true')
+
+    // Clicking it again must actually run a new request, not stay silently stuck.
+    vi.mocked(api.listCases).mockResolvedValue(page([DONE], null))
+    await userEvent.click(screen.getByRole('button', { name: 'טעינת עוד' }))
+
+    expect(await screen.findByText('CASE-23FE645294B7')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'טעינת עוד' })).not.toBeInTheDocument()
+
+    // The stale "load more" from before the filter change may still resolve later - it
+    // must not resurrect anything or throw.
+    await act(async () => {
+      resolveStaleLoadMore(page([IN_REVIEW], null))
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+  })
+
   it('shows a failed "load more" as an inline error beside the button, not a replacement for the table (M6)', async () => {
     vi.mocked(api.listCases).mockResolvedValue(page([DONE], 'CURSOR-1'))
     renderMonitor()
@@ -270,7 +305,7 @@ describe('CaseMonitor', () => {
     vi.mocked(api.listCases).mockRejectedValue(new api.ApiError(500, 'server_error'))
     await userEvent.click(screen.getByRole('button', { name: 'טעינת עוד' }))
 
-    expect(await screen.findByText('טעינת העוד נכשלה')).toBeInTheDocument()
+    expect(await screen.findByText('טעינת פניות נוספות נכשלה')).toBeInTheDocument()
     // The table (and its already-loaded row) is still there, not replaced by the error.
     expect(screen.getByText('CASE-23FE645294B7')).toBeInTheDocument()
     expect(screen.getByRole('table')).toBeInTheDocument()

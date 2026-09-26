@@ -369,10 +369,12 @@ the client makes no per-row follow-up call. Optional `?state=<State>`; an unknow
 `422 invalid_body`, and so is a non-integer `?limit=` (FastAPI's own query-parsing 422,
 turned into the same body every route uses for a malformed request). Keyset pagination:
 `?limit=` (default 50, at most 200; an integer outside that range is `422 invalid_limit`)
-and `?cursor=` (the previous response's `next_cursor`; a malformed cursor, or a foreign one
-- one built for `GET /api/staff/reviews`, or by hand - is `422 invalid_cursor`; fix round 1
-(M5): every cursor this endpoint's `next_cursor` carries starts `c|`, and a `GET
-/api/staff/reviews` cursor starts `r|`, so "foreign" is caught by the prefix alone).
+and `?cursor=` (the previous response's `next_cursor`; malformed, of the other list, or
+naive is `422 invalid_cursor` - fix round 1 (M5): every cursor this endpoint's
+`next_cursor` carries starts `c|`, and a `GET /api/staff/reviews` cursor starts `r|`, so a
+cursor built for that list is caught by the prefix alone, and one whose timestamp carries
+no timezone offset is refused too. A well-formed, correctly-prefixed cursor built by hand is
+accepted by design - there is no HMAC or other signature over it, only the shape check).
 
 Staff-fixes design Task 4: `?group=<staff|patient|automatic|done|rejected>` filters by one
 of the fixed groups instead of one exact State (`hospital_agent.state_groups.STATE_GROUPS`,
@@ -404,9 +406,9 @@ never combined into a narrower one.
 ```
 
 The items are ordered `updated_at` descending, `case_id` descending (a tie-break, since
-`updated_at` alone is not unique). `next_cursor` is an opaque string (base64 of
-`updated_at|case_id`); `null` means there is no next page. Ask for the next page with
-`?cursor=<next_cursor>&state=...` (repeat the same filter).
+`updated_at` alone is not unique). `next_cursor` is an opaque string (a `c|` kind prefix
+over base64 of `updated_at|case_id`, fix round 1 M5); `null` means there is no next page.
+Ask for the next page with `?cursor=<next_cursor>&state=...` (repeat the same filter).
 
 States: `Received`, `Classifying`, `Classified`, `Planning`, `RetrievingData`,
 `Delivering`, `AssessingReadiness`, `AwaitingPatientInput`, `AwaitingHumanReview`, `Ready`,

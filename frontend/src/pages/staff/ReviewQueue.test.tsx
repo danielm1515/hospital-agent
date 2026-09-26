@@ -50,6 +50,11 @@ function page(items: ReviewItem[], next_cursor: string | null = null): ReviewQue
   return { items, next_cursor }
 }
 
+/** `count` distinct queue items, for pagination tests that need more than a handful. */
+function makeItems(prefix: string, count: number): ReviewItem[] {
+  return Array.from({ length: count }, (_, i) => ({ ...MEDICAL, case_id: `CASE-${prefix}${i}` }))
+}
+
 function renderQueue(route = '/staff') {
   return render(
     <MemoryRouter initialEntries={[route]}>
@@ -234,12 +239,49 @@ describe('ReviewQueue', () => {
     await waitFor(() => expect(screen.queryByRole('button', { name: 'טעינת עוד' })).not.toBeInTheDocument())
   })
 
-  it('keeps rows loaded by "load more" across a poll tick, with no duplicate keys (I1)', async () => {
+  it('resizes the poll\'s limit to cover every row loaded via "load more" (I1, fix round 2 N2)', async () => {
+    // 2 rows would still pass with a poll hard-coded to `limit: 50` (max(50, 2) is 50
+    // either way) - 50 + 10 pins the actual resize, not just "some limit was sent".
     vi.useFakeTimers()
+    const first = makeItems('A', 50)
+    const more = makeItems('B', 10)
+    vi.mocked(api.listReviews)
+      .mockResolvedValueOnce(page(first, 'CURSOR-1')) // initial mount: 50 rows, more available
+      .mockResolvedValueOnce(page(more, null)) // "load more": +10 rows, no next page
+      .mockResolvedValueOnce(page([...first, ...more], null)) // poll tick: must ask limit 60
+    renderQueue()
+
+    await act(async () => {
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    expect(screen.getByText(first[0].case_id)).toBeInTheDocument()
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'טעינת עוד' }))
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    expect(screen.getByText(more[0].case_id)).toBeInTheDocument()
+
+    await act(() => vi.advanceTimersByTimeAsync(QUEUE_POLL_MS))
+
+    expect(api.listReviews).toHaveBeenNthCalledWith(3, { limit: 60 })
+    expect(screen.getByText(first[0].case_id)).toBeInTheDocument()
+    expect(screen.getByText(more[9].case_id)).toBeInTheDocument()
+    const rows = screen.getAllByRole('row')
+    expect(rows).toHaveLength(61) // header + all 60 cases - no row dropped, none duplicated
+  })
+
+  it('does not leave "load more" stuck busy after a poll races it, and load more works again (fix round 2 N1)', async () => {
+    vi.useFakeTimers()
+    const THIRD: ReviewItem = { ...Z3, case_id: 'CASE-THIRD00000001' }
+    let resolveStaleLoadMore: (value: ReviewQueuePage) => void = () => {}
     vi.mocked(api.listReviews)
       .mockResolvedValueOnce(page([MEDICAL], 'CURSOR-1')) // initial mount
-      .mockResolvedValueOnce(page([Z3], null)) // "load more" click
-      .mockResolvedValueOnce(page([MEDICAL, Z3], null)) // poll tick after "load more"
+      .mockImplementationOnce(() => new Promise((resolve) => { resolveStaleLoadMore = resolve })) // "load more"
+      .mockResolvedValueOnce(page([MEDICAL, Z3], 'CURSOR-2')) // poll tick, before that resolves
+      .mockResolvedValueOnce(page([THIRD], null)) // "load more" clicked again afterwards
     renderQueue()
 
     await act(async () => {
@@ -251,19 +293,30 @@ describe('ReviewQueue', () => {
     await act(async () => {
       fireEvent.click(screen.getByRole('button', { name: 'טעינת עוד' }))
       await Promise.resolve()
-      await Promise.resolve()
     })
-    expect(screen.getByText('CASE-23FE645294B7')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'טעינת עוד' })).toHaveAttribute('aria-busy', 'true')
 
+    // A poll tick fires while that "load more" is still in flight (and never resolves).
     await act(() => vi.advanceTimersByTimeAsync(QUEUE_POLL_MS))
 
-    // The poll's own request covers both rows (limit sized to what was already loaded),
-    // and both are still on screen afterwards - no row was dropped, and none duplicated.
-    expect(api.listReviews).toHaveBeenNthCalledWith(3, { limit: 50 })
-    expect(screen.getByText('CASE-6FFF40DFB8DA')).toBeInTheDocument()
-    expect(screen.getByText('CASE-23FE645294B7')).toBeInTheDocument()
-    const rows = screen.getAllByRole('row')
-    expect(rows).toHaveLength(3) // header + exactly one row per case - no duplicate keys
+    expect(screen.getByRole('button', { name: 'טעינת עוד' })).not.toHaveAttribute('aria-busy', 'true')
+    expect(screen.getByText('CASE-23FE645294B7')).toBeInTheDocument() // the poll's own (replaced) list
+
+    // Clicking it again must actually run a new request, not stay silently stuck.
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'טעינת עוד' }))
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    expect(screen.getByText(THIRD.case_id)).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'טעינת עוד' })).not.toBeInTheDocument()
+
+    // The stale "load more" from before the poll may still resolve later - it must not
+    // resurrect anything or throw.
+    await act(async () => {
+      resolveStaleLoadMore(page([MEDICAL, Z3], null))
+      await Promise.resolve()
+    })
   })
 })
 
