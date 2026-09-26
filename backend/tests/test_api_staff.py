@@ -119,6 +119,67 @@ def test_cases_list_rejects_an_invalid_limit(client, staff, limit):
     assert response.status_code == 422 and response.json() == {"detail": "invalid_limit"}
 
 
+def awaiting_patient_reply(sm, app_engine) -> Driver:
+    """A case a staff member asked the patient a question of (sub-project 15): AwaitingPatientReply."""
+    from datetime import UTC, datetime, timedelta
+
+    from hospital_agent.naming import Component, Event
+
+    d = retry_exhausted(sm, app_engine)
+    approval_id = d.approval("request", patient_deadline=datetime.now(UTC) + timedelta(hours=24))
+    payload = {"approval_id": approval_id, "reply_kind": "question", "requested_document": None,
+               "content_hash": "HASH-MESSAGE"}
+    result = sm.apply(d.case_id, Event.PATIENT_REPLY_REQUESTED, payload, Component.EXTERNAL)
+    assert result.committed and result.state_after is State.AWAITING_PATIENT_REPLY
+    return d
+
+
+def test_cases_list_filters_by_group(client, staff, sm, app_engine):
+    """Staff-fixes design Task 4: `?group=` widens the filter to a whole STATE_GROUPS set."""
+    medical = medical_question(sm, app_engine)
+    reply = awaiting_patient_reply(sm, app_engine)
+    automatic = Driver(sm, app_engine, patient_id="P-20002")
+    automatic.to_classified()
+
+    staff_group = client.get("/api/staff/cases", params={"group": "staff"}, headers=staff).json()
+    assert {c["case_id"] for c in staff_group["items"]} == {medical.case_id}
+
+    patient_group = client.get("/api/staff/cases", params={"group": "patient"}, headers=staff).json()
+    assert {c["case_id"] for c in patient_group["items"]} == {reply.case_id}
+
+    automatic_group = client.get("/api/staff/cases", params={"group": "automatic"}, headers=staff).json()
+    assert {c["case_id"] for c in automatic_group["items"]} == {automatic.case_id}
+
+    assert client.get("/api/staff/cases", params={"group": "not-a-group"}, headers=staff).status_code == 422
+
+
+def test_cases_list_group_staff_accepts_an_escalation_kind_filter(client, staff, sm, app_engine):
+    medical = medical_question(sm, app_engine)
+    retry = retry_exhausted(sm, app_engine)
+
+    only_medical = client.get("/api/staff/cases", params={"group": "staff", "escalation_kind": "MedicalQuestion"},
+                              headers=staff).json()
+    assert [c["case_id"] for c in only_medical["items"]] == [medical.case_id]
+
+    only_retry = client.get("/api/staff/cases", params={"group": "staff", "escalation_kind": "RetryExhausted"},
+                            headers=staff).json()
+    assert [c["case_id"] for c in only_retry["items"]] == [retry.case_id]
+
+    assert client.get("/api/staff/cases", params={"group": "staff", "escalation_kind": "NotAKind"},
+                      headers=staff).status_code == 422
+
+
+def test_cases_list_rejects_an_escalation_kind_filter_outside_group_staff(client, staff, sm, app_engine):
+    medical_question(sm, app_engine)
+
+    without_group = client.get("/api/staff/cases", params={"escalation_kind": "MedicalQuestion"}, headers=staff)
+    assert without_group.status_code == 422 and without_group.json() == {"detail": "invalid_filter"}
+
+    other_group = client.get("/api/staff/cases", params={"group": "done", "escalation_kind": "MedicalQuestion"},
+                             headers=staff)
+    assert other_group.status_code == 422 and other_group.json() == {"detail": "invalid_filter"}
+
+
 def test_cases_list_runs_one_sql_statement_regardless_of_row_count(client, staff, sm, app_engine):
     """Staff-fixes design Task 3: before, the Case Monitor's N+1 was in the browser (one
     `getCase` per row); the list route itself was always one `SELECT`. This pins that it

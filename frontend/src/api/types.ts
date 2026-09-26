@@ -40,6 +40,14 @@ export type EscalationKind =
 
 export type SafetyLevel = 'LowRisk' | 'MediumRisk' | 'HighRisk' | 'CriticalRisk'
 
+/**
+ * The Case Monitor's five groups (staff-fixes design Task 4, `docs/api.md` §5): the
+ * `?group=` value `GET /api/staff/cases` takes, mirroring the backend's
+ * `hospital_agent.state_groups.STATE_GROUPS`. `group: 'staff'` alone also accepts
+ * `?escalation_kind=`.
+ */
+export type StateGroup = 'staff' | 'patient' | 'automatic' | 'done' | 'rejected'
+
 /** ISO 8601 datetime string, as FastAPI serializes `datetime`. */
 export type IsoDateTime = string
 

@@ -136,25 +136,56 @@ describe('CaseMonitor', () => {
     expect(api.getContext).not.toHaveBeenCalled()
   })
 
-  it('filters by state, asking the API for the filtered page', async () => {
+  it('filters by group, asking the API for the filtered page (staff-fixes design Task 4)', async () => {
     renderMonitor()
     await screen.findByText('CASE-23FE645294B7')
 
     vi.mocked(api.listCases).mockResolvedValue(page([DONE]))
-    await userEvent.selectOptions(screen.getByLabelText('סינון לפי State'), 'Completed')
+    await userEvent.selectOptions(screen.getByLabelText('סינון לפי קבוצה'), 'done')
 
-    expect(api.listCases).toHaveBeenLastCalledWith({ state: 'Completed' })
+    expect(api.listCases).toHaveBeenLastCalledWith({ group: 'done', escalationKind: undefined })
     await waitFor(() => expect(screen.queryByText('CASE-6FFF40DFB8DA')).not.toBeInTheDocument())
   })
 
-  it('asks for every case again when the filter is cleared', async () => {
+  it('asks for every case again when the group filter is cleared', async () => {
     renderMonitor()
     await screen.findByText('CASE-23FE645294B7')
 
-    await userEvent.selectOptions(screen.getByLabelText('סינון לפי State'), 'Completed')
-    await userEvent.selectOptions(screen.getByLabelText('סינון לפי State'), '')
+    await userEvent.selectOptions(screen.getByLabelText('סינון לפי קבוצה'), 'done')
+    await userEvent.selectOptions(screen.getByLabelText('סינון לפי קבוצה'), '')
 
-    expect(api.listCases).toHaveBeenLastCalledWith({ state: undefined })
+    expect(api.listCases).toHaveBeenLastCalledWith({ group: undefined, escalationKind: undefined })
+  })
+
+  it('offers an escalation-kind sub-select only for the "ממתינות לצוות" group, and filters by it', async () => {
+    renderMonitor()
+    await screen.findByText('CASE-23FE645294B7')
+    expect(screen.queryByLabelText(/סינון לפי סוג הסלמה/)).not.toBeInTheDocument()
+
+    vi.mocked(api.listCases).mockResolvedValue(page([IN_REVIEW]))
+    await userEvent.selectOptions(screen.getByLabelText('סינון לפי קבוצה'), 'staff')
+    expect(api.listCases).toHaveBeenLastCalledWith({ group: 'staff', escalationKind: undefined })
+
+    const kindSelect = await screen.findByLabelText(/סינון לפי סוג הסלמה/)
+    expect(screen.getByText(/MedicalQuestion/, { selector: 'option' })).toBeInTheDocument()
+    await userEvent.selectOptions(kindSelect, 'MedicalQuestion')
+
+    expect(api.listCases).toHaveBeenLastCalledWith({ group: 'staff', escalationKind: 'MedicalQuestion' })
+  })
+
+  it('drops the escalation-kind sub-select (and its filter) when the group changes away from staff', async () => {
+    renderMonitor()
+    await screen.findByText('CASE-23FE645294B7')
+
+    vi.mocked(api.listCases).mockResolvedValue(page([IN_REVIEW]))
+    await userEvent.selectOptions(screen.getByLabelText('סינון לפי קבוצה'), 'staff')
+    await userEvent.selectOptions(await screen.findByLabelText(/סינון לפי סוג הסלמה/), 'MedicalQuestion')
+
+    vi.mocked(api.listCases).mockResolvedValue(page([DONE]))
+    await userEvent.selectOptions(screen.getByLabelText('סינון לפי קבוצה'), 'done')
+
+    expect(screen.queryByLabelText(/סינון לפי סוג הסלמה/)).not.toBeInTheDocument()
+    expect(api.listCases).toHaveBeenLastCalledWith({ group: 'done', escalationKind: undefined })
   })
 
   it('expands a row to the case detail and its audit trace, fetching only that row', async () => {
@@ -179,7 +210,7 @@ describe('CaseMonitor', () => {
     vi.mocked(api.listCases).mockResolvedValue(page([IN_REVIEW], null))
     await userEvent.click(screen.getByRole('button', { name: 'טעינת עוד' }))
 
-    expect(api.listCases).toHaveBeenLastCalledWith({ state: undefined, cursor: 'CURSOR-1' })
+    expect(api.listCases).toHaveBeenLastCalledWith({ group: undefined, escalationKind: undefined, cursor: 'CURSOR-1' })
     expect(await screen.findByText('CASE-6FFF40DFB8DA')).toBeInTheDocument()
     // Both pages stay on screen; the first row was not replaced.
     expect(screen.getByText('CASE-23FE645294B7')).toBeInTheDocument()
@@ -193,7 +224,7 @@ describe('CaseMonitor', () => {
     expect(api.getContext).toHaveBeenCalledTimes(1)
 
     vi.mocked(api.listCases).mockResolvedValue(page([DONE]))
-    await userEvent.selectOptions(screen.getByLabelText('סינון לפי State'), 'Completed')
+    await userEvent.selectOptions(screen.getByLabelText('סינון לפי קבוצה'), 'done')
     await screen.findByText('CASE-23FE645294B7')
 
     // The row collapsed on the filter change; expanding it again must not reuse a stale context.

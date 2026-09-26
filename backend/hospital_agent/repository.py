@@ -182,13 +182,17 @@ def list_cases_page(
     states: list[State] | None,
     limit: int,
     cursor: tuple[datetime, str] | None,
+    escalation_kind: EscalationKind | None = None,
 ) -> tuple[list[CaseListRow], bool]:
     """Keyset-paginated (staff-fixes design Task 3): one `SELECT` with an explicit column
     list, ordered `updated_at DESC, case_id DESC`. Fetches `limit + 1` rows so the caller
-    knows whether there is a next page without a second query."""
+    knows whether there is a next page without a second query. `escalation_kind` narrows a
+    `group=staff` filter further (staff-fixes design Task 4)."""
     query = select(*_CASE_LIST_COLUMNS)
     if states is not None:
         query = query.where(cases.c.state.in_([s.value for s in states]))
+    if escalation_kind is not None:
+        query = query.where(cases.c.escalation_kind == escalation_kind.value)
     if cursor is not None:
         at, case_id = cursor
         query = query.where(tuple_(cases.c.updated_at, cases.c.case_id) < tuple_(at, case_id))

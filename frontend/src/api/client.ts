@@ -16,6 +16,7 @@ import type {
   CaseListPage,
   DecisionBody,
   DecisionResult,
+  EscalationKind,
   LoginResponse,
   Me,
   Metrics,
@@ -27,6 +28,7 @@ import type {
   ReviewContext,
   ReviewItem,
   State,
+  StateGroup,
   SystemStatus,
   UploadDocumentBody,
 } from './types'
@@ -223,12 +225,18 @@ export function uploadDocumentFile(caseId: string, file: File): Promise<PdfUploa
 // ---- Staff ----------------------------------------------------------------
 
 /**
- * `GET /api/staff/cases` (staff-fixes design Task 3): one call, keyset-paginated.
- * `options.cursor` asks for the page after the previous response's `next_cursor`.
+ * `GET /api/staff/cases` (staff-fixes design Task 3/4): one call, keyset-paginated,
+ * optionally filtered by an exact `state` or by one of the five `group`s (`group: 'staff'`
+ * also accepts `escalationKind`). `options.cursor` asks for the page after the previous
+ * response's `next_cursor`.
  */
-export function listCases(options: { state?: State; cursor?: string; limit?: number } = {}): Promise<CaseListPage> {
+export function listCases(
+  options: { state?: State; group?: StateGroup; escalationKind?: EscalationKind; cursor?: string; limit?: number } = {},
+): Promise<CaseListPage> {
   const params = new URLSearchParams()
   if (options.state) params.set('state', options.state)
+  if (options.group) params.set('group', options.group)
+  if (options.escalationKind) params.set('escalation_kind', options.escalationKind)
   if (options.cursor) params.set('cursor', options.cursor)
   if (options.limit) params.set('limit', String(options.limit))
   const query = params.toString()

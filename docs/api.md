@@ -72,7 +72,7 @@ methods: `GET`, `POST`, `DELETE`, `OPTIONS`. Allowed headers: `Authorization`,
 | POST | `/api/patient/requests/{case_id}/reply` | patient | Answer a staff question (sub-project 15) |
 | POST | `/api/patient/requests/{case_id}/reply/file` | patient | Upload the document (PDF, JPEG or PNG) a staff member asked for (sub-project 15) |
 | GET | `/api/patient/appointments` | patient | My appointments (`?from=&to=`, sub-project 16) |
-| GET | `/api/staff/cases` | staff | All cases, keyset-paginated (`?state=&limit=&cursor=`, staff-fixes design Task 3) |
+| GET | `/api/staff/cases` | staff | All cases, keyset-paginated (`?state=` or `?group=&escalation_kind=`, `&limit=&cursor=`; staff-fixes design Tasks 3-4) |
 | GET | `/api/staff/cases/{case_id}` | staff | One case, in full (plan, documents, counters) |
 | GET | `/api/staff/cases/{case_id}/audit` | staff | The case's audit trace |
 | GET | `/api/staff/cases/{case_id}/appointments` | staff | The case's patient's appointments (`?from=&to=`, sub-project 16) |
@@ -368,7 +368,15 @@ Staff-fixes design Task 3: one call, with every column the Case Monitor table sh
 the client makes no per-row follow-up call. Optional `?state=<State>`; an unknown state is
 `422 invalid_body`. Keyset pagination: `?limit=` (default 50, at most 200; anything else is
 `422 invalid_limit`) and `?cursor=` (the previous response's `next_cursor`; a malformed or
-foreign cursor is `422 invalid_cursor`). `200`:
+foreign cursor is `422 invalid_cursor`).
+
+Staff-fixes design Task 4: `?group=<staff|patient|automatic|done|rejected>` filters by one
+of the fixed groups instead of one exact State (`hospital_agent.state_groups.STATE_GROUPS`,
+mirrored in the frontend's `labels.ts`); an unknown group is `422 invalid_filter`.
+`?escalation_kind=<EscalationKind>` narrows `group=staff` further to one escalation kind
+(an unknown kind is `422 invalid_filter`); with any other group, or with no `group` at all,
+`escalation_kind` is `422 invalid_filter`. `?state=` keeps working, unaffected by `?group=`.
+`200`:
 
 ```json
 {

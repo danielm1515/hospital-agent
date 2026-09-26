@@ -14,8 +14,9 @@ from .. import repository
 from ..auth import Principal
 from ..human_review import AnswerRejected, ContextChanged, DecisionRejected, HumanReviewService, NotInReview
 from ..llm import telemetry
-from ..naming import State
+from ..naming import EscalationKind, State
 from ..session import CaseNotFound
+from ..state_groups import STATE_GROUPS
 from . import appointments
 from .deps import get_engine, get_reviews, require_staff
 from .schemas import (
@@ -43,21 +44,40 @@ DEFAULT_LIST_LIMIT = 50
 # --- the Case Monitor (Core design §9), now behind staff auth --------------------------------
 
 @router.get("/cases", response_model=CaseListPage)
-def list_cases(state: State | None = None, limit: int = DEFAULT_LIST_LIMIT, cursor: str | None = None,
+def list_cases(state: State | None = None, group: str | None = None, escalation_kind: str | None = None,
+               limit: int = DEFAULT_LIST_LIMIT, cursor: str | None = None,
                db: Engine = Depends(get_engine)) -> CaseListPage:
-    """Staff-fixes design Task 3: one call, keyset-paginated. Every column the Case Monitor
+    """Staff-fixes design Task 3/4: one call, keyset-paginated, optionally filtered by an
+    exact `state` or by one of `STATE_GROUPS` - `?group=staff` also accepts
+    `?escalation_kind=`, since only that group carries one. Every column the Case Monitor
     table shows, so the client makes no per-row `getCase` follow-up."""
     if not (1 <= limit <= MAX_LIST_LIMIT):
         raise HTTPException(status_code=422, detail="invalid_limit")
+    if escalation_kind is not None and group != "staff":
+        raise HTTPException(status_code=422, detail="invalid_filter")
+    parsed_kind: EscalationKind | None = None
+    if escalation_kind is not None:
+        try:
+            parsed_kind = EscalationKind(escalation_kind)
+        except ValueError:
+            raise HTTPException(status_code=422, detail="invalid_filter") from None
+    states: list[State] | None
+    if group is not None:
+        if group not in STATE_GROUPS:
+            raise HTTPException(status_code=422, detail="invalid_filter")
+        states = list(STATE_GROUPS[group])
+    elif state is not None:
+        states = [state]
+    else:
+        states = None
     parsed_cursor = None
     if cursor is not None:
         try:
             parsed_cursor = repository.decode_cases_cursor(cursor)
         except ValueError:
             raise HTTPException(status_code=422, detail="invalid_cursor") from None
-    states = [state] if state is not None else None
     with db.connect() as conn:
-        rows, has_more = repository.list_cases_page(conn, states, limit, parsed_cursor)
+        rows, has_more = repository.list_cases_page(conn, states, limit, parsed_cursor, escalation_kind=parsed_kind)
     next_cursor = repository.encode_cases_cursor(rows[-1].updated_at, rows[-1].case_id) if has_more and rows else None
     return CaseListPage(items=[CaseSummary.model_validate(row) for row in rows], next_cursor=next_cursor)
 

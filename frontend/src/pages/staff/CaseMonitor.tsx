@@ -1,8 +1,7 @@
 import { useEffect, useState } from 'react'
 import type { ReactNode } from 'react'
 import * as api from '../../api/client'
-import type { CaseDetail, CaseSummary, ReviewContext, State } from '../../api/types'
-import { STATES } from '../../api/types'
+import type { CaseDetail, CaseSummary, EscalationKind, ReviewContext, StateGroup } from '../../api/types'
 import { Alert } from '../../components/Alert'
 import { Button } from '../../components/Button'
 import { StatusPill } from '../../components/StatusPill'
@@ -10,6 +9,9 @@ import { AuditTimeline } from './AuditTimeline'
 import { PatientThread } from './PatientThread'
 import {
   DOCUMENT_LABELS,
+  ESCALATION_LABELS,
+  STATE_GROUP_LABELS,
+  STATE_GROUP_ORDER,
   detailOf,
   escalationLabel,
   formatDateTime,
@@ -17,6 +19,8 @@ import {
   safetyLabel,
   stateLabel,
 } from './labels'
+
+const ESCALATION_KIND_OPTIONS = Object.keys(ESCALATION_LABELS) as EscalationKind[]
 
 /**
  * The Case Monitor (§1), behind staff authentication: every case from
@@ -34,7 +38,8 @@ import {
  * review screen.
  */
 export function CaseMonitor() {
-  const [filter, setFilter] = useState<State | ''>('')
+  const [group, setGroup] = useState<StateGroup | ''>('')
+  const [escalationKind, setEscalationKind] = useState<EscalationKind | ''>('')
   const [rows, setRows] = useState<CaseSummary[] | null>(null)
   const [nextCursor, setNextCursor] = useState<string | null>(null)
   const [loadingMore, setLoadingMore] = useState(false)
@@ -61,7 +66,10 @@ export function CaseMonitor() {
       setContexts({})
       setContextErrors({})
       try {
-        const page = await api.listCases({ state: filter === '' ? undefined : filter })
+        const page = await api.listCases({
+          group: group === '' ? undefined : group,
+          escalationKind: escalationKind === '' ? undefined : escalationKind,
+        })
         if (cancelled) return
         setRows(page.items)
         setNextCursor(page.next_cursor)
@@ -73,13 +81,17 @@ export function CaseMonitor() {
     return () => {
       cancelled = true
     }
-  }, [filter])
+  }, [group, escalationKind])
 
   async function loadMore() {
     if (nextCursor === null) return
     setLoadingMore(true)
     try {
-      const page = await api.listCases({ state: filter === '' ? undefined : filter, cursor: nextCursor })
+      const page = await api.listCases({
+        group: group === '' ? undefined : group,
+        escalationKind: escalationKind === '' ? undefined : escalationKind,
+        cursor: nextCursor,
+      })
       setRows((previous) => [...(previous ?? []), ...page.items])
       setNextCursor(page.next_cursor)
     } catch (caught) {
@@ -87,6 +99,14 @@ export function CaseMonitor() {
     } finally {
       setLoadingMore(false)
     }
+  }
+
+  function selectGroup(value: StateGroup | '') {
+    setGroup(value)
+    // required_fields note: escalation_kind is only accepted with group=staff (docs/api.md
+    // §5); leaving it set while switching to another group would otherwise ask the API
+    // for an invalid_filter combination on the very next load.
+    if (value !== 'staff') setEscalationKind('')
   }
 
   async function toggle(caseId: string) {
@@ -123,25 +143,50 @@ export function CaseMonitor() {
         </p>
       </header>
 
-      <div className="field filter-field">
-        <label className="label" htmlFor="state-filter">
-          סינון לפי State
-        </label>
-        <div className="control">
-          <select
-            id="state-filter"
-            className="input"
-            value={filter}
-            onChange={(event) => setFilter(event.target.value as State | '')}
-          >
-            <option value="">כל המצבים</option>
-            {STATES.map((state) => (
-              <option key={state} value={state}>
-                {stateLabel(state)} ({state})
-              </option>
-            ))}
-          </select>
+      <div className="filter-row">
+        <div className="field filter-field">
+          <label className="label" htmlFor="group-filter">
+            סינון לפי קבוצה
+          </label>
+          <div className="control">
+            <select
+              id="group-filter"
+              className="input"
+              value={group}
+              onChange={(event) => selectGroup(event.target.value as StateGroup | '')}
+            >
+              <option value="">הכול</option>
+              {STATE_GROUP_ORDER.map((option) => (
+                <option key={option} value={option}>
+                  {STATE_GROUP_LABELS[option]}
+                </option>
+              ))}
+            </select>
+          </div>
         </div>
+
+        {group === 'staff' && (
+          <div className="field filter-field">
+            <label className="label" htmlFor="escalation-kind-filter">
+              סינון לפי סוג הסלמה (escalation_kind)
+            </label>
+            <div className="control">
+              <select
+                id="escalation-kind-filter"
+                className="input"
+                value={escalationKind}
+                onChange={(event) => setEscalationKind(event.target.value as EscalationKind | '')}
+              >
+                <option value="">הכול</option>
+                {ESCALATION_KIND_OPTIONS.map((kind) => (
+                  <option key={kind} value={kind}>
+                    {ESCALATION_LABELS[kind]} ({kind})
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+        )}
       </div>
 
       {error ? (
