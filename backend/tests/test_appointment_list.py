@@ -9,6 +9,8 @@ import pytest
 from hospital_agent.appointment_list import (
     AppointmentListClient,
     AppointmentsUnavailable,
+    ExamType,
+    InstructionSummary,
     PatientNotFound,
     build_list_client,
     map_answer,
@@ -34,6 +36,38 @@ def test_a_valid_answer_is_parsed():
     assert first.required_documents == ("CBC", "ECG")
     assert (second.status, second.doctor_name, second.location) == ("Cancelled", None, None)
     assert result.truncated is False
+    # Sub-project 18 (design D3): absent from ONE (see below) means None for both.
+    assert first.exam_type is None and first.instruction is None
+
+
+def test_exam_type_and_instruction_are_parsed_when_present():
+    row = {**ONE, "exam_type": {"code": "NEURO_VISIT", "label": "ביקור במרפאה נוירולוגית"},
+          "instruction": {"source_id": "INSTR-NEURO-VISIT", "version": "1", "title": "לפני הביקור"}}
+    result = map_answer(answer({"appointments": [row], "truncated": False}), PATIENT_ID)
+    appointment = result.appointments[0]
+    assert appointment.exam_type == ExamType("NEURO_VISIT", "ביקור במרפאה נוירולוגית")
+    assert appointment.instruction == InstructionSummary("INSTR-NEURO-VISIT", "1", "לפני הביקור")
+
+
+@pytest.mark.parametrize("field, bad_value", [
+    ("exam_type", "x"),                                         # not a dict
+    ("exam_type", {"code": "NEURO_VISIT"}),                     # missing label
+    ("exam_type", {"code": "", "label": "x"}),                  # empty code
+    ("exam_type", {"code": "x" * 201, "label": "x"}),           # over the label bound
+    ("exam_type", {"code": 7, "label": "x"}),                   # not a string
+    ("instruction", "x"),                                        # not a dict
+    ("instruction", {"source_id": "INSTR-1", "version": "1"}),  # missing title
+    ("instruction", {"source_id": "INSTR-1", "version": "1", "title": ""}),
+    ("instruction", {"source_id": "INSTR-1", "version": "1", "title": "x" * 201}),
+    ("instruction", {"source_id": "bad id!", "version": "1", "title": "x"}),  # not the id shape
+    ("instruction", {"source_id": "INSTR-1", "version": "", "title": "x"}),   # empty version
+    ("instruction", {"source_id": "INSTR-1", "version": "x" * 65, "title": "x"}),  # over the id bound
+])
+def test_a_present_but_malformed_field_is_invalid(field, bad_value):
+    row = {**ONE, field: bad_value}
+    with pytest.raises(AppointmentsUnavailable) as caught:
+        map_answer(answer({"appointments": [row], "truncated": False}), PATIENT_ID)
+    assert caught.value.code == "invalid_response"
 
 
 def test_patient_not_found_is_its_own_answer():

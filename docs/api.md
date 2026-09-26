@@ -72,10 +72,12 @@ methods: `GET`, `POST`, `DELETE`, `OPTIONS`. Allowed headers: `Authorization`,
 | POST | `/api/patient/requests/{case_id}/reply` | patient | Answer a staff question (sub-project 15) |
 | POST | `/api/patient/requests/{case_id}/reply/file` | patient | Upload the document (PDF, JPEG or PNG) a staff member asked for (sub-project 15) |
 | GET | `/api/patient/appointments` | patient | My appointments (`?from=&to=`, sub-project 16) |
+| GET | `/api/patient/instructions/{source_id}` | patient | The text behind one approved preparation instruction (`?version=`, sub-project 18) |
 | GET | `/api/staff/cases` | staff | All cases, keyset-paginated (`?state=` or `?group=&escalation_kind=`, `&limit=&cursor=`; staff-fixes design Tasks 3-4) |
 | GET | `/api/staff/cases/{case_id}` | staff | One case, in full (plan, documents, counters) |
 | GET | `/api/staff/cases/{case_id}/audit` | staff | The case's audit trace |
 | GET | `/api/staff/cases/{case_id}/appointments` | staff | The case's patient's appointments (`?from=&to=`, sub-project 16) |
+| GET | `/api/staff/instructions/{source_id}` | staff | The same instruction text as the patient's route, for any approved source (`?version=`, sub-project 18) |
 | GET | `/api/staff/reviews` | staff | The human-review queue, keyset-paginated, newest entry first (staff-fixes design Task 5) |
 | GET | `/api/staff/reviews/{case_id}` | staff | One queue item (staff-fixes design Task 3) |
 | GET | `/api/staff/cases/{case_id}/context` | staff | What the reviewer is shown |
@@ -1056,7 +1058,7 @@ Two more codes are sub-project 15's own:
   (the patient answered), `"reply_timeout"` (the deadline passed, the SLA Worker returned
   it), or `null` (it came from elsewhere, e.g. it just escalated).
 
-## 9. The patient's appointments (sub-project 16)
+## 9. The patient's appointments (sub-project 16, sub-project 18)
 
 ```
 GET /api/patient/appointments?from=&to=
@@ -1107,7 +1109,9 @@ actually asked (`404 patient_not_found` / `503 appointments_unavailable`).
       "doctor_name": "Dr. Cohen",
       "location": "Building B, Floor 2",
       "status": "Scheduled",
-      "required_documents": ["CBC", "ECG"]
+      "required_documents": ["CBC", "ECG"],
+      "exam_type": {"code": "NEURO_VISIT", "label": "ביקור במרפאה נוירולוגית"},
+      "instruction": {"source_id": "INSTR-NEURO-VISIT", "version": "1", "title": "לפני הביקור"}
     }
   ],
   "truncated": false
@@ -1119,6 +1123,15 @@ own answer was cut off at its cap (100 rows) rather than the full window's worth
 should say the list may be incomplete and suggest narrowing the range. `appointment_at` is
 always normalised to UTC before it goes out, exactly like the window bounds - whatever offset
 or zone the appointment-service itself answered with.
+
+`exam_type` and `instruction` (sub-project 18, design D3) are never null in the real service,
+but the client treats each as optional - an older service simply omits it, and a row missing
+either is still delivered without it. A *present* `exam_type` or `instruction` with the wrong
+shape (not an object, an empty or over-200-character `code`/`label`/`title`, or a
+`source_id`/`version` that is not the same id shape used everywhere else) makes the whole
+answer `503 appointments_unavailable` (`invalid_response`) - never a partial row. `instruction`
+carries only the title, never the text; the appointments panel loads the text separately
+through `GET /api/patient/instructions/{source_id}?version=` below.
 
 - `401 not_authenticated` - as everywhere.
 - `403 patients_only` (the patient route, a staff token) / `403 staff_only` (the staff
@@ -1143,3 +1156,74 @@ or zone the appointment-service itself answered with.
   request is even sent; the first two are not reachable through these routes, since they always
   resolve a token- or case-bound `patient_id` and always build the window as aware datetimes,
   so in practice `client_error` means an operator's configuration mistake) - never the patient_id and never an appointment (§12.3, design D9).
+
+### The instruction text (sub-project 18, design D12)
+
+```
+GET /api/patient/instructions/{source_id}?version=
+GET /api/staff/instructions/{source_id}?version=
+```
+
+The full text behind one appointment's `instruction` summary above (title only there). Read
+live from the appointment-service on every call, never cached and never stored - the same
+recorded exception as the appointment list itself (`docs/spec_corrections.md` row 89, extended
+by this row to cover this read too). The patient route answers for any `source_id`/`version`
+the registry currently approves, not only ones on the patient's own appointments - exactly like
+the patient route never being told which appointments exist beyond its own list, this route
+does not itself check ownership, since the source_id came from the patient's own appointment
+list in the first place. The staff route is identical and needs no case id - it is not bound
+to any one case's `shown_context_ref` (design D13's appointment/instruction fields on
+`CaseDetail`/`ReviewContext` already carry the source for staff viewing).
+
+Both `source_id` and `version` must match the same id shape used everywhere else in this API
+(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`, e.g. `NewRequest.appointment_id`) - `version` is a
+required query parameter, not optional; a missing or malformed one is `422 invalid_instruction`.
+
+**Check order**, mirroring the appointment list's own convention: whether an
+appointment-service is configured at all (`404 instructions_not_enabled`) is checked *before*
+the id/version pattern - an unconfigured server answers 404 regardless of what the path or
+query looks like. Only once a client exists are `source_id`/`version` validated
+(`422 invalid_instruction`); only once that holds is the Approved Source Registry consulted
+(`404 instruction_not_approved`); only once the registry approves is the appointment-service
+actually asked (`503 instructions_unavailable`).
+
+**The registry, never the service, approves.** `policy/data/approved_instruction_sources.json`
+- the same JSON file OPA loads out of its policy bundle - is read directly (never through OPA,
+and never trusting the appointment-service's own answer): the requested `source_id` must be
+listed with `approved: true`, the exact same `version`, and the current time inside
+`[valid_from, valid_until)`. Anything else - unlisted, the wrong version, not yet valid, or
+expired - is `404 instruction_not_approved`, and the appointment-service is never called for
+it.
+
+`200`:
+
+```json
+{
+  "source_id": "INSTR-NEURO-VISIT",
+  "version": "1",
+  "title": "לפני הביקור",
+  "text": "רשימת תרופות, הדמיות קודמות, יומן התקפים או תסמינים. ... טיוטת דמו – טעונה אישור רפואי. בכל שאלה רפואית יש לפנות לצוות המטפל."
+}
+```
+
+The answer is exactly the requested `source_id` + `version`, with a non-empty `title` (at most
+200 characters) and a non-empty `text` (at most 4000 characters) - the same bounds
+`LoadInstructions`'s own gateway enforces (`docs/spec_corrections.md` row 90).
+
+- `401 not_authenticated` - as everywhere.
+- `403 patients_only` (the patient route, a staff token) / `403 staff_only` (the staff route,
+  a patient token).
+- `404 instructions_not_enabled` - no appointment-service configured
+  (`APPOINTMENT_SERVICE_URL` + `APPOINTMENT_API_KEY`); checked before everything below.
+- `422 invalid_instruction` - `source_id` or `version` does not match the id shape, or
+  `version` is missing.
+- `404 instruction_not_approved` - the Approved Source Registry does not currently approve this
+  exact `source_id` + `version` (unlisted, a different version, not yet valid, or expired). The
+  appointment-service is never asked in this case.
+- `503 instructions_unavailable` - the appointment-service did not answer, answered something
+  other than its documented 200 shape, answered for a different source or version than asked,
+  or itself answered `404 instruction_not_found` (the registry and the service disagree - never
+  delivered as though approved). The application log records one line,
+  `instruction read: <code> in <n> ms`, for every outcome (success included), where `<code>` is
+  `ok`, `not_found`, or one of the client's own codes (`no_answer`, `status_<n>`,
+  `invalid_response`) - never the source_id, the title or the text (§12.3).

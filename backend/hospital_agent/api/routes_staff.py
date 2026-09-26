@@ -17,7 +17,7 @@ from ..llm import telemetry
 from ..naming import EscalationKind, State
 from ..session import CaseNotFound
 from ..state_groups import STATE_GROUPS
-from . import appointments
+from . import appointments, instructions
 from .deps import get_engine, get_reviews, require_staff
 from .schemas import (
     AnswerRequest,
@@ -28,6 +28,7 @@ from .schemas import (
     CaseSummary,
     DecisionRequest,
     DecisionResponse,
+    InstructionView,
     MessageTemplateView,
     PatientRequestBody,
     ReviewContext,
@@ -108,6 +109,15 @@ def case_appointments(case_id: str, request: Request, start: str | None = Query(
     if case is None:
         raise HTTPException(status_code=404, detail="case_not_found")
     return appointments.read(request.app.state.appointment_list, case.patient_id, start, end)
+
+
+@router.get("/instructions/{source_id}", response_model=InstructionView)
+def get_instruction(source_id: str, request: Request,
+                    version: str | None = Query(default=None)) -> InstructionView:
+    """Sub-project 18 (design D12, D13): the same instruction read as the patient's, for staff
+    viewing a case's appointments (Case Monitor row detail / review context). The router-level
+    `require_staff` dependency already gates every route in this file."""
+    return instructions.read(request.app.state.instructions_client, source_id, version)
 
 
 @router.get("/cases/{case_id}/audit", response_model=list[AuditRecord])

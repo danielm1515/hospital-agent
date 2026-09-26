@@ -11,6 +11,8 @@ from hospital_agent.appointment_list import (
     Appointment,
     AppointmentList,
     AppointmentsUnavailable,
+    ExamType,
+    InstructionSummary,
     PatientNotFound,
     map_answer,
 )
@@ -61,7 +63,8 @@ def test_the_patient_gets_their_own_list_by_token(app_engine):
     assert body["appointments"][0] == {"appointment_id": "APT-8391", "appointment_at": "2026-10-03T07:30:00Z",
                                        "department": "Neurology", "doctor_name": "Dr. Cohen",
                                        "location": "Building B, Floor 2", "status": "Scheduled",
-                                       "required_documents": ["CBC", "ECG"]}
+                                       "required_documents": ["CBC", "ECG"], "exam_type": None,
+                                       "instruction": None}
     assert body["truncated"] is False
     # Both bounds carry the same +03:00 offset over the same one-month span, so both shift by
     # the same 3 hours: 2026-10-01T00:00:00+03:00 -> 2026-09-30T21:00:00Z and
@@ -69,6 +72,21 @@ def test_the_patient_gets_their_own_list_by_token(app_engine):
     # second bound does not hold under exact UTC arithmetic - verified with
     # datetime.astimezone(UTC) directly; see task-3-report.md).
     assert (body["from"], body["to"]) == ("2026-09-30T21:00:00Z", "2026-10-31T21:00:00Z")
+
+
+def test_exam_type_and_instruction_pass_through_when_present(app_engine):
+    """Sub-project 18 (design D3): AppointmentView carries the new nested fields straight
+    through, never null when the client's own Appointment carries them."""
+    with_fields = Appointment(
+        "APT-8391", AT, "Neurology", "Dr. Cohen", "Building B, Floor 2", "Scheduled", ("CBC", "ECG"),
+        ExamType("NEURO_VISIT", "ביקור במרפאה נוירולוגית"),
+        InstructionSummary("INSTR-NEURO-VISIT", "1", "לפני הביקור"))
+    fake = FakeList(result=AppointmentList((with_fields,), False))
+    with make(app_engine, fake) as client:
+        response = client.get("/api/patient/appointments", headers=auth(client, PATIENT))
+    body = response.json()["appointments"][0]
+    assert body["exam_type"] == {"code": "NEURO_VISIT", "label": "ביקור במרפאה נוירולוגית"}
+    assert body["instruction"] == {"source_id": "INSTR-NEURO-VISIT", "version": "1", "title": "לפני הביקור"}
 
 
 def test_the_default_window_is_now_plus_30_days(app_engine):

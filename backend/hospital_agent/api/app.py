@@ -35,6 +35,7 @@ from ..execution.appointment_service import build_gateway
 from ..execution.background import sla_interval_seconds, start_background
 from ..execution.document_service import build_document_gateway
 from ..human_review import HumanReviewService
+from ..instruction_client import InstructionClient, build_instruction_client
 from ..llm import telemetry
 from ..llm.model_selector import llm_version, select_provider
 from ..llm.orchestrator import Orchestrator, orchestrator_interval_seconds
@@ -95,7 +96,8 @@ class UploadSizeLimit:
 
 def create_app(engine: Engine | None = None, orchestrator: Orchestrator | None = None,
                document_intake: DocumentIntake | None = None,
-               appointment_list: AppointmentListClient | None = None) -> FastAPI:
+               appointment_list: AppointmentListClient | None = None,
+               instructions_client: InstructionClient | None = None) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         owned = engine is None
@@ -110,6 +112,10 @@ def create_app(engine: Engine | None = None, orchestrator: Orchestrator | None =
         # separate from CheckAppointment's gateway above - a test injects its own fake the way
         # it injects the Orchestrator.
         app.state.appointment_list = build_list_client() if owned else appointment_list
+        # Sub-project 18 (design D12): the UI's instruction-text read (routes_patient/
+        # routes_staff, api/instructions.py) - separate from LoadInstructions' own gateway call
+        # inside execution/appointment_service.py, exactly like appointment_list above.
+        app.state.instructions_client = build_instruction_client() if owned else instructions_client
 
         def _wake() -> None:
             running = app.state.orchestrator

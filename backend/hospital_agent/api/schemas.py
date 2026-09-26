@@ -395,8 +395,32 @@ class MetricsResponse(_FromMetrics):
 # Read live from the appointment-service and never stored (docs/spec_corrections.md row 89).
 
 
+class ExamTypeView(BaseModel):
+    """Sub-project 18 (design D3): one appointment's exam type, as the appointment-service
+    answered it - never null in the real service, but optional here (an older service simply
+    omits it)."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    code: str
+    label: str
+
+
+class InstructionSummaryView(BaseModel):
+    """Sub-project 18 (design D3, D12): which preparation instruction belongs to the
+    appointment - never its text (the panel loads that separately, through
+    GET /api/patient/instructions/{source_id})."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    source_id: str
+    version: str
+    title: str
+
+
 class AppointmentView(BaseModel):
-    """One appointment, as the appointment-service answered it (sub-project 16, design D6)."""
+    """One appointment, as the appointment-service answered it (sub-project 16, design D6;
+    sub-project 18 design D3 adds exam_type/instruction)."""
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -407,6 +431,20 @@ class AppointmentView(BaseModel):
     location: str | None
     status: Literal["Scheduled", "Cancelled"]
     required_documents: list[str]
+    exam_type: ExamTypeView | None = None
+    instruction: InstructionSummaryView | None = None
+
+
+class InstructionView(BaseModel):
+    """Sub-project 18 (design D12): `GET /api/patient/instructions/{source_id}` and its staff
+    counterpart - the approved text behind one appointment's `instruction` summary above."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    source_id: str
+    version: str
+    title: str
+    text: str
 
 
 class AppointmentsView(BaseModel):
