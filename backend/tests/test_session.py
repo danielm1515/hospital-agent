@@ -262,8 +262,10 @@ def test_instructions_shows_the_latest_present_entry_over_an_earlier_one(session
     assert orchestrator.run_case(case_id) is State.COMPLETED
     with app_engine.begin() as conn:
         assert len(data_log.entries(conn, case_id, data_log.DataKind.INSTRUCTIONS)) == 1  # loaded once
+        # One second later than anything the run recorded, so "latest" never rests on a tie
+        # (final review M2).
         data_log.record(conn, case_id, PATIENT, data_log.DataKind.INSTRUCTIONS,
-                        "A newer title\nA newer text", sm.clock())
+                        "A newer title\nA newer text", sm.clock() + timedelta(seconds=1))
     view = session.patient_view(case_id)
     assert view.instructions == session_module.PatientInstructions(title="A newer title", text="A newer text")
 
@@ -277,9 +279,11 @@ def test_instructions_is_null_when_the_latest_entry_is_tombstoned(session, sm, a
     session.upload_document(PATIENT, case_id, "blood_test", "Blood test results: normal.")
     assert orchestrator.run_case(case_id) is State.COMPLETED
     with app_engine.begin() as conn:
+        # One second later than anything the run recorded, so "latest" never rests on a tie
+        # (final review M2).
         newer = data_log.record(conn, case_id, PATIENT, data_log.DataKind.INSTRUCTIONS,
-                                "A newer title\nA newer text", sm.clock())
-        data_log.tombstone(conn, newer.entry_id, sm.clock())
+                                "A newer title\nA newer text", sm.clock() + timedelta(seconds=1))
+        data_log.tombstone(conn, newer.entry_id, sm.clock() + timedelta(seconds=2))
     assert session.patient_view(case_id).instructions is None
 
 

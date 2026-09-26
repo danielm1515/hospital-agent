@@ -14,7 +14,7 @@ from alembic.config import Config
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Engine
 
-from hospital_agent import logging_setup
+from hospital_agent import instruction_registry, logging_setup
 from hospital_agent.llm import telemetry
 from hospital_agent.state_manager import StateManager
 from hospital_agent.wiring import build_state_manager
@@ -45,6 +45,16 @@ def _no_real_appointment_service(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("APPOINTMENT_API_KEY", raising=False)
     monkeypatch.delenv("DOCUMENT_SERVICE_URL", raising=False)
     monkeypatch.delenv("DOCUMENT_API_KEY", raising=False)
+
+
+@pytest.fixture(autouse=True)
+def _fresh_instruction_memo():
+    """`instruction_registry` keeps a process-wide memo of OPA's answers (final review M5) -
+    clear it before and after every test, so one test's answer (or its patched DATA_DIR,
+    PATH or subprocess) never decides another's."""
+    instruction_registry.clear_cache()
+    yield
+    instruction_registry.clear_cache()
 
 
 @pytest.fixture(autouse=True)

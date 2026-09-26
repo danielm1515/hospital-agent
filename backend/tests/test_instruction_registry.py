@@ -14,6 +14,7 @@ import subprocess
 
 import pytest
 
+from hospital_agent import instruction_registry
 from hospital_agent.instruction_registry import is_approved
 from hospital_agent.policy import opa_runner
 from hospital_agent.policy.opa_runner import DATA_DIR, instruction_source_approved
@@ -164,3 +165,96 @@ def test_every_odd_date_format_is_denied(monkeypatch, merged_data_dir, source_id
 def test_the_real_registry_file_exists_and_parses():
     assert (DATA_DIR / "approved_instruction_sources.json").exists()
     assert "INSTR-NEURO-VISIT" in REAL_ENTRIES
+
+
+# --- final review M5: the memo in front of OPA --------------------------------------------
+
+class _CountingOpa:
+    """Stands in for opa_runner.instruction_source_approved: counts calls, answers `answer`."""
+
+    def __init__(self, answer):
+        self.answer, self.calls = answer, 0
+
+    def __call__(self, source_id, version):
+        self.calls += 1
+        return self.answer
+
+
+@pytest.fixture
+def clock(monkeypatch):
+    now = [1000.0]
+    monkeypatch.setattr(instruction_registry, "_clock", lambda: now[0])
+    return now
+
+
+@pytest.mark.parametrize("answer", [True, False])
+def test_a_second_read_within_the_ttl_does_not_ask_opa(monkeypatch, clock, answer):
+    opa = _CountingOpa(answer)
+    monkeypatch.setattr(opa_runner, "instruction_source_approved", opa)
+    assert is_approved("INSTR-PREP-COLONOSCOPY", "3") is answer
+    clock[0] += instruction_registry.CACHE_TTL_SECONDS - 1
+    assert is_approved("INSTR-PREP-COLONOSCOPY", "3") is answer
+    assert opa.calls == 1
+
+
+def test_after_the_ttl_opa_is_asked_again(monkeypatch, clock):
+    opa = _CountingOpa(True)
+    monkeypatch.setattr(opa_runner, "instruction_source_approved", opa)
+    assert is_approved("INSTR-PREP-COLONOSCOPY", "3") is True
+    clock[0] += instruction_registry.CACHE_TTL_SECONDS
+    opa.answer = False  # e.g. the source expired meanwhile
+    assert is_approved("INSTR-PREP-COLONOSCOPY", "3") is False
+    assert opa.calls == 2
+
+
+def test_an_outage_is_never_cached(monkeypatch, clock):
+    opa = _CountingOpa(None)
+    monkeypatch.setattr(opa_runner, "instruction_source_approved", opa)
+    assert is_approved("INSTR-PREP-COLONOSCOPY", "3") is None
+    opa.answer = True  # OPA is back
+    assert is_approved("INSTR-PREP-COLONOSCOPY", "3") is True
+    assert opa.calls == 2
+
+
+def test_the_memo_is_keyed_by_source_and_version(monkeypatch, clock):
+    opa = _CountingOpa(True)
+    monkeypatch.setattr(opa_runner, "instruction_source_approved", opa)
+    is_approved("INSTR-PREP-COLONOSCOPY", "3")
+    is_approved("INSTR-PREP-COLONOSCOPY", "4")
+    is_approved("INSTR-NEURO-VISIT", "3")
+    assert opa.calls == 3
+
+
+def test_the_memo_is_bounded(monkeypatch, clock):
+    opa = _CountingOpa(True)
+    monkeypatch.setattr(opa_runner, "instruction_source_approved", opa)
+    for n in range(instruction_registry.CACHE_MAX_ENTRIES + 10):
+        is_approved(f"INSTR-{n}", "1")
+    assert len(instruction_registry._memo) == instruction_registry.CACHE_MAX_ENTRIES
+    calls = opa.calls
+    is_approved("INSTR-0", "1")  # the oldest was evicted, so OPA is asked again
+    assert opa.calls == calls + 1
+
+
+def test_the_memo_survives_concurrent_reads(monkeypatch):
+    """FastAPI runs the sync instruction routes on a thread pool: concurrent reads and evictions
+    must neither raise nor overgrow the memo."""
+    import threading
+
+    monkeypatch.setattr(opa_runner, "instruction_source_approved", lambda s, v: True)
+    errors = []
+
+    def worker(offset):
+        try:
+            for n in range(300):
+                assert is_approved(f"INSTR-{(n + offset) % 300}", "1") is True
+        except Exception as failure:  # noqa: BLE001 - collected and asserted below
+            errors.append(failure)
+
+    threads = [threading.Thread(target=worker, args=(i * 37,)) for i in range(8)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    assert errors == []
+    assert len(instruction_registry._memo) <= instruction_registry.CACHE_MAX_ENTRIES

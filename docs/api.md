@@ -268,7 +268,10 @@ design D5) is optional - the appointment the patient picked from their own upcom
 When present, it must be 1-64 characters of `A-Z a-z 0-9 . _ -`, starting with a letter or
 digit. It is stored on the case as it is opened and is never read from anywhere else - the
 LLM never supplies it - and `CheckAppointment` (§11) reads it back to answer about that
-exact appointment.
+exact appointment. Its answer also carries `upcoming_count`: the patient's Scheduled
+appointments within 90 days from now - the same window the "פנייה חדשה" picker offers - and
+when that is above 1 the status message adds the "you have other appointments" sentence
+(design D10).
 
 `201`: the patient view. A verified patient's case starts in `in_progress`; `P-30000`'s
 case comes back `in_review` at once.
@@ -490,7 +493,7 @@ the counters the list above does not carry. `200`:
   "answered_appointment_id": "APT-8392",
   "department": "Cardiology",
   "exam_type_label": "מבחן מאמץ",
-  "instruction_source_id": "INSTR-CARD_STRESS",
+  "instruction_source_id": "INSTR-CARD-STRESS",
   "instruction_version": "1"
 }
 ```
@@ -1139,7 +1142,7 @@ actually asked (`404 patient_not_found` / `503 appointments_unavailable`).
       "status": "Scheduled",
       "required_documents": ["CBC", "ECG"],
       "exam_type": {"code": "NEURO_VISIT", "label": "ביקור במרפאה נוירולוגית"},
-      "instruction": {"source_id": "INSTR-NEURO-VISIT", "version": "1", "title": "לפני הביקור"}
+      "instruction": {"source_id": "INSTR-NEURO-VISIT", "version": "1", "title": "הכנה לביקור במרפאה נוירולוגית"}
     }
   ],
   "truncated": false
@@ -1235,7 +1238,7 @@ it is exactly as closed - nothing is approved and the appointment-service is nev
 {
   "source_id": "INSTR-NEURO-VISIT",
   "version": "1",
-  "title": "לפני הביקור",
+  "title": "הכנה לביקור במרפאה נוירולוגית",
   "text": "רשימת תרופות, הדמיות קודמות, יומן התקפים או תסמינים. ... טיוטת דמו – טעונה אישור רפואי. בכל שאלה רפואית יש לפנות לצוות המטפל."
 }
 ```

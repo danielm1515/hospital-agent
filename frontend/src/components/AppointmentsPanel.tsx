@@ -395,7 +395,7 @@ function AppointmentInstructions({
 
   let control: ReactNode = null
   if (problem === 'instruction_not_approved') {
-    control = <p className="hint">הוראות ההכנה טרם אושרו</p>
+    control = <p className="hint">הוראות ההכנה טרם אושרו.</p>
   } else if (problem === 'instructions_not_enabled') {
     control = <p className="hint">הוראות ההכנה אינן זמינות כרגע.</p>
   } else if (problem && loadInstruction) {

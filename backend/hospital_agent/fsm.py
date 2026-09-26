@@ -20,6 +20,12 @@ from .naming import Event as E
 from .naming import SafetyLevel
 from .naming import State as S
 
+# Sub-project 18 (D6): the case columns a CheckAppointment answer sets on RECORD_RETRIEVAL - all
+# six from that answer alone, None when it omits one (final review M3). appointment_id is not
+# here: it is the patient's write-once choice from REQUEST_SUBMITTED.
+APPOINTMENT_FACTS = ("answered_appointment_id", "department", "exam_type_label",
+                     "instruction_source_id", "instruction_version", "upcoming_count")
+
 
 class Effect(StrEnum):
     """Changes a transition makes to the cases row (design §6.3)."""
@@ -300,30 +306,20 @@ def apply_effects(case: CaseRecord, row: Transition, ctx: GuardContext) -> CaseR
                 if "held_documents" in p:
                     changes["held_documents"] = list(p["held_documents"])
                 # Sub-project 18 (D6): CheckAppointment's own facts about the appointment it
-                # read, each stored only when the answer actually carried it (older services,
-                # or the mock, omit some of these - absent means "leave unchanged", never None).
+                # read. A CheckAppointment answer sets all six from itself (final review M3): a
+                # field the answer omits becomes None, never a value left over from an earlier
+                # answer (a different appointment, a retry that no longer resolves an exam type) -
+                # in particular a stale instruction source can never survive into the next
+                # LoadInstructions (fix round 1, m4). CheckDocuments' and LoadInstructions' own
+                # DATA_RETRIEVED never touch these fields at all - the case's current_action
+                # distinguishes the CheckAppointment step from the others (and RESULT_FIELDS
+                # never lets another action carry them).
                 # appointment_id itself is NEVER written here (fix round 1, I2): it is the
                 # patient's write-once choice from REQUEST_SUBMITTED, and RECORD_RETRIEVAL must
                 # never overwrite it with the service's own answered_appointment_id.
-                if "answered_appointment_id" in p:
-                    changes["answered_appointment_id"] = p["answered_appointment_id"]
-                if "department" in p:
-                    changes["department"] = p["department"]
-                if "exam_type_label" in p:
-                    changes["exam_type_label"] = p["exam_type_label"]
-                # Fix round 1 (m4): unlike the fields above, instruction_source_id/version are
-                # never merely "left unchanged" when this retrieval is CheckAppointment's own -
-                # they are cleared (None) when the answer carries no instruction block, so a
-                # stale source from an earlier answer (a different appointment, a retry that no
-                # longer resolves an exam type) can never survive into the next LoadInstructions
-                # (which would otherwise load an approved-but-wrong text). CheckDocuments' and
-                # LoadInstructions' own DATA_RETRIEVED never touch these two fields at all - the
-                # case's current_action distinguishes the CheckAppointment step from the others.
                 if case.current_action is Action.CHECK_APPOINTMENT:
-                    changes["instruction_source_id"] = p.get("instruction_source_id")
-                    changes["instruction_version"] = p.get("instruction_version")
-                if "upcoming_count" in p:
-                    changes["upcoming_count"] = p["upcoming_count"]
+                    for fact in APPOINTMENT_FACTS:
+                        changes[fact] = p.get(fact)
                 if "safety_level" in p:  # LLM design §5: a re-check only ever raises the risk
                     changes["safety_level"] = _higher_risk(case.safety_level, SafetyLevel(p["safety_level"]))
             case Effect.RECORD_PATIENT_DEADLINE:

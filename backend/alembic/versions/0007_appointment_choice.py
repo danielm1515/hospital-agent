@@ -25,6 +25,12 @@ COLUMNS = ("appointment_id", "answered_appointment_id", "department", "exam_type
 
 
 def upgrade() -> None:
+    # Final review M7: ADD COLUMN takes an ACCESS EXCLUSIVE lock on cases; on a live database
+    # give up after 5 s rather than queue behind a long transaction and block every case
+    # behind it. SET LOCAL lasts only for this migration's transaction. PostgreSQL only -
+    # SQLite has no lock_timeout.
+    if op.get_bind().dialect.name == "postgresql":
+        op.execute("SET LOCAL lock_timeout = '5s'")
     for name in COLUMNS:
         op.add_column("cases", sa.Column(name, sa.Text))
     op.add_column("cases", sa.Column("upcoming_count", sa.Integer))

@@ -577,13 +577,13 @@ describe('AppointmentsPanel - exam type and preparation instructions (sub-projec
     expect(screen.getByText('טוען את הוראות ההכנה')).toHaveAttribute('role', 'status')
   })
 
-  it('says "הוראות ההכנה טרם אושרו" for an unapproved source - no code, no error styling', async () => {
+  it('says "הוראות ההכנה טרם אושרו." for an unapproved source - no code, no error styling', async () => {
     const user = userEvent.setup()
     renderPanel('patient', vi.fn().mockRejectedValue(new ApiError(404, 'instruction_not_approved')))
     await screen.findByText('מבחן מאמץ')
     await user.click(toggle())
 
-    const note = await screen.findByText('הוראות ההכנה טרם אושרו')
+    const note = await screen.findByText('הוראות ההכנה טרם אושרו.')
     expect(note).toHaveClass('hint')
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
     expect(document.body).not.toHaveTextContent('instruction_not_approved')
