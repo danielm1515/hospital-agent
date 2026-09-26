@@ -18,6 +18,84 @@
         "version": "1",
         "valid_from": "2090-01-01T00:00:00Z",
         "valid_until": "2095-01-01T00:00:00Z"
+      },
+      "INSTR-CARD-VISIT": {
+        "approved": true,
+        "version": "1",
+        "valid_from": "2026-01-01T00:00:00Z",
+        "valid_until": "2030-01-01T00:00:00Z"
+      },
+      "INSTR-CARD-ECHO": {
+        "approved": true,
+        "version": "1",
+        "valid_from": "2026-01-01T00:00:00Z",
+        "valid_until": "2030-01-01T00:00:00Z"
+      },
+      "INSTR-CARD-STRESS": {
+        "approved": true,
+        "version": "1",
+        "valid_from": "2026-01-01T00:00:00Z",
+        "valid_until": "2030-01-01T00:00:00Z"
+      },
+      "INSTR-CARD-HOLTER": {
+        "approved": true,
+        "version": "1",
+        "valid_from": "2026-01-01T00:00:00Z",
+        "valid_until": "2030-01-01T00:00:00Z"
+      },
+      "INSTR-DERM-VISIT": {
+        "approved": true,
+        "version": "1",
+        "valid_from": "2026-01-01T00:00:00Z",
+        "valid_until": "2030-01-01T00:00:00Z"
+      },
+      "INSTR-DERM-MOLES": {
+        "approved": true,
+        "version": "1",
+        "valid_from": "2026-01-01T00:00:00Z",
+        "valid_until": "2030-01-01T00:00:00Z"
+      },
+      "INSTR-NEURO-VISIT": {
+        "approved": true,
+        "version": "1",
+        "valid_from": "2026-01-01T00:00:00Z",
+        "valid_until": "2030-01-01T00:00:00Z"
+      },
+      "INSTR-NEURO-EEG": {
+        "approved": true,
+        "version": "1",
+        "valid_from": "2026-01-01T00:00:00Z",
+        "valid_until": "2030-01-01T00:00:00Z"
+      },
+      "INSTR-NEURO-EMG": {
+        "approved": true,
+        "version": "1",
+        "valid_from": "2026-01-01T00:00:00Z",
+        "valid_until": "2030-01-01T00:00:00Z"
+      },
+      "INSTR-OPHTH-VISIT": {
+        "approved": true,
+        "version": "1",
+        "valid_from": "2026-01-01T00:00:00Z",
+        "valid_until": "2030-01-01T00:00:00Z"
+      },
+      "INSTR-OPHTH-DILATED": {
+        "approved": true,
+        "version": "1",
+        "valid_from": "2026-01-01T00:00:00Z",
+        "valid_until": "2030-01-01T00:00:00Z"
+      },
+      "INSTR-ORTHO-VISIT": {
+        "approved": true,
+        "version": "1",
+        "valid_from": "2026-01-01T00:00:00Z",
+        "valid_until": "2030-01-01T00:00:00Z"
+      },
+      "INSTR-ORTHO-INJECTION": {
+        "approved": true,
+        "version": "1",
+        "valid_from": "2026-01-01T00:00:00Z",
+        "valid_until": "2030-01-01T00:00:00Z"
       }
     }
   }

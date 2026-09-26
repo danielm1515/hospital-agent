@@ -5,7 +5,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from hospital_agent.case import CaseRecord
+from hospital_agent.case import CaseRecord, ExecutionRecord
 from hospital_agent.execution.gateway import (
     ACTION_TARGETS,
     ERROR,
@@ -17,6 +17,7 @@ from hospital_agent.execution.gateway import (
     MockGateway,
     present_patient_fields,
 )
+from hospital_agent.execution.executor import ToolExecutor
 from hospital_agent.execution.retry import after_failure
 from hospital_agent.naming import AUTOMATIC_ACTIONS, EscalationKind, Event, State
 from hospital_agent.policy.build_minimized import OUTPUT as MINIMIZED_FIELDS
@@ -117,6 +118,30 @@ def test_fixed_fields_are_unaffected():
     assert present_patient_fields(case, "CheckDocuments") == ("patient_id",)
     assert present_patient_fields(case, "SendStatusUpdate") == ("patient_id",)
     assert present_patient_fields(case, "LoadInstructions") == ()
+
+
+# --- Task 4: the Tool Executor's non-patient parameters for LoadInstructions (D7/D8) --------
+
+def _load_instructions_execution() -> ExecutionRecord:
+    return ExecutionRecord(execution_id="EXEC-1", case_id="CASE-1", patient_id="P-10041",
+                           action="LoadInstructions", step=3, retry_cycle=0, attempt_number=1,
+                           idempotency_key="idem-1", status="started")
+
+
+def test_load_instructions_parameters_carry_the_cases_source_not_a_patient_field():
+    """extends ToolExecutor._parameters without touching present_patient_fields/ACTION_TARGETS -
+    LoadInstructions still declares no patient field (§11), but the gateway call still needs
+    to know which source_id/version to load, taken straight from the case."""
+    case = replace(_case_without_appointment_id(), instruction_source_id="INSTR-CARD-STRESS",
+                  instruction_version="1")
+    parameters = ToolExecutor._parameters(case, _load_instructions_execution())
+    assert parameters == {"source_id": "INSTR-CARD-STRESS", "version": "1"}
+
+
+def test_load_instructions_parameters_are_none_without_a_case_source():
+    case = _case_without_appointment_id()
+    parameters = ToolExecutor._parameters(case, _load_instructions_execution())
+    assert parameters == {"source_id": None, "version": None}
 
 
 # --- Retry Manager -------------------------------------------------------------------------

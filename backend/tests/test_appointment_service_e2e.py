@@ -4,6 +4,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
+from hospital_agent import data_log
 from hospital_agent.execution.appointment_service import AppointmentServiceGateway, HttpResponse
 from hospital_agent.naming import EscalationKind, State
 from tests.driver import Driver
@@ -82,3 +83,38 @@ def test_a_service_that_recovers_within_the_budget_is_used(sm, app_engine):
     d.run_step()
     assert d.case.appointment_at is not None and d.state is State.PLANNING
     assert len(transport.urls) == 2
+
+
+# --- Task 4: LoadInstructions against the same appointment-service (design D8) --------------
+
+INSTRUCTION_ANSWER = {"source_id": "INSTR-CARD-STRESS", "version": "1", "title": "הכנה למבחן מאמץ",
+                      "text": "יש לצום כ-3 שעות לפני הבדיקה. שתייה מותרת."}
+
+
+def test_the_cases_own_source_flows_through_the_policy_to_the_gateway_to_the_data_log(sm, app_engine):
+    """The case's instruction_source_id/version (set by CheckAppointment's exam type, D6) is
+    what the Orchestrator's Driver equivalent passes to the Policy Service (D7) and what the
+    Tool Executor sends to the instruction system (D8) - end to end, over the same fake
+    appointment-service, the exact title+text the service answered end up in the Data Log."""
+    d, transport = driver(sm, app_engine,
+                          answer(200, {"found": True,
+                                       "appointment": {"appointment_at": AT, "status": "Scheduled",
+                                                       "required_documents": [],
+                                                       "instruction": {"source_id": "INSTR-CARD-STRESS",
+                                                                      "version": "1"}}}),
+                          answer(200, INSTRUCTION_ANSWER))
+    d.run_step()  # CheckAppointment: stores instruction_source_id/version on the case
+    assert (d.case.instruction_source_id, d.case.instruction_version) == ("INSTR-CARD-STRESS", "1")
+    d.advance()
+    d.run_step()  # CheckDocuments (the fallback mock; nothing is required)
+    d.advance()
+    request = d.request()  # the request the real Orchestrator would build for this step
+    assert request.instruction_source.source_id == "INSTR-CARD-STRESS"
+    assert request.instruction_source.version == "1"
+    assert request.proposed_action.patient_fields == ()
+    d.run_step()  # LoadInstructions: the real Policy Service, then the real instruction-system call
+    assert d.state is State.ASSESSING_READINESS
+    assert transport.urls[-1] == "http://appointments.test/api/v1/instructions/INSTR-CARD-STRESS?version=1"
+    with app_engine.connect() as conn:
+        [entry] = data_log.entries(conn, d.case_id, data_log.DataKind.INSTRUCTIONS)
+    assert entry.content == f"{INSTRUCTION_ANSWER['title']}\n{INSTRUCTION_ANSWER['text']}"

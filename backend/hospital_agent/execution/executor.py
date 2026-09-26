@@ -139,15 +139,21 @@ class ToolExecutor:
 
     @staticmethod
     def _parameters(case: CaseRecord, execution: ExecutionRecord) -> dict[str, Any]:
-        """Only the patient fields the target may receive (spec §11), plus the message reference.
+        """Only the patient fields the target may receive (spec §11), plus non-patient extras.
 
         present_patient_fields (sub-project 18) drops a declared field the case does not
         actually hold - CheckAppointment's appointment_id is sent only when the patient chose
         an appointment (D5/D6); every other action's fields are always present, so this changes
-        nothing for them.
+        nothing for them. LoadInstructions declares no patient field at all (§11:
+        instruction_system gets none) - its source_id/version are sent as non-patient
+        parameters, taken from the case's own instruction_source_id/instruction_version
+        (Task 4, D7/D8), never through present_patient_fields/ACTION_TARGETS.
         """
         fields = present_patient_fields(case, execution.action)
         parameters: dict[str, Any] = {name: getattr(case, name) for name in fields}
         if execution.action == Action.SEND_STATUS_UPDATE.value:
             parameters["content_hash"] = execution.content_hash
+        if execution.action == Action.LOAD_INSTRUCTIONS.value:
+            parameters["source_id"] = case.instruction_source_id
+            parameters["version"] = case.instruction_version
         return parameters

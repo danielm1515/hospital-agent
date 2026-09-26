@@ -8,7 +8,7 @@ import time
 import pytest
 
 from hospital_agent import data_log, repository
-from hospital_agent.execution.gateway import MockGateway
+from hospital_agent.execution.gateway import MockGateway, ToolResult
 from hospital_agent.llm.orchestrator import Orchestrator
 from hospital_agent.llm.provider import FakeProvider
 from hospital_agent.llm.schemas import Call, LLMUnusable
@@ -499,3 +499,68 @@ def test_policy_patient_fields_match_what_the_gateway_actually_received(run, app
     check = next(call for call in gateway.calls if call[0] == "CheckAppointment")
     assert len(captured) == 1
     assert set(captured[0]) == set(check[1])
+
+
+# --- Task 4: LoadInstructions from the appointment-service, source from the case (D7/D8) ----
+
+class NoInstructionSourceGateway(MockGateway):
+    """A CheckAppointment answer that never resolves an exam type (e.g. an older
+    appointment-service, or one whose registration failed): the case then holds no
+    instruction_source_id/instruction_version at all - never a substitute."""
+
+    def call(self, action, parameters, idempotency_key):
+        result = super().call(action, parameters, idempotency_key)
+        if action == "CheckAppointment":
+            data = {k: v for k, v in result.data.items()
+                    if k not in ("instruction_source_id", "instruction_version")}
+            return ToolResult(result.kind, data)
+        return result
+
+
+def test_a_case_with_no_instruction_source_is_denied_fail_closed(run):
+    """D7: the policy's instruction_source comes from the case; a case with none is passed
+    None, and OPA denies unapproved_instruction_source - fail closed, never a fallback source.
+    LoadInstructions (plan step 3) is denied before readiness is ever assessed, so the case
+    never reaches AwaitingPatientInput here even though blood_test is still missing."""
+    patient, agent = run(gateway=NoInstructionSourceGateway())
+    patient.submit()
+    patient.validate()
+    agent.run_case(patient.case_id)
+    assert patient.case.instruction_source_id is None
+    assert escalation(patient) == (State.AWAITING_HUMAN_REVIEW, EscalationKind.POLICY_DENIED)
+    assert events(patient)[-1] == "POLICY_DENIED"
+    assert "unapproved_instruction_source" in patient.trace()[-1].policy_reasons
+
+
+def test_an_approved_case_source_reaches_load_instructions(run):
+    """The mock path (D7): MockGateway's CheckAppointment supplies INSTR-PREP-COLONOSCOPY v3,
+    stored on the case by RECORD_RETRIEVAL, and the Orchestrator passes exactly that to the
+    policy and to the status message - the golden path's source, unchanged (35/4/54)."""
+    patient, agent = run()
+    patient.submit()
+    patient.validate()
+    agent.run_case(patient.case_id)
+    patient.upload("blood_test")
+    assert agent.run_case(patient.case_id) is State.COMPLETED
+    assert (patient.case.instruction_source_id, patient.case.instruction_version) == ("INSTR-PREP-COLONOSCOPY", "3")
+
+
+def test_policy_input_declares_no_patient_fields_for_load_instructions(run):
+    """§11: instruction_system receives no patient field at all - the policy input's
+    patient_fields for LoadInstructions must stay empty regardless of what the case holds."""
+    patient, agent = run()
+    captured: list[tuple[str, ...]] = []
+    original_apply = agent.policy.apply
+
+    def spy(sm, case_id, request):
+        if request.proposed_action.action == "LoadInstructions":
+            captured.append(request.proposed_action.patient_fields)
+        return original_apply(sm, case_id, request)
+
+    agent.policy.apply = spy
+    patient.submit()
+    patient.validate()
+    agent.run_case(patient.case_id)
+    patient.upload("blood_test")
+    agent.run_case(patient.case_id)
+    assert captured == [()]

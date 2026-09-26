@@ -12,10 +12,26 @@ from hospital_agent.scripted import ScriptedAgents
 from tests.test_orchestrator import _until
 
 
+# Task 4 (D7/D8): CheckAppointment must resolve an approved instruction source (an approved
+# registry entry, policy/data/approved_instruction_sources.json) or LoadInstructions is denied
+# unapproved_instruction_source before ever reaching the instruction system - this fixture's
+# appointment answer carries one, and the same transport answers the instructions endpoint too.
+INSTRUCTION_SOURCE_ID, INSTRUCTION_VERSION = "INSTR-CARD-VISIT", "1"
+INSTRUCTION_TITLE, INSTRUCTION_TEXT_BODY = "הכנה לביקור במרפאה קרדיולוגית", "רשימת תרופות מעודכנת."
+
+
 def appointment(required):
-    body = {"found": True, "appointment": {"appointment_at": "2030-10-03T10:30:00+03:00", "status": "Scheduled",
-                                           "required_documents": required}}
-    return lambda url, headers, timeout: HttpResponse(200, json.dumps(body).encode())
+    appointment_body = {"found": True, "appointment": {"appointment_at": "2030-10-03T10:30:00+03:00",
+                                                        "status": "Scheduled", "required_documents": required,
+                                                        "instruction": {"source_id": INSTRUCTION_SOURCE_ID,
+                                                                       "version": INSTRUCTION_VERSION}}}
+    instruction_body = {"source_id": INSTRUCTION_SOURCE_ID, "version": INSTRUCTION_VERSION,
+                        "title": INSTRUCTION_TITLE, "text": INSTRUCTION_TEXT_BODY}
+
+    def transport(url, headers, timeout):
+        body = instruction_body if "/instructions/" in url else appointment_body
+        return HttpResponse(200, json.dumps(body).encode())
+    return transport
 
 
 class Documents:

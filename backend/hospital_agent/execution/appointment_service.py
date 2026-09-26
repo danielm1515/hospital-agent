@@ -35,6 +35,11 @@ ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 MAX_LABEL_LENGTH = 200  # department, exam_type_label (M2)
 MAX_UPCOMING_COUNT = 2**31 - 1  # M1: a signed 32-bit bound, and never negative
 
+# Task 4 (design D8): the instruction system's own bounds on title/text - a title the same
+# length as a free-text label, a text long enough for the catalog's demo drafts.
+MAX_INSTRUCTION_TITLE_LENGTH = 200
+MAX_INSTRUCTION_TEXT_LENGTH = 4000
+
 # (url, headers, timeout) -> the response; raises OSError when there is no answer at all.
 Transport = Callable[[str, Mapping[str, str], float], HttpResponse]
 
@@ -57,10 +62,11 @@ def _json(body: bytes) -> Any:
 def _optional_str(value: Any) -> tuple[bool, str | None]:
     """(ok, value): ok is False only for a present field with the wrong shape (sub-project 18
     design §2 - every new field is optional; absent means None, a non-empty string is kept, and
-    anything else - "", a number, a list - is invalid_response, fail closed)."""
+    anything else - "", whitespace-only (Task 4 leftover m2), a number, a list - is
+    invalid_response, fail closed)."""
     if value is None:
         return True, None
-    if isinstance(value, str) and value:
+    if isinstance(value, str) and value.strip():
         return True, value
     return False, None
 
@@ -205,8 +211,42 @@ def _required_documents(value: Any) -> list[str] | None:
     return sorted(set(value))
 
 
+def map_instruction_response(response: HttpResponse, *, requested_source_id: str,
+                             requested_version: str) -> ToolResult:
+    """Task 4 (design D8): the instruction system's GET /api/v1/instructions/{source_id}
+    answer, row by row - the same fail-closed shape as map_response.
+
+    The answer must be exactly the source_id + version that were asked for (never merely
+    absent, and never a different one - LoadInstructions never receives a patient field, so
+    there is nothing else to check the answer against), with a non-empty title and text,
+    each within its own bound. Anything else is invalid_response.
+    """
+    if response.status in _TRANSIENT:
+        return ToolResult(TRANSIENT_FAILURE, {"error": _TRANSIENT[response.status]})
+    if response.status in (401, 403):
+        return _error("unauthorized")
+    if len(response.body) >= MAX_BODY_BYTES:
+        return _error("invalid_response")
+    body = _json(response.body)
+    if response.status == 404:
+        known = isinstance(body, dict) and body.get("error") == "instruction_not_found"
+        return _error("not_found" if known else "invalid_response")
+    if response.status != 200 or not isinstance(body, dict):
+        return _error("invalid_response")
+    if body.get("source_id") != requested_source_id or body.get("version") != requested_version:
+        return _error("invalid_response")
+    title, text = body.get("title"), body.get("text")
+    if not isinstance(title, str) or not title.strip() or len(title) > MAX_INSTRUCTION_TITLE_LENGTH:
+        return _error("invalid_response")
+    if not isinstance(text, str) or not text.strip() or len(text) > MAX_INSTRUCTION_TEXT_LENGTH:
+        return _error("invalid_response")
+    return ToolResult(OK, {"instruction_ids": [f"{requested_source_id}:{requested_version}"],
+                          "instruction_text": f"{title}\n{text}"})
+
+
 class AppointmentServiceGateway:
-    """ToolGateway: CheckAppointment over HTTP, every other action the fallback's."""
+    """ToolGateway: CheckAppointment and LoadInstructions over HTTP, every other action the
+    fallback's."""
 
     def __init__(self, base_url: str, api_key: str, *, fallback: ToolGateway | None = None,
                  transport: Transport = urllib_transport, timeout: float = TIMEOUT_SECONDS,
@@ -225,6 +265,8 @@ class AppointmentServiceGateway:
         return self.fallback.idempotent(action)
 
     def call(self, action: str, parameters: Mapping[str, Any], idempotency_key: str) -> ToolResult:
+        if action == Action.LOAD_INSTRUCTIONS.value:
+            return self._load_instructions(parameters, idempotency_key)
         if action != Action.CHECK_APPOINTMENT.value:
             return self.fallback.call(action, parameters, idempotency_key)
         self.calls.append((action, dict(parameters), idempotency_key))
@@ -246,6 +288,23 @@ class AppointmentServiceGateway:
             return no_answer_result(exc)
         return map_response(answer, now=self._clock(), requested_patient_id=patient_id,
                             requested_appointment_id=requested_appointment_id)
+
+    def _load_instructions(self, parameters: Mapping[str, Any], idempotency_key: str) -> ToolResult:
+        """Task 4 (design D8): the instruction system - no patient field at all (§11), only the
+        source_id/version the Tool Executor took from the case (execution/executor.py
+        `_parameters`)."""
+        self.calls.append((Action.LOAD_INSTRUCTIONS.value, dict(parameters), idempotency_key))
+        source_id, version = parameters.get("source_id"), parameters.get("version")
+        if not isinstance(source_id, str) or not source_id or not isinstance(version, str) or not version:
+            return _error("invalid_request")
+        url = (f"{self._base_url}/api/v1/instructions/{urllib.parse.quote(source_id, safe='')}"
+              f"?version={urllib.parse.quote(version, safe='')}")
+        headers = {"X-API-Key": self._api_key, "X-Execution-ID": idempotency_key, "Accept": "application/json"}
+        try:
+            answer = self._transport(url, headers, self._timeout)
+        except (OSError, http_client.HTTPException) as exc:
+            return no_answer_result(exc)
+        return map_instruction_response(answer, requested_source_id=source_id, requested_version=version)
 
 
 def build_gateway(env: Mapping[str, str] | None = None,

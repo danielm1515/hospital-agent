@@ -32,6 +32,9 @@ PLAN = [
     {"step": 3, "action": "LoadInstructions"},
     {"step": 4, "action": "SendStatusUpdate"},
 ]
+# The demo colonoscopy source: what MockGateway's CheckAppointment stores on the case
+# (execution/gateway.py), so a Driver that never overrides instruction_source and never runs
+# CheckAppointment for real (a direct retrieve_step()) still matches the real path.
 APPROVED_SOURCE = InstructionSource("INSTR-PREP-COLONOSCOPY", "3")
 STATUS_MESSAGE = OutgoingMessage(evaluated=True, medical_content_flag=False, content_hash="HASH-STATUS-1")
 
@@ -72,16 +75,33 @@ class Driver(ScriptedAgents):
     # --- the real Policy Service / Tool Executor / Readiness Check -------------------------
 
     def request(self, **overrides) -> PolicyRequest:
-        """A well-formed PolicyRequest for the current plan step; overrides replace fields."""
+        """A well-formed PolicyRequest for the current plan step; overrides replace fields.
+
+        Task 4 (D7): like the real Orchestrator, instruction_source comes from the case's own
+        instruction_source_id/instruction_version when it has them (e.g. after a real
+        CheckAppointment call through AppointmentServiceGateway/MockGateway). Many tests drive
+        the case with retrieve_step() shortcuts that skip CheckAppointment entirely, so the
+        case never gets one from RECORD_RETRIEVAL; APPROVED_SOURCE - the same demo colonoscopy
+        source MockGateway.CheckAppointment stores on a case that did run for real - is the
+        fallback for those, so this stays a drop-in default and every existing at_step()-based
+        test keeps working unchanged. A test that needs a specific (possibly unapproved) source
+        overrides `instruction_source=` explicitly (e.g. test_d17_instructions_only_from_the_approved_registry).
+        """
         case = self.case
         action = case.current_action
         target, _ = ACTION_TARGETS[action.value]
         fields = present_patient_fields(case, action.value)
+        source = None
+        if action is Action.LOAD_INSTRUCTIONS:
+            if case.instruction_source_id and case.instruction_version:
+                source = InstructionSource(case.instruction_source_id, case.instruction_version)
+            else:
+                source = APPROVED_SOURCE
         request = PolicyRequest(
             execution_id=f"EXEC-{uuid.uuid4().hex[:8]}",
             proposed_action=ProposedAction(action.value, case.current_step, target, fields),
             outgoing_message=STATUS_MESSAGE if action is Action.SEND_STATUS_UPDATE else None,
-            instruction_source=APPROVED_SOURCE if action is Action.LOAD_INSTRUCTIONS else None,
+            instruction_source=source,
         )
         return replace(request, **overrides)
 

@@ -1,9 +1,9 @@
-"""Migration 0007 (sub-project 18 task 3): six nullable cases columns."""
+"""Migration 0007 (sub-project 18 task 3): seven nullable cases columns."""
 from alembic import command
 from sqlalchemy import text
 
-COLUMNS = {"appointment_id", "department", "exam_type_label", "instruction_source_id",
-          "instruction_version", "upcoming_count"}
+COLUMNS = {"appointment_id", "answered_appointment_id", "department", "exam_type_label",
+          "instruction_source_id", "instruction_version", "upcoming_count"}
 
 
 def _case_columns(owner_engine) -> set[str]:

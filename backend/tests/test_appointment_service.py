@@ -120,11 +120,13 @@ def test_the_new_fields_are_absent_without_a_substitute_when_the_answer_omits_th
     ({"appointment_id": ".APT-1"}, {}),        # M2: must start with a letter or digit
     ({"appointment_id": "a" * 65}, {}),        # M2: over 64 characters
     ({"department": ""}, {}),
+    ({"department": "   "}, {}),                # m2: whitespace-only, same as empty
     ({"department": 1}, {}),
     ({"department": "ד" * 201}, {}),           # M2: department over 200 characters
     ({"exam_type": "CARD_STRESS"}, {}),          # not a dict
     ({"exam_type": {"code": "CARD_STRESS"}}, {}),  # no label
     ({"exam_type": {"label": ""}}, {}),           # empty label
+    ({"exam_type": {"label": "\t\n"}}, {}),       # m2: whitespace-only, same as empty
     ({"exam_type": {"label": "מ" * 201}}, {}),  # M2: exam_type_label over 200 characters
     ({"instruction": "INSTR-CARD-STRESS"}, {}),   # not a dict
     ({"instruction": {"source_id": "INSTR-CARD-STRESS"}}, {}),  # no version
@@ -304,16 +306,119 @@ def test_a_missing_patient_id_is_never_sent():
     assert transport.requests == []
 
 
-def test_the_other_actions_are_the_mocks():
+def test_check_documents_and_send_status_update_are_the_mocks():
+    """Task 4: LoadInstructions no longer falls back to the mock when the appointment-service
+    is configured (design D8) - only CheckDocuments and SendStatusUpdate still do."""
     fallback = MockGateway()
     gw, transport = gateway(response(200, FOUND), fallback=fallback)
-    for action in ("CheckDocuments", "LoadInstructions"):
-        assert gw.call(action, {"patient_id": "P"}, "K") == MockGateway().call(action, {"patient_id": "P"}, "K")
+    assert gw.call("CheckDocuments", {"patient_id": "P"}, "K") == \
+        MockGateway().call("CheckDocuments", {"patient_id": "P"}, "K")
     gw.call("SendStatusUpdate", {"patient_id": "P", "content_hash": "H"}, "K9")
     assert fallback.delivered == {"K9": {"patient_id": "P", "content_hash": "H"}}
     assert transport.requests == []
     assert all(gw.idempotent(a) == fallback.idempotent(a)
                for a in ("CheckAppointment", "CheckDocuments", "LoadInstructions", "SendStatusUpdate"))
+
+
+# --- Task 4: LoadInstructions against the instruction system (design D8) --------------------
+
+INSTRUCTION = {"source_id": "INSTR-CARD-STRESS", "version": "1", "title": "הכנה למבחן מאמץ",
+              "text": "יש לצום כ-3 שעות לפני הבדיקה. " + "x" * 10}
+
+
+def _load(answer=None, raises=None, **params):
+    gw, transport = gateway(answer, raises)
+    parameters = {"source_id": "INSTR-CARD-STRESS", "version": "1", **params}
+    return gw.call("LoadInstructions", parameters, "K-1"), transport
+
+
+def test_a_matching_instruction_answer_is_ok():
+    result, transport = _load(response(200, INSTRUCTION))
+    assert result == ToolResult(OK, {"instruction_ids": ["INSTR-CARD-STRESS:1"],
+                                     "instruction_text": f"{INSTRUCTION['title']}\n{INSTRUCTION['text']}"})
+    [(url, headers, timeout)] = transport.requests
+    assert url == "http://appointments.test/api/v1/instructions/INSTR-CARD-STRESS?version=1"
+    assert headers == {"X-API-Key": KEY, "X-Execution-ID": "K-1", "Accept": "application/json"}
+    assert timeout == TIMEOUT_SECONDS
+
+
+def test_a_mismatched_source_id_is_invalid_response():
+    body = {**INSTRUCTION, "source_id": "INSTR-CARD-ECHO"}
+    assert _load(response(200, body))[0] == ToolResult(ERROR, {"error": "invalid_response"})
+
+
+def test_a_source_id_the_answer_omits_is_invalid_response():
+    body = {k: v for k, v in INSTRUCTION.items() if k != "source_id"}
+    assert _load(response(200, body))[0] == ToolResult(ERROR, {"error": "invalid_response"})
+
+
+def test_a_mismatched_version_is_invalid_response():
+    body = {**INSTRUCTION, "version": "2"}
+    assert _load(response(200, body))[0] == ToolResult(ERROR, {"error": "invalid_response"})
+
+
+@pytest.mark.parametrize("title", ["", "   ", 1, None, "x" * 201])
+def test_a_malformed_title_is_invalid_response(title):
+    body = {**INSTRUCTION, "title": title}
+    assert _load(response(200, body))[0] == ToolResult(ERROR, {"error": "invalid_response"})
+
+
+@pytest.mark.parametrize("text", ["", "   ", 1, None, "x" * 4001])
+def test_a_malformed_text_is_invalid_response(text):
+    body = {**INSTRUCTION, "text": text}
+    assert _load(response(200, body))[0] == ToolResult(ERROR, {"error": "invalid_response"})
+
+
+def test_titles_and_text_at_the_bound_are_accepted():
+    body = {**INSTRUCTION, "title": "x" * 200, "text": "y" * 4000}
+    assert _load(response(200, body))[0].kind == OK
+
+
+def test_an_unknown_source_is_not_found():
+    assert _load(response(404, {"error": "instruction_not_found"}))[0] == ToolResult(ERROR, {"error": "not_found"})
+
+
+def test_an_unexpected_404_shape_is_invalid_response():
+    assert _load(response(404, {"detail": "not found"}))[0] == ToolResult(ERROR, {"error": "invalid_response"})
+
+
+@pytest.mark.parametrize("status, error", [(500, "unavailable"), (502, "unavailable"),
+                                           (503, "unavailable"), (504, "timeout")])
+def test_a_server_side_failure_is_transient_for_load_instructions(status, error):
+    assert _load(response(status, {"error": "x"}))[0] == ToolResult(TRANSIENT_FAILURE, {"error": error})
+
+
+@pytest.mark.parametrize("raised, error", [
+    (TimeoutError("timed out"), "timeout"),
+    (OSError("no route"), "unavailable"),
+])
+def test_no_answer_at_all_is_transient_for_load_instructions(raised, error):
+    result, _ = _load(raises=raised)
+    assert result == ToolResult(TRANSIENT_FAILURE, {"error": error})
+
+
+def test_unauthorized_for_load_instructions():
+    assert _load(response(401, {"error": "unauthorized"}))[0] == ToolResult(ERROR, {"error": "unauthorized"})
+
+
+@pytest.mark.parametrize("params", [{"version": "1", "source_id": None}, {"source_id": "INSTR-CARD-STRESS",
+                                                                          "version": None}])
+def test_a_missing_source_id_or_version_is_never_sent(params):
+    gw, transport = gateway(response(200, INSTRUCTION))
+    result = gw.call("LoadInstructions", {k: v for k, v in params.items() if v is not None}, "K")
+    assert result.data == {"error": "invalid_request"}
+    assert transport.requests == []
+
+
+def test_load_instructions_calls_are_recorded():
+    gw, _ = gateway(response(200, INSTRUCTION))
+    gw.call("LoadInstructions", {"source_id": "INSTR-CARD-STRESS", "version": "1"}, "K-1")
+    assert gw.calls == [("LoadInstructions", {"source_id": "INSTR-CARD-STRESS", "version": "1"}, "K-1")]
+
+
+def test_load_instructions_is_idempotent():
+    gw, _ = gateway(response(200, INSTRUCTION))
+    assert gw.idempotent("LoadInstructions")
 
 
 def test_calls_are_recorded_like_the_mocks():
