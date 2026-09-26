@@ -153,6 +153,12 @@ export type UploadCode =
   | 'expired'
   | 'not_yours'
   | 'wrong_document_type'
+  | 'unrecognised_type'
+  | 'unreadable_scan'
+  | 'bad_date'
+  | 'no_date'
+  | 'unsupported_format'
+  | 'too_large'
 
 export interface UploadResult {
   code: UploadCode

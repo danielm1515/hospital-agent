@@ -182,43 +182,66 @@ describe('RequestDetail: needs_document, file upload (sub-project 13, docs/api.m
     return file
   }
 
-  it('renders one PDF input and no text box or format select', async () => {
+  function jpgFile(name = 'photo.jpg', sizeBytes = 1024) {
+    const file = new File(['\xff\xd8\xff...'], name, { type: 'image/jpeg' })
+    Object.defineProperty(file, 'size', { value: sizeBytes })
+    return file
+  }
+
+  it('renders one document input and no text box or format select', async () => {
     getRequest.mockResolvedValue(needsDocumentFile())
     renderDetail()
 
-    const section = await screen.findByRole('region', { name: 'העלאת מסמך PDF' })
-    expect(within(section).getByLabelText('בחירת קובץ')).toHaveAttribute('accept', 'application/pdf,.pdf')
+    const section = await screen.findByRole('region', { name: 'העלאת מסמך (PDF או תמונה)' })
+    expect(within(section).getByLabelText('בחירת קובץ')).toHaveAttribute(
+      'accept', 'application/pdf,.pdf,image/jpeg,.jpg,.jpeg,image/png,.png')
     expect(within(section).queryByLabelText('תוכן המסמך')).not.toBeInTheDocument()
     expect(within(section).queryByLabelText('סוג הקובץ')).not.toBeInTheDocument()
     // Only one upload section - not one per missing document.
     expect(screen.getAllByRole('region', { name: /העלאת מסמך/ })).toHaveLength(1)
   })
 
-  it('refuses a non-PDF file without calling the API', async () => {
+  it('accepts a JPG file and sends it', async () => {
+    const user = userEvent.setup()
+    getRequest.mockResolvedValue(needsDocumentFile())
+    uploadDocumentFile.mockResolvedValue({
+      upload: { code: 'accepted', document_type: 'CBC' },
+      request: patientView({ case_id: 'CASE-1', status: 'in_progress' }),
+    })
+    renderDetail()
+
+    const section = await screen.findByRole('region', { name: 'העלאת מסמך (PDF או תמונה)' })
+    await user.upload(within(section).getByLabelText('בחירת קובץ'), jpgFile())
+    await user.click(within(section).getByRole('button', { name: 'שליחת המסמך' }))
+
+    expect(uploadDocumentFile).toHaveBeenCalledWith('CASE-1', expect.any(File))
+  })
+
+  it('refuses an unsupported file without calling the API', async () => {
     const user = userEvent.setup()
     getRequest.mockResolvedValue(needsDocumentFile())
     renderDetail()
 
-    const section = await screen.findByRole('region', { name: 'העלאת מסמך PDF' })
+    const section = await screen.findByRole('region', { name: 'העלאת מסמך (PDF או תמונה)' })
     const file = new File(['hello'], 'results.txt', { type: 'text/plain' })
     await user.upload(within(section).getByLabelText('בחירת קובץ'), file)
     await user.click(within(section).getByRole('button', { name: 'שליחת המסמך' }))
 
     expect(uploadDocumentFile).not.toHaveBeenCalled()
-    expect(within(section).getByRole('alert')).toHaveTextContent('יש לבחור קובץ PDF.')
+    expect(within(section).getByRole('alert')).toHaveTextContent('אפשר להעלות רק PDF או תמונה (JPG/PNG).')
   })
 
-  it('refuses a PDF over 10 MB without calling the API', async () => {
+  it('refuses a file over 10 MB without calling the API', async () => {
     const user = userEvent.setup()
     getRequest.mockResolvedValue(needsDocumentFile())
     renderDetail()
 
-    const section = await screen.findByRole('region', { name: 'העלאת מסמך PDF' })
+    const section = await screen.findByRole('region', { name: 'העלאת מסמך (PDF או תמונה)' })
     await user.upload(within(section).getByLabelText('בחירת קובץ'), pdfFile('big.pdf', 10 * 1024 * 1024 + 1))
     await user.click(within(section).getByRole('button', { name: 'שליחת המסמך' }))
 
     expect(uploadDocumentFile).not.toHaveBeenCalled()
-    expect(within(section).getByRole('alert')).toHaveTextContent('הקובץ גדול מדי')
+    expect(within(section).getByRole('alert')).toHaveTextContent('הקובץ גדול מ־10MB. העלו קובץ קטן יותר.')
   })
 
   it.each([
@@ -226,9 +249,16 @@ describe('RequestDetail: needs_document, file upload (sub-project 13, docs/api.m
     ['not_required', 'ECG', 'info', 'המסמך תרשים פעילות חשמלית של הלב תקין, אבל אינו נדרש לתור הזה.'],
     ['already_received', 'URINALYSIS', 'info', 'המסמך בדיקת שתן כבר התקבל קודם.'],
     ['not_medical', null, 'error', 'הקובץ אינו מסמך רפואי, ולכן לא נקלט.'],
-    ['unreadable', null, 'error', 'לא הצלחנו לקרוא את המסמך. ודאו שזה קובץ PDF ברור ונסו שוב.'],
+    ['unreadable', null, 'error', 'לא הצלחנו לקרוא את המסמך. העלו קובץ PDF או תמונה ברורה של המסמך.'],
     ['expired', 'COAGULATION_TESTS', 'error', 'המסמך בדיקות קרישה ישן מדי לפי כללי התוקף. יש להעלות מסמך עדכני.'],
     ['not_yours', null, 'error', 'המסמך אינו שייך לך, ולכן לא נקלט.'],
+    ['unrecognised_type', null, 'error', 'לא זיהינו את סוג המסמך. ודאו שהעליתם את המסמך שהתבקש.'],
+    ['unreadable_scan', null, 'error',
+      'לא הצלחנו לקרוא את הסריקה. צלמו את המסמך באור טוב ובחדות, או העלו את קובץ ה־PDF המקורי.'],
+    ['bad_date', null, 'error', 'תאריך המסמך עתידי. ודאו שהעליתם את המסמך הנכון.'],
+    ['no_date', null, 'error', 'לא מצאנו תאריך על המסמך. העלו מסמך שמופיע עליו תאריך הבדיקה.'],
+    ['unsupported_format', null, 'error', 'סוג הקובץ אינו נתמך. העלו PDF או תמונה (JPG/PNG).'],
+    ['too_large', null, 'error', 'הקובץ גדול מ־10MB. העלו קובץ קטן יותר.'],
   ] as const)('shows the sentence for upload.code %s', async (code, documentType, variant, sentence) => {
     const user = userEvent.setup()
     getRequest.mockResolvedValue(needsDocumentFile())
@@ -237,16 +267,18 @@ describe('RequestDetail: needs_document, file upload (sub-project 13, docs/api.m
     uploadDocumentFile.mockResolvedValue({ upload: { code, document_type: documentType }, request: nextView })
     renderDetail()
 
-    const section = await screen.findByRole('region', { name: 'העלאת מסמך PDF' })
+    const section = await screen.findByRole('region', { name: 'העלאת מסמך (PDF או תמונה)' })
     await user.upload(within(section).getByLabelText('בחירת קובץ'), pdfFile())
     await user.click(within(section).getByRole('button', { name: 'שליחת המסמך' }))
 
     expect(uploadDocumentFile).toHaveBeenCalledWith('CASE-1', expect.any(File))
     expect(await screen.findByText(sentence)).toBeInTheDocument()
     expect(screen.getByText(sentence).closest(`.alert.${variant}`)).not.toBeNull()
+    // The patient never sees the raw code, whatever the sentence (§12.3).
+    expect(screen.queryByText(code, { exact: false })).not.toBeInTheDocument()
   })
 
-  it('shows the neutral fail-closed sentence for a code this version does not know', async () => {
+  it('shows the neutral fail-closed sentence for a code this version does not know, and never the code itself', async () => {
     const user = userEvent.setup()
     getRequest.mockResolvedValue(needsDocumentFile())
     uploadDocumentFile.mockResolvedValue({
@@ -255,11 +287,12 @@ describe('RequestDetail: needs_document, file upload (sub-project 13, docs/api.m
     })
     renderDetail()
 
-    const section = await screen.findByRole('region', { name: 'העלאת מסמך PDF' })
+    const section = await screen.findByRole('region', { name: 'העלאת מסמך (PDF או תמונה)' })
     await user.upload(within(section).getByLabelText('בחירת קובץ'), pdfFile())
     await user.click(within(section).getByRole('button', { name: 'שליחת המסמך' }))
 
     expect(await screen.findByText('המסמך לא נקלט. נסו שוב או פנו למוקד.')).toBeInTheDocument()
+    expect(screen.queryByText('something_new', { exact: false })).not.toBeInTheDocument()
   })
 
   it('replaces the view with response.request on every code, including accepted', async () => {
@@ -271,7 +304,7 @@ describe('RequestDetail: needs_document, file upload (sub-project 13, docs/api.m
     })
     const { container } = renderDetail()
 
-    const section = await screen.findByRole('region', { name: 'העלאת מסמך PDF' })
+    const section = await screen.findByRole('region', { name: 'העלאת מסמך (PDF או תמונה)' })
     await user.upload(within(section).getByLabelText('בחירת קובץ'), pdfFile())
     await user.click(within(section).getByRole('button', { name: 'שליחת המסמך' }))
 
@@ -285,7 +318,7 @@ describe('RequestDetail: needs_document, file upload (sub-project 13, docs/api.m
     uploadDocumentFile.mockRejectedValue(new ApiError(409, 'not_waiting_for_document'))
     renderDetail()
 
-    const section = await screen.findByRole('region', { name: 'העלאת מסמך PDF' })
+    const section = await screen.findByRole('region', { name: 'העלאת מסמך (PDF או תמונה)' })
     await user.upload(within(section).getByLabelText('בחירת קובץ'), pdfFile())
     await user.click(within(section).getByRole('button', { name: 'שליחת המסמך' }))
 

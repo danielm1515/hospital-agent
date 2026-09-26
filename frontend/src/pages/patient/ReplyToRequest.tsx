@@ -10,17 +10,18 @@ import {
   errorMessage,
   FILE_TOO_LARGE_MESSAGE,
   formatDateTime,
-  isPdfFile,
+  isAcceptedDocumentFile,
   MAX_UPLOAD_BYTES,
-  NOT_PDF_MESSAGE,
+  UNSUPPORTED_FILE_MESSAGE,
   uploadResultMessage,
 } from './helpers'
 import type { UploadNotice } from './helpers'
 
 /**
  * Sub-project 15 (design §7.5, `docs/api.md` §8): the patient's answer to a staff request -
- * text for a question, the requested PDF for a document. The patient sees the message and
- * the deadline, never why it was asked or what escalation is behind it (§12.3).
+ * text for a question, the requested document (PDF, JPEG or PNG, sub-project 17 task 2) for a
+ * document. The patient sees the message and the deadline, never why it was asked or what
+ * escalation is behind it (§12.3).
  */
 
 /** `POST .../reply` accepts 1-2000 characters of trimmed text (`docs/api.md` §8). */
@@ -168,8 +169,8 @@ function FileReply({
   async function submit(event: React.FormEvent) {
     event.preventDefault()
     const file = inputRef.current?.files?.[0]
-    if (!file || !isPdfFile(file)) {
-      setError(NOT_PDF_MESSAGE)
+    if (!file || !isAcceptedDocumentFile(file)) {
+      setError(UNSUPPORTED_FILE_MESSAGE)
       return
     }
     if (file.size > MAX_UPLOAD_BYTES) {
@@ -202,26 +203,26 @@ function FileReply({
   }
 
   return (
-    <section className="upload" aria-label="העלאת מסמך PDF">
-      <h3 className="section-h">העלאת מסמך PDF</h3>
+    <section className="upload" aria-label="העלאת מסמך (PDF או תמונה)">
+      <h3 className="section-h">העלאת מסמך (PDF או תמונה)</h3>
       {documentType && <p className="muted">המסמך המבוקש: {describeDocumentType(documentType)}</p>}
 
       <form className="form" onSubmit={(event) => void submit(event)}>
         <div className="field">
           <label className="label" htmlFor="reply-file-upload">
-            בחירת קובץ PDF
+            בחירת קובץ
           </label>
           <input
             id="reply-file-upload"
             ref={inputRef}
             className="file-input"
             type="file"
-            accept="application/pdf,.pdf"
+            accept="application/pdf,.pdf,image/jpeg,.jpg,.jpeg,image/png,.png"
             disabled={busy}
             onChange={chooseFile}
           />
           <p className="hint">
-            {fileName ? `נבחר הקובץ ${fileName}.` : 'אפשר להעלות קובץ PDF אחד, עד 10MB.'}
+            {fileName ? `נבחר הקובץ ${fileName}.` : 'אפשר להעלות קובץ PDF או תמונה (JPG/PNG) אחד, עד 10MB.'}
           </p>
         </div>
 

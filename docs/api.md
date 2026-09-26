@@ -70,7 +70,7 @@ methods: `GET`, `POST`, `DELETE`, `OPTIONS`. Allowed headers: `Authorization`,
 | POST | `/api/patient/requests/{case_id}/documents` | patient | Upload a document |
 | POST | `/api/patient/requests/{case_id}/documents/file` | patient | Upload a PDF, forwarded to the document-service (sub-project 13) |
 | POST | `/api/patient/requests/{case_id}/reply` | patient | Answer a staff question (sub-project 15) |
-| POST | `/api/patient/requests/{case_id}/reply/file` | patient | Upload the PDF a staff member asked for (sub-project 15) |
+| POST | `/api/patient/requests/{case_id}/reply/file` | patient | Upload the document (PDF, JPEG or PNG) a staff member asked for (sub-project 15) |
 | GET | `/api/patient/appointments` | patient | My appointments (`?from=&to=`, sub-project 16) |
 | GET | `/api/staff/cases` | staff | All cases (`?state=`) |
 | GET | `/api/staff/cases/{case_id}` | staff | One case, in full |
@@ -159,7 +159,7 @@ case_not_found`, exactly like a case that does not exist.
 
 ### The patient view
 
-Every patient route answers with this object, and nothing else (the PDF upload wraps it, as
+Every patient route answers with this object, and nothing else (the document upload wraps it, as
 `request`, beside its outcome code):
 
 ```json
@@ -213,7 +213,7 @@ patient route already returned everything else shown here.
   no committed transition, which the patient routes never return.
 - `document_upload` says which upload the screen offers for `needs_document`: `"file"` when the
   server is configured with the document-service (`DOCUMENT_SERVICE_URL` and
-  `DOCUMENT_API_KEY`) - a PDF picker, sent to `POST .../documents/file` - or `"text"` without
+  `DOCUMENT_API_KEY`) - a document picker (PDF, JPEG or PNG), sent to `POST .../documents/file` - or `"text"` without
   it - the text box, sent to `POST .../documents`. It is the same for every case of a running
   server, and present in every state.
 
@@ -282,20 +282,26 @@ document-service this route behaves exactly as before.
 
 ### POST /api/patient/requests/{case_id}/documents/file
 
-Sub-project 13 (design §5.3). Offered only when the patient view says `"document_upload":
-"file"`. Request: `multipart/form-data` with one part named `file` carrying a filename - the
-PDF, at most 10 MB (10 485 760 bytes). The request must carry a `Content-Length`; a body over
-10 MB + 64 KiB (the file plus its multipart framing) is refused by that header alone, before
-it is read. Other parts are ignored.
+Sub-project 13 (design §5.3); sub-project 17 task 2: PDF, JPEG or PNG, not PDF only - a scanned
+PDF with no text layer and a photo of a document both go through the document-service's vision
+path. Offered only when the patient view says `"document_upload": "file"`. Request:
+`multipart/form-data` with one part named `file` carrying a filename - the document, at most
+10 MB (10 485 760 bytes). The request must carry a `Content-Length`; a body over 10 MB + 64 KiB
+(the file plus its multipart framing) is refused by that header alone, before it is read. Other
+parts are ignored.
 
 The server checks that the case is this patient's and is waiting for a document **before**
-anything is sent on, then forwards the file to the document-service, which reads it,
-classifies it and stores it only if it is accepted. The PDF is never stored here, and its
-content never enters the Data Log, the Audit or a log line: an accepted, required document
-records one reference line in the Data Log (`DOC-3F2A1B9C0D4E CBC ACCEPTED` - the
-document-service's id, the type, the result) and moves the case down the same
-`DOCUMENT_UPLOADED` path as the text upload. The document-service can take up to 70 s to
-answer; the server waits up to 75 s.
+anything is sent on, then forwards the file to the document-service - with its real
+`Content-Type` sniffed by magic bytes (`application/pdf`, `image/jpeg` or `image/png`), never
+trusted from the browser or the file name - which reads it, classifies it and stores it only if
+it is accepted. The file is never stored here, and its content never enters the Data Log, the
+Audit or a log line: an accepted, required document records one reference line in the Data Log
+(`DOC-3F2A1B9C0D4E CBC ACCEPTED` - the document-service's id, the type, the result) and moves
+the case down the same `DOCUMENT_UPLOADED` path as the text upload. The document-service can
+take up to 70 s to answer; the server waits up to 75 s. A `503 classifier_unavailable` from the
+document-service (a provider failure, never a verdict on the file) is not a rejection code at
+all - it surfaces as this route's own `503 document_service_unavailable` below, exactly like any
+other unavailable answer.
 
 `200`:
 
@@ -312,14 +318,23 @@ answer; the server waits up to 75 s.
 | `not_required` | Accepted by the document-service, but this appointment does not need that type | Unchanged |
 | `already_received` | Of a type the case already holds | Unchanged |
 | `not_medical` | Not a medical document | Unchanged |
-| `unreadable` | Could not be read or classified (also any answer this version does not know) | Unchanged |
-| `expired` | Past its validity | Unchanged |
+| `unrecognised_type` | A medical document, but not of a type the catalog knows (document-service `reason: unknown_type`) | Unchanged |
+| `unreadable_scan` | A scanned PDF with no text layer and no usable embedded image for vision either (document-service `reason: no_text_layer`) | Unchanged |
+| `bad_date` | The document's date is in the future (document-service `reason: future_date`) | Unchanged |
+| `no_date` | No date found on the document (document-service `reason: no_date`) | Unchanged |
+| `unsupported_format` | Not a PDF, JPEG or PNG by magic bytes (document-service `reason: not_supported_format`) | Unchanged |
+| `too_large` | Over the document-service's own size limit (document-service `reason: too_large`) | Unchanged |
+| `unreadable` | Could not be read or classified for any other reason (a parse error, too many pages, too much text, an unparsable classifier answer, or any answer or reason this version does not know) | Unchanged |
+| `expired` | Past its validity (a document-service `DOCUMENT_EXPIRED` whose reason is `too_old`, or none at all) | Unchanged |
 | `not_yours` | Names another patient | Unchanged |
 
-`upload.document_type` is the catalog type (`CBC`, `COAGULATION_TESTS`, `ECG`, `URINALYSIS`,
-`PREOP_SUMMARY`) for `accepted`, `not_required` and `already_received`, and `null` for every
-other code. The document-service's own document id never comes back. `request` is the patient
-view after the upload - for every code but `accepted` it is exactly what it was before.
+The last six rows are sub-project 17 task 2: the document-service's optional `reason` (its own
+API, `DOCUMENT_UNREADABLE`/`DOCUMENT_EXPIRED` only) becomes a finer patient code exactly where
+listed above; every other reason, or no reason at all, falls back to the coarser `unreadable` or
+`expired`. `upload.document_type` is the catalog type (`CBC`, `COAGULATION_TESTS`, `ECG`,
+`URINALYSIS`, `PREOP_SUMMARY`) for `accepted`, `not_required` and `already_received`, and `null`
+for every other code. The document-service's own document id never comes back. `request` is the
+patient view after the upload - for every code but `accepted` it is exactly what it was before.
 
 - `404 file_upload_not_enabled` - the server has no document-service configured
   (`document_upload` is `"text"`); use `POST .../documents`.
@@ -333,12 +348,12 @@ view after the upload - for every code but `accepted` it is exactly what it was 
 - `422 invalid_body` - not a `multipart/form-data` body with a part named `file` (and a
   filename) among its first 64 parts, or a body that cannot be parsed at all.
 - `503 document_service_unavailable` - the document-service did not answer, answered an
-  error, or answered something that is not its contract. Nothing is recorded. Tell the
-  patient the document service could not take the file, to try again later or contact the
-  call centre - a retry is not promised to help (some of these answers are about the file
-  itself), though a re-sent copy of a document that was in fact accepted comes back
-  `accepted`. The application log records only the kind (`no_answer`, `status_<n>`,
-  `invalid_response`).
+  error (including `classifier_unavailable`), or answered something that is not its contract.
+  Nothing is recorded. Tell the patient the document service could not take the file, to try
+  again later or contact the call centre - a retry is not promised to help (some of these
+  answers are about the file itself), though a re-sent copy of a document that was in fact
+  accepted comes back `accepted`. The application log records only the kind (`no_answer`,
+  `status_<n>`, `classifier_unavailable`, `invalid_response`).
 - `401 not_authenticated`, `403 patients_only` - as everywhere.
 
 ## 5. Staff routes
@@ -797,21 +812,23 @@ The patient's text answer to a staff question. Request:
 ### POST /api/patient/requests/{case_id}/reply/file
 
 Exactly like `POST /api/patient/requests/{case_id}/documents/file` (sub-project 13: same
-multipart contract, same size limits, same 411/413 body-size checks in front of the route) -
-offered only while `reply_request.kind` is `"document"`. `200`:
+multipart contract, same size limits, same 411/413 body-size checks in front of the route;
+sub-project 17 task 2: same PDF/JPEG/PNG acceptance and the same document-service `reason`
+mapping) - offered only while `reply_request.kind` is `"document"`. `200`:
 
 ```json
 {"upload": {"code": "accepted", "document_type": "URINALYSIS"}, "request": {"...": "the patient view"}}
 ```
 
-`upload.code` is one of §4's codes reachable here - `accepted`, `not_medical`, `unreadable`,
+`upload.code` is one of §4's codes reachable here - `accepted`, `not_medical`, `unrecognised_type`,
+`unreadable_scan`, `bad_date`, `no_date`, `unsupported_format`, `too_large`, `unreadable`,
 `expired`, `not_yours` - plus one more:
 
 | `upload.code` | Meaning | The case |
 |---|---|---|
 | `accepted` | A readable, valid document of the type requested (or a re-sent copy already accepted) | Leaves `needs_reply`, back to `in_review` |
 | `wrong_document_type` | Readable and valid, but not the catalog type the staff member asked for | Unchanged |
-| `not_medical`, `unreadable`, `expired`, `not_yours` | As in §4 | Unchanged |
+| `not_medical`, `unrecognised_type`, `unreadable_scan`, `bad_date`, `no_date`, `unsupported_format`, `too_large`, `unreadable`, `expired`, `not_yours` | As in §4 | Unchanged |
 
 `upload.document_type` is the catalog type the document-service classified the file as, for
 `accepted` and also for `wrong_document_type` (the type it actually was, not the one that was

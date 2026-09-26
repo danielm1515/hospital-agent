@@ -66,6 +66,12 @@ function pdfFile(name = 'results.pdf', sizeBytes = 1024) {
   return file
 }
 
+function jpgFile(name = 'photo.jpg', sizeBytes = 1024) {
+  const file = new File(['\xff\xd8\xff...'], name, { type: 'image/jpeg' })
+  Object.defineProperty(file, 'size', { value: sizeBytes })
+  return file
+}
+
 describe('ReplyToRequest: text reply', () => {
   it('shows the question, the formatted deadline, and sends the trimmed text', async () => {
     const returned = { ...QUESTION, status: 'in_review', reply_request: null } as PatientView
@@ -150,14 +156,16 @@ describe('ReplyToRequest: text reply', () => {
 })
 
 describe('ReplyToRequest: file reply', () => {
-  it('offers a PDF picker for a document request and explains a wrong type through the lifted notice', async () => {
+  it('offers a document picker for a document request and explains a wrong type through the lifted notice', async () => {
     vi.mocked(api.replyWithFile).mockResolvedValue({
       upload: { code: 'wrong_document_type', document_type: 'CBC' },
       request: DOCUMENT,
     })
     const onChanged = vi.fn()
     render(<Harness view={DOCUMENT} onChanged={onChanged} />)
-    await userEvent.upload(screen.getByLabelText('בחירת קובץ PDF'), pdfFile('cbc.pdf'))
+    expect(screen.getByLabelText('בחירת קובץ')).toHaveAttribute(
+      'accept', 'application/pdf,.pdf,image/jpeg,.jpg,.jpeg,image/png,.png')
+    await userEvent.upload(screen.getByLabelText('בחירת קובץ'), pdfFile('cbc.pdf'))
     await userEvent.click(screen.getByRole('button', { name: 'העלאת המסמך' }))
 
     expect(await screen.findByRole('alert')).toHaveTextContent('המסמך שהועלה אינו המסמך שהתבקש')
@@ -165,44 +173,56 @@ describe('ReplyToRequest: file reply', () => {
     expect(onChanged).toHaveBeenCalledWith(DOCUMENT)
   })
 
-  it('refuses a non-PDF file without calling the API', async () => {
+  it('accepts a JPG file and sends it', async () => {
+    vi.mocked(api.replyWithFile).mockResolvedValue({
+      upload: { code: 'accepted', document_type: 'URINALYSIS' },
+      request: { ...DOCUMENT, status: 'in_review', reply_request: null } as PatientView,
+    })
     render(<Harness view={DOCUMENT} onChanged={vi.fn()} />)
-    await userEvent.upload(screen.getByLabelText('בחירת קובץ PDF'), new File(['hello'], 'notes.txt', { type: 'text/plain' }))
+    await userEvent.upload(screen.getByLabelText('בחירת קובץ'), jpgFile())
+    await userEvent.click(screen.getByRole('button', { name: 'העלאת המסמך' }))
+
+    expect(api.replyWithFile).toHaveBeenCalledWith('C-1', expect.any(File))
+  })
+
+  it('refuses an unsupported file without calling the API', async () => {
+    render(<Harness view={DOCUMENT} onChanged={vi.fn()} />)
+    await userEvent.upload(screen.getByLabelText('בחירת קובץ'), new File(['hello'], 'notes.txt', { type: 'text/plain' }))
     await userEvent.click(screen.getByRole('button', { name: 'העלאת המסמך' }))
     expect(api.replyWithFile).not.toHaveBeenCalled()
-    expect(screen.getByRole('alert')).toHaveTextContent('יש לבחור קובץ PDF.')
+    expect(screen.getByRole('alert')).toHaveTextContent('אפשר להעלות רק PDF או תמונה (JPG/PNG).')
   })
 
   it('clears a previous wrong-type notice once a new file is chosen', async () => {
-    // `applyAccept: false`: a real patient can still pick a non-PDF through "all files" past
-    // the input's `accept` filter, so the choice itself must clear the old notice regardless
-    // of whether the browser's own filter would normally have stopped this particular file.
+    // `applyAccept: false`: a real patient can still pick an unsupported file through "all
+    // files" past the input's `accept` filter, so the choice itself must clear the old notice
+    // regardless of whether the browser's own filter would normally have stopped this file.
     const user = userEvent.setup({ applyAccept: false })
     vi.mocked(api.replyWithFile).mockResolvedValue({
       upload: { code: 'wrong_document_type', document_type: 'CBC' },
       request: DOCUMENT,
     })
     render(<Harness view={DOCUMENT} onChanged={vi.fn()} />)
-    await user.upload(screen.getByLabelText('בחירת קובץ PDF'), pdfFile('cbc.pdf'))
+    await user.upload(screen.getByLabelText('בחירת קובץ'), pdfFile('cbc.pdf'))
     await user.click(screen.getByRole('button', { name: 'העלאת המסמך' }))
     expect(await screen.findByRole('alert')).toHaveTextContent('המסמך שהועלה אינו המסמך שהתבקש')
 
-    await user.upload(screen.getByLabelText('בחירת קובץ PDF'), new File(['hello'], 'notes.txt', { type: 'text/plain' }))
+    await user.upload(screen.getByLabelText('בחירת קובץ'), new File(['hello'], 'notes.txt', { type: 'text/plain' }))
     await user.click(screen.getByRole('button', { name: 'העלאת המסמך' }))
 
-    // Only the fresh, local PDF refusal shows - the stale lifted notice about the previous
+    // Only the fresh, local refusal shows - the stale lifted notice about the previous
     // file is gone, not stacked underneath it.
     const alerts = screen.getAllByRole('alert')
     expect(alerts).toHaveLength(1)
-    expect(alerts[0]).toHaveTextContent('יש לבחור קובץ PDF.')
+    expect(alerts[0]).toHaveTextContent('אפשר להעלות רק PDF או תמונה (JPG/PNG).')
   })
 
-  it('refuses a PDF over 10 MB without calling the API', async () => {
+  it('refuses a file over 10 MB without calling the API', async () => {
     render(<Harness view={DOCUMENT} onChanged={vi.fn()} />)
-    await userEvent.upload(screen.getByLabelText('בחירת קובץ PDF'), pdfFile('big.pdf', 11 * 1024 * 1024))
+    await userEvent.upload(screen.getByLabelText('בחירת קובץ'), pdfFile('big.pdf', 11 * 1024 * 1024))
     await userEvent.click(screen.getByRole('button', { name: 'העלאת המסמך' }))
     expect(api.replyWithFile).not.toHaveBeenCalled()
-    expect(screen.getByRole('alert')).toHaveTextContent('הקובץ גדול מדי')
+    expect(screen.getByRole('alert')).toHaveTextContent('הקובץ גדול מ־10MB. העלו קובץ קטן יותר.')
   })
 
   it('replaces the view and shows the accepted sentence through the lifted notice', async () => {
@@ -213,7 +233,7 @@ describe('ReplyToRequest: file reply', () => {
     })
     const onChanged = vi.fn()
     render(<Harness view={DOCUMENT} onChanged={onChanged} />)
-    await userEvent.upload(screen.getByLabelText('בחירת קובץ PDF'), pdfFile('urine.pdf'))
+    await userEvent.upload(screen.getByLabelText('בחירת קובץ'), pdfFile('urine.pdf'))
     await userEvent.click(screen.getByRole('button', { name: 'העלאת המסמך' }))
 
     expect(onChanged).toHaveBeenCalledWith(accepted)
@@ -225,7 +245,7 @@ describe('ReplyToRequest: file reply', () => {
     vi.mocked(api.getRequest).mockResolvedValue({ ...DOCUMENT, status: 'in_review', reply_request: null })
     const onChanged = vi.fn()
     render(<Harness view={DOCUMENT} onChanged={onChanged} />)
-    await userEvent.upload(screen.getByLabelText('בחירת קובץ PDF'), pdfFile())
+    await userEvent.upload(screen.getByLabelText('בחירת קובץ'), pdfFile())
     await userEvent.click(screen.getByRole('button', { name: 'העלאת המסמך' }))
 
     expect(await screen.findByRole('alert')).toHaveTextContent('הפנייה כבר אינה ממתינה לתשובה')
@@ -241,12 +261,12 @@ describe('ReplyToRequest: file reply', () => {
         }),
     )
     render(<Harness view={DOCUMENT} onChanged={vi.fn()} />)
-    await userEvent.upload(screen.getByLabelText('בחירת קובץ PDF'), pdfFile())
+    await userEvent.upload(screen.getByLabelText('בחירת קובץ'), pdfFile())
     await userEvent.click(screen.getByRole('button', { name: 'העלאת המסמך' }))
 
-    expect(screen.getByLabelText('בחירת קובץ PDF')).toBeDisabled()
+    expect(screen.getByLabelText('בחירת קובץ')).toBeDisabled()
     resolveUpload({ upload: { code: 'accepted', document_type: 'URINALYSIS' }, request: DOCUMENT })
-    await waitFor(() => expect(screen.getByLabelText('בחירת קובץ PDF')).not.toBeDisabled())
+    await waitFor(() => expect(screen.getByLabelText('בחירת קובץ')).not.toBeDisabled())
   })
 })
 

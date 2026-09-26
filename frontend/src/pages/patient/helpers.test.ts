@@ -8,11 +8,16 @@ import {
   formatClock,
   formatDate,
   formatDateTime,
+  isAcceptedDocumentFile,
   isMoving,
   sameDay,
   truncate,
   uploadResultMessage,
 } from './helpers'
+
+function file(name: string, type: string) {
+  return new File(['x'], name, { type })
+}
 
 describe('patient helpers', () => {
   it('polls only while the agent is still advancing the case', () => {
@@ -72,8 +77,48 @@ describe('patient helpers', () => {
     // A 404 here is not the generic "case not found" - the specific detail wins.
     expect(errorMessage(new ApiError(404, 'file_upload_not_enabled'))).toMatch(/העלאת קובץ אינה זמינה/)
     expect(errorMessage(new ApiError(409, 'not_waiting_for_document'))).toMatch(/אינה ממתינה למסמך/)
-    expect(errorMessage(new ApiError(413, 'too_large'))).toMatch(/גדול מדי/)
+    expect(errorMessage(new ApiError(413, 'too_large'))).toMatch(/גדול מ־10MB/)
     expect(errorMessage(new ApiError(503, 'document_service_unavailable'))).toMatch(/שירות המסמכים אינו זמין/)
+  })
+
+  it('accepts a PDF, a JPG and a PNG by extension, refusing a mismatched or unknown one (sub-project 17 task 2)', () => {
+    expect(isAcceptedDocumentFile(file('scan.pdf', 'application/pdf'))).toBe(true)
+    expect(isAcceptedDocumentFile(file('photo.jpg', 'image/jpeg'))).toBe(true)
+    expect(isAcceptedDocumentFile(file('photo.jpeg', 'image/jpeg'))).toBe(true)
+    expect(isAcceptedDocumentFile(file('scan.png', 'image/png'))).toBe(true)
+    // No reported type (a common case for a phone photo): accepted by extension alone.
+    expect(isAcceptedDocumentFile(file('photo.jpg', ''))).toBe(true)
+    // A name and a reported type that disagree, or neither saying an accepted kind: refused.
+    expect(isAcceptedDocumentFile(file('photo.jpg', 'image/png'))).toBe(false)
+    expect(isAcceptedDocumentFile(file('notes.txt', 'text/plain'))).toBe(false)
+    expect(isAcceptedDocumentFile(file('notes', ''))).toBe(false)
+  })
+
+  it('gives one Hebrew sentence per sub-project 17 task 2 refusal reason code, and softens the generic unreadable text', () => {
+    expect(uploadResultMessage({ code: 'unrecognised_type', document_type: null }).text)
+      .toBe('לא זיהינו את סוג המסמך. ודאו שהעליתם את המסמך שהתבקש.')
+    expect(uploadResultMessage({ code: 'unreadable_scan', document_type: null }).text)
+      .toBe('לא הצלחנו לקרוא את הסריקה. צלמו את המסמך באור טוב ובחדות, או העלו את קובץ ה־PDF המקורי.')
+    expect(uploadResultMessage({ code: 'bad_date', document_type: null }).text)
+      .toBe('תאריך המסמך עתידי. ודאו שהעליתם את המסמך הנכון.')
+    expect(uploadResultMessage({ code: 'no_date', document_type: null }).text)
+      .toBe('לא מצאנו תאריך על המסמך. העלו מסמך שמופיע עליו תאריך הבדיקה.')
+    expect(uploadResultMessage({ code: 'unsupported_format', document_type: null }).text)
+      .toBe('סוג הקובץ אינו נתמך. העלו PDF או תמונה (JPG/PNG).')
+    expect(uploadResultMessage({ code: 'too_large', document_type: null }).text)
+      .toBe('הקובץ גדול מ־10MB. העלו קובץ קטן יותר.')
+    // Softened: no longer claims the file was unclear when the cause is unknown.
+    expect(uploadResultMessage({ code: 'unreadable', document_type: null }).text)
+      .toBe('לא הצלחנו לקרוא את המסמך. העלו קובץ PDF או תמונה ברורה של המסמך.')
+    for (const code of ['unrecognised_type', 'unreadable_scan', 'bad_date', 'no_date',
+                        'unsupported_format', 'too_large', 'unreadable'] as const) {
+      expect(uploadResultMessage({ code, document_type: null }).text).not.toContain(code)
+    }
+  })
+
+  it('never shows the raw code for an unknown upload.code (fail closed, §14)', () => {
+    const { text } = uploadResultMessage({ code: 'something_new' as never, document_type: null })
+    expect(text).not.toMatch(/something_new/)
   })
 
   it('gives Hebrew for the sub-project 15 reply errors, never the raw code', () => {
