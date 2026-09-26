@@ -84,3 +84,44 @@ layer) and every image are refused.
    client's own refusals say it too ("הקובץ גדול מ־10MB. העלו קובץ קטן יותר."). The real reason is logged
    as a code (the logging of Task 1 now reaches stderr). A document that then raises the safety level and
    escalates (T10) is correct behaviour, not part of this fix.
+
+## Tasks 3-7 - the staff lists, the queue order, the loader, the notice
+
+Diagnosis: `.superpowers/sdd/2026-09-26-staff-fixes/diagnosis-2-7.md` §3-§7.
+
+**Task 3 - calls per load.** Before: the Case Monitor makes 1 + N HTTP calls (`listCases` then `getCase` per row,
+only because `CaseSummary` drops `patient_id`/`intent`/`safety_level`); the review queue makes 1 HTTP call but
+1 + N SQL queries per 5 s poll (a whole trace per case); opening a case also fetches the whole queue.
+Decisions: `GET /api/staff/cases` returns `{items, next_cursor}` - every column the table shows, one SQL
+statement with an explicit column list, keyset pagination on `(updated_at DESC, case_id DESC)`, `limit`
+(default 50, at most 200) and an opaque `cursor` (the existing `ix_cases_state_updated_at` serves a filtered
+page). `GET /api/staff/reviews` returns `{items, next_cursor}` from one statement (Task 5). A new
+`GET /api/staff/reviews/{case_id}` returns one queue item, so `ReviewCase` stops fetching the whole queue.
+`GET /cases/{id}` stays for the expanded row. Each list screen then makes one call per load.
+
+**Task 4 - filter by group.** One definition, `hospital_agent/state_groups.py` (`STATE_GROUPS`), tested to
+partition all 13 States: `staff` = AwaitingHumanReview; `patient` = AwaitingPatientInput + AwaitingPatientReply
+(the owner's list plus sub-project 15's state - without it 3 live cases belong to no group); `automatic` =
+Received, Classifying, Classified, Planning, RetrievingData, AssessingReadiness, Ready, Delivering; `done` =
+Completed (labelled "הסתיימו" - it includes cases a reviewer closed); `rejected` = Failed. The route takes
+`?group=` (and, with `group=staff`, `?escalation_kind=`); the UI offers the five groups plus "הכול", a
+secondary escalation-kind select when "ממתינות לצוות" is chosen, and every row still shows its exact State.
+State names are unchanged everywhere.
+
+**Task 5 - queue order.** Newest entry into AwaitingHumanReview first: one SQL statement with a LATERAL join to
+each case's latest `Transition` row into AwaitingHumanReview (`record_type = 'Transition'` is required - a
+Blocked row can carry that `state_after`), ordered `entered_at DESC, case_id ASC`, keyset-paginated; the same
+row gives `reasons`, `returned_by` and `entered_at` (added to the item). The Python re-sort is removed. A case
+that comes back from a patient's reply re-enters, so it moves to the top (it needs attention again).
+
+**Task 6 - the loader.** One `components/Loading.tsx`: a ring (track `--surface-200`, arc `--brand-500`),
+`role="status"`, `aria-live="polite"`, a visible text (default "טוען…", "טוען פניות" on the lists); under
+`prefers-reduced-motion` no rotation, only the text. It replaces all eight inline "טוען…" copies in both UIs.
+`tokens.css` is generated and not edited.
+
+**Task 7 - the notice.** It lived in React Router's `location.state`, which the browser keeps in
+`history.state` - so it survived a reload and came back on Back. The queue copies it into component state
+once and replaces the history entry with `state: null`; it is a transient `role="status"` notice with a close
+button that disappears on its own after 8 s. The title follows the action ("ההכרעה נשמרה" / "הבקשה נשלחה" /
+"התשובה נשלחה"). The list is not stale (it refetches on mount through the Task 5 call); a test decides,
+reloads, and checks the notice is gone and the case left the queue.
