@@ -119,6 +119,17 @@ describe('patient routes', () => {
     expect(JSON.parse(init.body as string)).toEqual({ text: 'מתי התור שלי?' })
   })
 
+  it('sends the chosen appointment_id only when one was chosen (sub-project 18)', async () => {
+    mockOnce(201, { case_id: 'CASE-1' })
+    await api.createRequest('מתי התור שלי?', 'APT-8391')
+    expect(JSON.parse(lastCall()[1].body as string)).toEqual({ text: 'מתי התור שלי?', appointment_id: 'APT-8391' })
+
+    mockOnce(201, { case_id: 'CASE-2' })
+    await api.createRequest('מתי התור שלי?', undefined)
+    // "The nearest appointment" is the field's absence, never a value (docs/api.md §4).
+    expect(JSON.parse(lastCall()[1].body as string)).toEqual({ text: 'מתי התור שלי?' })
+  })
+
   it('lists and reads requests', async () => {
     mockOnce(200, [])
     await api.listRequests()
@@ -344,5 +355,27 @@ describe('appointments (sub-project 16)', () => {
       '/api/staff/cases/C%201/appointments?from=2026-09-26T00%3A00%3A00.000Z&to=2026-10-27T00%3A00%3A00.000Z',
     )
     expect(init.method).toBe('GET')
+  })
+
+  it('reads one approved instruction text through the patient or the staff route (sub-project 18)', async () => {
+    const body = { source_id: 'INSTR-CARD-STRESS', version: '1', title: 'לפני מבחן מאמץ', text: 'טקסט' }
+    mockOnce(200, body)
+    await expect(api.getPatientInstruction('INSTR-CARD-STRESS', '1')).resolves.toEqual(body)
+    let [url, init] = lastCall()
+    expect(url).toBe('/api/patient/instructions/INSTR-CARD-STRESS?version=1')
+    expect(init.method).toBe('GET')
+
+    mockOnce(200, body)
+    await api.getStaffInstruction('A B', '1 2')
+    ;[url] = lastCall()
+    expect(url).toBe('/api/staff/instructions/A%20B?version=1+2')
+  })
+
+  it('surfaces instruction_not_approved as an ApiError code', async () => {
+    mockOnce(404, { detail: 'instruction_not_approved' })
+    await expect(api.getPatientInstruction('INSTR-X', '9')).rejects.toMatchObject({
+      status: 404,
+      detail: 'instruction_not_approved',
+    })
   })
 })

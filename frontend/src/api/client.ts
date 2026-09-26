@@ -14,9 +14,11 @@ import type {
   AuditRecord,
   CaseDetail,
   CaseListPage,
+  CreateRequestBody,
   DecisionBody,
   DecisionResult,
   EscalationKind,
+  InstructionText,
   LoginResponse,
   Me,
   Metrics,
@@ -192,8 +194,15 @@ export function logout(): void {
 
 // ---- Patient --------------------------------------------------------------
 
-export function createRequest(text: string): Promise<PatientView> {
-  return request<PatientView>('POST', '/patient/requests', { body: { text } })
+/**
+ * `POST /api/patient/requests`. `appointmentId` (sub-project 18, design D5) is the appointment
+ * the patient picked; left out, the body carries no `appointment_id` at all - that absence,
+ * not any value, is "the nearest appointment" (`docs/api.md` §4).
+ */
+export function createRequest(text: string, appointmentId?: string): Promise<PatientView> {
+  const body: CreateRequestBody = { text }
+  if (appointmentId !== undefined) body.appointment_id = appointmentId
+  return request<PatientView>('POST', '/patient/requests', { body })
 }
 
 export function listRequests(): Promise<PatientView[]> {
@@ -358,6 +367,22 @@ export function listMyAppointments(from: Date, to: Date): Promise<AppointmentLis
 /** `GET /api/staff/cases/{case_id}/appointments` - the case's patient. */
 export function listCaseAppointments(caseId: string, from: Date, to: Date): Promise<AppointmentList> {
   return request<AppointmentList>('GET', `/staff/cases/${id(caseId)}/appointments?${windowQuery(from, to)}`)
+}
+
+// ---- Preparation instructions (sub-project 18, docs/api.md §9) ----------------
+
+function instructionPath(sourceId: string, version: string): string {
+  return `${id(sourceId)}?${new URLSearchParams({ version }).toString()}`
+}
+
+/** `GET /api/patient/instructions/{source_id}?version=` - only a registry-approved source. */
+export function getPatientInstruction(sourceId: string, version: string): Promise<InstructionText> {
+  return request<InstructionText>('GET', `/patient/instructions/${instructionPath(sourceId, version)}`)
+}
+
+/** `GET /api/staff/instructions/{source_id}?version=` - the staff twin, no case id. */
+export function getStaffInstruction(sourceId: string, version: string): Promise<InstructionText> {
+  return request<InstructionText>('GET', `/staff/instructions/${instructionPath(sourceId, version)}`)
 }
 
 // ---- System status (staff-fixes design Task 1) ------------------------------

@@ -1476,6 +1476,33 @@ img {
   white-space: pre-wrap;
 }
 
+/* Sub-project 18 (design D11): the preparation instructions under the delivered
+   message - a readable section of their own, framed like the upload box. */
+.req-instructions {
+  margin-block-start: var(--space-4);
+  background: var(--surface-100);
+  border: 1px solid var(--line-200);
+  border-radius: var(--radius-md);
+  padding: var(--space-4);
+}
+
+.req-instructions-title {
+  margin: 0 0 var(--space-2);
+  font-size: 15px;
+  line-height: 22px;
+  font-weight: 600;
+  color: var(--ink-900);
+}
+
+/* Sub-project 18 (addition A): the quiet "עודכן לאחרונה" line once polling stops. */
+.req-refresh {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  margin-block-start: var(--space-4);
+}
+
 /* The patient's timeline: one row per status change, with the time it happened. */
 
 .tl-block {
@@ -2451,4 +2478,29 @@ img {
   font-size: 13px;
   line-height: 20px;
   color: var(--ink-500);
+}
+
+/* Sub-project 18 (design D12): each appointment's preparation instruction - the
+   title, the toggle, and the text once loaded, set off from the row itself. */
+.appointment-instructions {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-2);
+  margin-block-start: var(--space-2);
+}
+
+.appointment-instructions-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.appointment-instructions-text {
+  align-self: stretch;
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--line-200);
+  border-radius: var(--radius-md);
+  background: var(--surface-000);
 }

@@ -27,6 +27,7 @@ export function patientView(overrides: Partial<PatientView> = {}): PatientView {
     document_upload: 'text',
     reply_request: null,
     conversation: [],
+    instructions: null,
     ...overrides,
   }
 }

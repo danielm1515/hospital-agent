@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor, within } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -346,6 +346,28 @@ describe('RequestDetail: the other statuses', () => {
     expect(await screen.findByText('ההודעה שנשלחה אליך')).toBeInTheDocument()
     expect(screen.getByText('התור שלך ביום ראשון ב-09:00. יש להביא הפניה.')).toBeInTheDocument()
     expect(container.querySelector('.req-head .pill')).toHaveTextContent('הושלמה')
+    // No instructions on this case: no section for them either.
+    expect(screen.queryByRole('region', { name: 'הוראות ההכנה' })).not.toBeInTheDocument()
+  })
+
+  it('completed shows the preparation instructions under the message (sub-project 18, D11)', async () => {
+    getRequest.mockResolvedValue(
+      patientView({
+        status: 'completed',
+        message: 'התור שלך למבחן מאמץ נקבע.',
+        instructions: { title: 'לפני מבחן מאמץ', text: 'צום 3 שעות.\nבגדים ונעלי ספורט.' },
+      }),
+    )
+    const { container } = renderDetail()
+
+    const section = await screen.findByRole('region', { name: 'הוראות ההכנה' })
+    expect(within(section).getByRole('heading', { name: 'לפני מבחן מאמץ' })).toBeInTheDocument()
+    expect(within(section).getByText(/צום 3 שעות\./)).toHaveClass('message-text')
+    // Under the delivered message, not above it.
+    const message = screen.getByText('התור שלך למבחן מאמץ נקבע.')
+    expect(message.compareDocumentPosition(section) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    // Never a code (source id or version) on the patient's screen.
+    expect(container.textContent).not.toMatch(/INSTR-/)
   })
 
   it('in_review shows the notice and nothing internal', async () => {
@@ -513,35 +535,191 @@ describe('RequestDetail: the other statuses', () => {
   })
 })
 
-describe('RequestDetail polling', () => {
+describe('RequestDetail polling (sub-project 18, addition A)', () => {
   beforeEach(() => {
     vi.useFakeTimers()
   })
 
   afterEach(() => {
     vi.useRealTimers()
+    // Back to jsdom's own value.
+    Reflect.deleteProperty(document, 'visibilityState')
   })
 
-  it('refreshes every 3 s while the case is in progress, and stops when it is not', async () => {
-    getRequest.mockResolvedValue(patientView({ status: 'in_progress' }))
-    renderDetail()
-    await act(async () => {})
-    expect(getRequest).toHaveBeenCalledTimes(1)
-
+  /** Lets every pending promise settle, then moves the fake clock by `ms`. */
+  async function advance(ms: number) {
     await act(async () => {
-      vi.advanceTimersByTime(3000)
+      await vi.advanceTimersByTimeAsync(ms)
     })
+  }
+
+  async function renderLoaded() {
+    renderDetail()
+    await advance(0)
+    expect(getRequest).toHaveBeenCalledTimes(1)
+  }
+
+  const stoppedLine = () => screen.queryByText(/^עודכן לאחרונה ב־\d{2}:\d{2}$/)
+
+  function becomeVisible() {
+    Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => 'visible' })
+    act(() => {
+      document.dispatchEvent(new Event('visibilitychange'))
+    })
+  }
+
+  it('polls every 5 s while the case moves, and keeps polling past 60 s', async () => {
+    getRequest.mockResolvedValue(patientView({ status: 'in_progress' }))
+    await renderLoaded()
+
+    await advance(4999)
+    expect(getRequest).toHaveBeenCalledTimes(1)
+    await advance(1)
     expect(getRequest).toHaveBeenCalledTimes(2)
 
-    getRequest.mockResolvedValue(patientView({ status: 'in_review' }))
-    await act(async () => {
-      vi.advanceTimersByTime(3000)
-    })
-    expect(getRequest).toHaveBeenCalledTimes(3)
+    await advance(90_000)
+    expect(getRequest).toHaveBeenCalledTimes(20)
+    expect(stoppedLine()).not.toBeInTheDocument()
+  })
 
-    await act(async () => {
-      vi.advanceTimersByTime(9000)
+  it('polls a waiting status every 5 s for 60 s, then stops with the line and the button', async () => {
+    getRequest.mockResolvedValue(patientView({ status: 'in_review' }))
+    await renderLoaded()
+
+    await advance(5000)
+    expect(getRequest).toHaveBeenCalledTimes(2)
+    expect(stoppedLine()).not.toBeInTheDocument()
+
+    await advance(55_000)
+    const calls = getRequest.mock.calls.length
+    expect(calls).toBeGreaterThanOrEqual(12)
+    await advance(60_000)
+    expect(getRequest).toHaveBeenCalledTimes(calls)
+
+    expect(stoppedLine()).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'רענון' })).toBeInTheDocument()
+  })
+
+  it('prints the last update in Israel time', async () => {
+    vi.setSystemTime(new Date('2026-10-03T07:05:00Z'))
+    getRequest.mockResolvedValue(patientView({ status: 'needs_reply', reply_request: null }))
+    await renderLoaded()
+    await advance(60_000)
+    // The last poll ran at 07:05:55Z-07:06:00Z, 10:06 or 10:05 in Israel.
+    expect(screen.getByText(/^עודכן לאחרונה ב־10:0[56]$/)).toBeInTheDocument()
+  })
+
+  it('"רענון" reloads once and restarts the window', async () => {
+    getRequest.mockResolvedValue(patientView({ status: 'in_review' }))
+    await renderLoaded()
+    await advance(65_000)
+    const calls = getRequest.mock.calls.length
+
+    act(() => {
+      fireEvent.click(screen.getByRole('button', { name: 'רענון' }))
     })
-    expect(getRequest).toHaveBeenCalledTimes(3)
+    await advance(0)
+    expect(getRequest).toHaveBeenCalledTimes(calls + 1)
+    expect(stoppedLine()).not.toBeInTheDocument()
+
+    await advance(5000)
+    expect(getRequest).toHaveBeenCalledTimes(calls + 2)
+    await advance(60_000)
+    const after = getRequest.mock.calls.length
+    await advance(30_000)
+    expect(getRequest).toHaveBeenCalledTimes(after)
+    expect(stoppedLine()).toBeInTheDocument()
+  })
+
+  it('a status change restarts the window', async () => {
+    getRequest.mockResolvedValue(patientView({ status: 'in_review' }))
+    await renderLoaded()
+    await advance(45_000)
+
+    // The poll at 50 s sees a new status: the window starts again from there.
+    getRequest.mockResolvedValue(patientView({ status: 'needs_reply', reply_request: null }))
+    await advance(5000)
+    await advance(50_000) // 100 s after entering, 50 s into the new window
+    const calls = getRequest.mock.calls.length
+    await advance(5000)
+    expect(getRequest).toHaveBeenCalledTimes(calls + 1)
+    expect(stoppedLine()).not.toBeInTheDocument()
+
+    await advance(30_000)
+    const after = getRequest.mock.calls.length
+    await advance(30_000)
+    expect(getRequest).toHaveBeenCalledTimes(after)
+    expect(stoppedLine()).toBeInTheDocument()
+  })
+
+  it('the tab becoming visible again reloads and restarts the window', async () => {
+    getRequest.mockResolvedValue(patientView({ status: 'in_review' }))
+    await renderLoaded()
+    await advance(70_000)
+    const calls = getRequest.mock.calls.length
+    expect(stoppedLine()).toBeInTheDocument()
+
+    becomeVisible()
+    await advance(0)
+    expect(getRequest).toHaveBeenCalledTimes(calls + 1)
+    await advance(5000)
+    expect(getRequest).toHaveBeenCalledTimes(calls + 2)
+    expect(stoppedLine()).not.toBeInTheDocument()
+  })
+
+  it('the patient’s own action restarts the window', async () => {
+    getRequest.mockResolvedValue(needsDocument({ missing_document_ids: ['blood_test'] }))
+    // The document failed validation: the status stays `needs_document` (D25).
+    uploadDocument.mockResolvedValue(needsDocument({ missing_document_ids: ['blood_test'] }))
+    await renderLoaded()
+    await advance(70_000)
+    const calls = getRequest.mock.calls.length
+    expect(stoppedLine()).toBeInTheDocument()
+
+    const form = screen.getByRole('region', { name: 'העלאת מסמך blood_test' })
+    act(() => {
+      fireEvent.change(within(form).getByLabelText('תוכן המסמך'), { target: { value: 'תוצאות' } })
+    })
+    act(() => {
+      fireEvent.click(within(form).getByRole('button', { name: 'שליחת המסמך' }))
+    })
+    await advance(0)
+    expect(uploadDocument).toHaveBeenCalledTimes(1)
+    expect(stoppedLine()).not.toBeInTheDocument()
+    await advance(5000)
+    expect(getRequest).toHaveBeenCalledTimes(calls + 1)
+  })
+
+  it('never polls a completed or closed case, not even when the tab is shown again', async () => {
+    getRequest.mockResolvedValue(patientView({ status: 'completed', message: 'נשלח' }))
+    await renderLoaded()
+    await advance(120_000)
+    becomeVisible()
+    await advance(60_000)
+    expect(getRequest).toHaveBeenCalledTimes(1)
+    expect(stoppedLine()).not.toBeInTheDocument()
+  })
+
+  it('stops as soon as a poll finds the case closed', async () => {
+    getRequest.mockResolvedValue(patientView({ status: 'in_progress' }))
+    await renderLoaded()
+    getRequest.mockResolvedValue(patientView({ status: 'closed' }))
+    await advance(5000)
+    expect(getRequest).toHaveBeenCalledTimes(2)
+    await advance(60_000)
+    expect(getRequest).toHaveBeenCalledTimes(2)
+    expect(stoppedLine()).not.toBeInTheDocument()
+  })
+
+  it('drops a poll that answers after the screen is gone', async () => {
+    let resolve: (value: PatientView) => void = () => {}
+    getRequest.mockReturnValue(new Promise((done) => (resolve = done)))
+    const { unmount } = renderDetail()
+    unmount()
+    await act(async () => {
+      resolve(patientView({ status: 'in_review' }))
+    })
+    await advance(120_000)
+    expect(getRequest).toHaveBeenCalledTimes(1)
   })
 })

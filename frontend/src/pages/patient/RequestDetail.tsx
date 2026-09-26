@@ -18,9 +18,13 @@ import {
   formatClock,
   formatDate,
   formatDateTime,
+  formatIsraelHourMinute,
   isAcceptedDocumentFile,
+  isFinal,
   isMoving,
   MAX_UPLOAD_BYTES,
+  REQUEST_POLL_MS,
+  REQUEST_POLL_WINDOW_MS,
   sameDay,
   statusText,
   UNSUPPORTED_FILE_MESSAGE,
@@ -50,16 +54,56 @@ export function RequestDetail() {
   // (`docs/api.md` §4), so a notice that lived only inside the upload form would
   // unmount together with it the moment the view is replaced.
   const [uploadNotice, setUploadNotice] = useState<UploadNotice | null>(null)
+  // Sub-project 18 (addition A): the 60 s polling window of a waiting status. `windowKey`
+  // restarts its timeout without a second interval - the interval itself only follows
+  // whether polling is on (`usePolling`).
+  const [windowOpen, setWindowOpen] = useState(false)
+  const [windowKey, setWindowKey] = useState(0)
+  const [loadedAt, setLoadedAt] = useState<Date | null>(null)
+  const [refreshing, setRefreshing] = useState(false)
+
+  // Every answer is numbered as it is asked for; one older than the view already shown (a
+  // slow poll overtaken by the patient's own upload, say) is dropped, and nothing lands
+  // after the screen is gone.
+  const asked = useRef(0)
+  const shown = useRef(0)
+  const alive = useRef(true)
+  useEffect(() => {
+    alive.current = true
+    return () => {
+      alive.current = false
+    }
+  }, [])
+
+  const show = useCallback((next: PatientView, ticket: number) => {
+    if (!alive.current || ticket < shown.current) return false
+    shown.current = ticket
+    setView(next)
+    setError(null)
+    setLoadedAt(new Date())
+    return true
+  }, [])
 
   const load = useCallback(async () => {
+    const ticket = ++asked.current
     try {
-      const next = await api.getRequest(caseId)
-      setView(next)
-      setError(null)
+      show(await api.getRequest(caseId), ticket)
     } catch (caught) {
+      if (!alive.current || ticket < shown.current) return
       setError(errorMessage(caught))
     }
-  }, [caseId])
+  }, [caseId, show])
+
+  const status = view?.status ?? null
+  const statusRef = useRef(status)
+  statusRef.current = status
+
+  const restartWindow = useCallback(() => {
+    const current = statusRef.current
+    if (current === null || isFinal(current)) return
+    setWindowOpen(true)
+    setWindowKey((key) => key + 1)
+  }, [])
 
   useEffect(() => {
     void load()
@@ -69,7 +113,55 @@ export function RequestDetail() {
     setUploadNotice(null)
   }, [caseId])
 
-  usePolling(view !== null && isMoving(view.status), () => void load())
+  // Entering the screen, and every status change after it, (re)starts the window; a final
+  // status closes it for good.
+  useEffect(() => {
+    if (status === null) return
+    if (isFinal(status)) setWindowOpen(false)
+    else restartWindow()
+  }, [status, restartWindow])
+
+  useEffect(() => {
+    if (!windowOpen) return
+    const timer = setTimeout(() => setWindowOpen(false), REQUEST_POLL_WINDOW_MS)
+    return () => clearTimeout(timer)
+  }, [windowOpen, windowKey])
+
+  // The tab shown again: read the case now and restart the window (non-final only).
+  useEffect(() => {
+    function onVisibility() {
+      if (document.visibilityState !== 'visible') return
+      const current = statusRef.current
+      if (current === null || isFinal(current)) return
+      restartWindow()
+      void load()
+    }
+    document.addEventListener('visibilitychange', onVisibility)
+    return () => document.removeEventListener('visibilitychange', onVisibility)
+  }, [load, restartWindow])
+
+  const polling = status !== null && !isFinal(status) && (isMoving(status) || windowOpen)
+  usePolling(polling, () => void load(), REQUEST_POLL_MS)
+  const pollingStopped = status !== null && !isFinal(status) && !polling
+
+  /** The patient's own successful action (upload, reply): show its answer, restart the window. */
+  const applyChange = useCallback(
+    (next: PatientView) => {
+      if (!show(next, ++asked.current)) return
+      if (!isFinal(next.status)) {
+        statusRef.current = next.status
+        restartWindow()
+      }
+    },
+    [show, restartWindow],
+  )
+
+  async function refresh() {
+    setRefreshing(true)
+    restartWindow()
+    await load()
+    if (alive.current) setRefreshing(false)
+  }
 
   return (
     <section className="card">
@@ -113,7 +205,16 @@ export function RequestDetail() {
 
           {uploadNotice && <Alert variant={uploadNotice.variant}>{uploadNotice.text}</Alert>}
 
-          <StatusContent view={view} onChanged={setView} onUploadNotice={setUploadNotice} />
+          <StatusContent view={view} onChanged={applyChange} onUploadNotice={setUploadNotice} />
+
+          {pollingStopped && (
+            <div className="req-refresh">
+              <p className="hint">{`עודכן לאחרונה ב־${loadedAt ? formatIsraelHourMinute(loadedAt) : ''}`}</p>
+              <Button variant="quiet" busy={refreshing} onClick={() => void refresh()}>
+                רענון
+              </Button>
+            </div>
+          )}
         </>
       )}
     </section>
@@ -183,9 +284,12 @@ function StatusContent({
       return <ReplyToRequest view={view} onChanged={onChanged} onNotice={onUploadNotice} />
     case 'completed':
       return (
-        <Alert variant="ok" title="ההודעה שנשלחה אליך">
-          <span className="message-text">{view.message}</span>
-        </Alert>
+        <>
+          <Alert variant="ok" title="ההודעה שנשלחה אליך">
+            <span className="message-text">{view.message}</span>
+          </Alert>
+          {view.instructions && <Instructions title={view.instructions.title} text={view.instructions.text} />}
+        </>
       )
     case 'in_review':
       return <Alert variant="info">הפנייה הועברה לבדיקת צוות. מידע רפואי אינו נמסר באופן אוטומטי.</Alert>
@@ -213,6 +317,24 @@ function StatusContent({
         </p>
       )
   }
+}
+
+/**
+ * Sub-project 18 (design D11): the preparation instruction the case loaded, under the
+ * delivered message - exactly what was approved and shown (`docs/api.md` §4), as a readable
+ * section: its own title, and the text with its line breaks kept. Never its source id or
+ * version: a code is staff-only.
+ */
+function Instructions({ title, text }: { title: string; text: string }) {
+  return (
+    <section className="req-instructions" aria-labelledby="req-instructions-h">
+      <h2 className="section-h" id="req-instructions-h">
+        הוראות ההכנה
+      </h2>
+      <h3 className="req-instructions-title">{title}</h3>
+      <p className="message-text">{text}</p>
+    </section>
+  )
 }
 
 /**

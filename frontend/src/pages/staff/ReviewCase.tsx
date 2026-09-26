@@ -10,6 +10,7 @@ import { StatusPill } from '../../components/StatusPill'
 import { TextField } from '../../components/TextField'
 import { useAuth } from '../../auth/AuthContext'
 import { AuditTimeline } from './AuditTimeline'
+import { CaseAppointmentFacts } from './CaseAppointmentFacts'
 import { ClinicalAnswer } from './ClinicalAnswer'
 import { MessagePicker, PatientRequest, toMessageBody } from './PatientRequest'
 import type { MessageChoice } from './PatientRequest'
@@ -265,7 +266,16 @@ export function ReviewCase() {
         )}
       </header>
 
-      <AppointmentsPanel key={caseId} audience="staff" load={loadAppointments} />
+      <div className="fact-groups">
+        <CaseAppointmentFacts facts={context} />
+      </div>
+
+      <AppointmentsPanel
+        key={caseId}
+        audience="staff"
+        load={loadAppointments}
+        loadInstruction={api.getStaffInstruction}
+      />
 
       {loadError && (
         <Alert variant="error" title="רענון ההקשר נכשל">

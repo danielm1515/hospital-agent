@@ -1,12 +1,13 @@
 /**
- * The patient's appointment list (sub-project 16, `docs/api.md` §9, design D10/D11).
+ * The patient's appointment list (sub-project 16, `docs/api.md` §9, design D10/D11), with each
+ * appointment's exam type and preparation instruction since sub-project 18 (design D12).
  * One shared component: the patient's own screen passes `listMyAppointments`, the
  * staff review screen passes `listCaseAppointments` bound to the case id - the panel
  * itself never calls the API client directly, so it never chooses which patient it is.
  */
 import { useEffect, useRef, useState } from 'react'
 import type { FormEvent, ReactNode } from 'react'
-import type { Appointment, AppointmentList, AppointmentStatus } from '../api/types'
+import type { Appointment, AppointmentInstruction, AppointmentList, AppointmentStatus, InstructionText } from '../api/types'
 import { documentLabel } from '../pages/patient/helpers'
 import { detailOf } from '../pages/staff/labels'
 import { Alert } from './Alert'
@@ -35,6 +36,10 @@ const ERROR_LABELS: Record<string, string> = {
   case_not_found: 'הפנייה לא נמצאה',
   invalid_range: 'טווח תאריכים לא תקין',
   network_error: 'אין חיבור לשרת',
+  // Sub-project 18 (`docs/api.md` §9): the instruction-text read.
+  instructions_unavailable: 'מערכת הוראות ההכנה אינה זמינה',
+  invalid_instruction: 'מזהה הוראות ההכנה אינו תקין',
+  instruction_mismatch: 'התקבלה גרסה אחרת של הוראות ההכנה',
 }
 
 const INVALID_DATES_ERROR = 'יש לבחור שני תאריכים תקינים'
@@ -94,12 +99,20 @@ export function rangeToInstants(from: string, to: string): { from: Date; to: Dat
   return { from: new Date(fy, fm - 1, fd), to: new Date(ty, tm - 1, td + 1) }
 }
 
+/** Reads one approved instruction text: the patient's route or the staff's (sub-project 18). */
+export type InstructionLoader = (sourceId: string, version: string) => Promise<InstructionText>
+
 export interface AppointmentsPanelProps {
   audience: 'patient' | 'staff'
   load: (from: Date, to: Date) => Promise<AppointmentList>
+  /**
+   * Sub-project 18 (design D12): `getPatientInstruction` or `getStaffInstruction`, chosen by
+   * the screen like `load`. Without it a row shows the instruction's title and no toggle.
+   */
+  loadInstruction?: InstructionLoader
 }
 
-export function AppointmentsPanel({ audience, load }: AppointmentsPanelProps) {
+export function AppointmentsPanel({ audience, load, loadInstruction }: AppointmentsPanelProps) {
   const [range, setRange] = useState(() => defaultRange(new Date()))
   const [shown, setShown] = useState(range)
   const [result, setResult] = useState<AppointmentList | null>(null)
@@ -223,7 +236,12 @@ export function AppointmentsPanel({ audience, load }: AppointmentsPanelProps) {
           ) : (
             <ul className="appointment-list">
               {result.appointments.map((appointment) => (
-                <AppointmentRow key={appointment.appointment_id} appointment={appointment} audience={audience} />
+                <AppointmentRow
+                  key={appointment.appointment_id}
+                  appointment={appointment}
+                  audience={audience}
+                  loadInstruction={loadInstruction}
+                />
               ))}
             </ul>
           )}
@@ -252,16 +270,27 @@ function errorBody(audience: 'patient' | 'staff', detail: string): ReactNode {
   )
 }
 
-function AppointmentRow({ appointment, audience }: { appointment: Appointment; audience: 'patient' | 'staff' }) {
+function AppointmentRow({
+  appointment,
+  audience,
+  loadInstruction,
+}: {
+  appointment: Appointment
+  audience: 'patient' | 'staff'
+  loadInstruction?: InstructionLoader
+}) {
   const departmentLabel = DEPARTMENT_LABELS[appointment.department] ?? appointment.department
   const statusLabel = STATUS_LABELS[appointment.status]
   const cancelled = appointment.status === 'Cancelled'
+  const examType = appointment.exam_type ?? null
 
   return (
     <li className={cancelled ? 'appointment-item is-cancelled' : 'appointment-item'}>
       <time dateTime={appointment.appointment_at}>{DATE_TIME.format(new Date(appointment.appointment_at))}</time>
       <p className="appointment-meta">
         <span>{departmentLabel}</span>
+        {examType && <span>{examType.label}</span>}
+        {examType && audience === 'staff' && <span className="mono">{examType.code}</span>}
         {appointment.doctor_name && <span>{appointment.doctor_name}</span>}
         {appointment.location && <span>{appointment.location}</span>}
       </p>
@@ -279,6 +308,130 @@ function AppointmentRow({ appointment, audience }: { appointment: Appointment; a
           ))}
         </ul>
       )}
+      {appointment.instruction && (
+        <AppointmentInstructions
+          instruction={appointment.instruction}
+          audience={audience}
+          loadInstruction={loadInstruction}
+          textId={`instr-${appointment.appointment_id}`}
+        />
+      )}
     </li>
+  )
+}
+
+/**
+ * Sub-project 18 (design D12): the instruction's title, and "הצגת הוראות ההכנה" loading its
+ * text on demand through the screen's own route - which answers only a source the registry
+ * approves now, so the panel can never show unapproved text. The patient sees no code; staff
+ * see the source id and version beside the title. A failed read is a quiet line, never an
+ * error box: `instruction_not_approved` says so, `instructions_not_enabled` removes the
+ * toggle, anything else offers a retry.
+ */
+function AppointmentInstructions({
+  instruction,
+  audience,
+  loadInstruction,
+  textId,
+}: {
+  instruction: AppointmentInstruction
+  audience: 'patient' | 'staff'
+  loadInstruction?: InstructionLoader
+  textId: string
+}) {
+  const [text, setText] = useState<InstructionText | null>(null)
+  const [open, setOpen] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const [problem, setProblem] = useState<string | null>(null)
+  const requestId = useRef(0)
+
+  useEffect(
+    () => () => {
+      // Unmounted (or StrictMode's throw-away mount): drop any answer still in flight.
+      requestId.current += 1
+    },
+    [],
+  )
+
+  function fetchText(read: InstructionLoader) {
+    const id = ++requestId.current
+    setBusy(true)
+    setProblem(null)
+    Promise.resolve()
+      .then(() => read(instruction.source_id, instruction.version))
+      .then((answer) => {
+        if (id !== requestId.current) return
+        // Only the exact source and version that was asked for is ever shown.
+        if (answer.source_id !== instruction.source_id || answer.version !== instruction.version) {
+          setProblem('instruction_mismatch')
+        } else {
+          setText(answer)
+          setOpen(true)
+        }
+        setBusy(false)
+      })
+      .catch((caught: unknown) => {
+        if (id !== requestId.current) return
+        setProblem(detailOf(caught))
+        setBusy(false)
+      })
+  }
+
+  function toggle() {
+    if (open) setOpen(false)
+    else if (text) setOpen(true)
+    else if (loadInstruction) fetchText(loadInstruction)
+  }
+
+  let control: ReactNode = null
+  if (problem === 'instruction_not_approved') {
+    control = <p className="hint">הוראות ההכנה טרם אושרו</p>
+  } else if (problem === 'instructions_not_enabled') {
+    control = <p className="hint">הוראות ההכנה אינן זמינות כרגע.</p>
+  } else if (problem && loadInstruction) {
+    control = (
+      <div className="appointment-instructions-row">
+        <p className="hint">
+          לא הצלחנו לטעון את הוראות ההכנה כרגע.
+          {audience === 'staff' && (
+            <>
+              {' '}
+              {ERROR_LABELS[problem] ?? 'שגיאה לא צפויה'} <span className="mono">{problem}</span>
+            </>
+          )}
+        </p>
+        <Button variant="quiet" busy={busy} onClick={() => fetchText(loadInstruction)}>
+          נסו שוב
+        </Button>
+      </div>
+    )
+  } else if (loadInstruction) {
+    control = (
+      <Button variant="quiet" busy={busy} aria-expanded={open} aria-controls={textId} onClick={toggle}>
+        {open ? 'הסתרת הוראות ההכנה' : 'הצגת הוראות ההכנה'}
+      </Button>
+    )
+  }
+
+  return (
+    <div className="appointment-instructions">
+      <p className="appointment-meta">
+        <span>{`הוראות הכנה: ${instruction.title}`}</span>
+        {audience === 'staff' && (
+          <>
+            <span className="mono">{instruction.source_id}</span>
+            <span>{`גרסה ${instruction.version}`}</span>
+          </>
+        )}
+      </p>
+      {control}
+      {busy && <Loading size="inline" label="טוען את הוראות ההכנה" />}
+      {open && text && (
+        <div className="appointment-instructions-text" id={textId}>
+          <p className="req-instructions-title">{text.title}</p>
+          <p className="message-text">{text.text}</p>
+        </div>
+      )}
+    </div>
   )
 }

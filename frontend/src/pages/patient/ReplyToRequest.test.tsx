@@ -45,6 +45,7 @@ const BASE = {
   history: [],
   document_upload: 'file',
   conversation: [],
+  instructions: null,
 } satisfies Partial<PatientView>
 
 const DEADLINE = '2026-09-26T08:05:00Z'

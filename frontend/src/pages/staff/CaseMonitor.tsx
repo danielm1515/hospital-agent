@@ -7,6 +7,7 @@ import { Button } from '../../components/Button'
 import { Loading } from '../../components/Loading'
 import { StatusPill } from '../../components/StatusPill'
 import { AuditTimeline } from './AuditTimeline'
+import { CaseAppointmentFacts } from './CaseAppointmentFacts'
 import { PatientThread } from './PatientThread'
 import {
   DOCUMENT_LABELS,
@@ -390,7 +391,8 @@ function planStepLabel(step: number, current: number | null): string {
 }
 
 /**
- * The case as a person reads it: four groups, each fact with a Hebrew label and,
+ * The case as a person reads it: five groups (the fifth, sub-project 18's appointment and
+ * instruction source, is `CaseAppointmentFacts`), each fact with a Hebrew label and,
  * beside it, the field name from `docs/api.md` §5 - the raw name stays visible
  * because it is what the spec, the guards and the Audit all use.
  */
@@ -467,6 +469,8 @@ function CaseFacts({ detail }: { detail: CaseDetail }) {
           />
         </dl>
       </section>
+
+      <CaseAppointmentFacts facts={detail} />
     </div>
   )
 }
