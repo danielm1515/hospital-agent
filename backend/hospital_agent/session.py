@@ -28,7 +28,7 @@ from . import auth, data_log, naming, patient_messages, repository
 from .case import CaseRecord
 from .document_intake import IntakeAnswer, IntakeUnavailable, sniff_kind
 from .documents import CATALOG_LABELS, document_label
-from .naming import Component, Event, State
+from .naming import Component, Event, SafetyLevel, State
 from .state_manager import CaseNotFound as _UnknownCase
 from .state_manager import StateManager, TransitionResult
 
@@ -493,7 +493,19 @@ class SessionService:
             history = status_history(trace, delivered=bool(resolved) or answer is not None)
             message = (self._delivered_message(conn, case.case_id, resolved[-1]) if resolved
                        else answer) if status == "completed" else None
-            instructions = self._instructions(conn, case.case_id) if status == "completed" else None
+            # Fix round 1 (I1/I2/M1/M2): instructions is non-null only for a case delivered by
+            # the agent's own CASE_RESOLVED (never a clinical answer, and never any other
+            # "completed"/"closed" shape), one that actually has a sub-project 18 instruction
+            # source (never the pre-sub-project-18 shape), and whose safety_level was never
+            # raised past MediumRisk by a later re-check - even if a human overrode a
+            # PolicyReview escalation to let the case proceed regardless. `_instructions` itself
+            # (below) is gate (d): the latest entry, present or nothing at all.
+            instructions = (
+                self._instructions(conn, case.case_id)
+                if (status == "completed" and resolved and case.instruction_source_id is not None
+                    and case.safety_level in (SafetyLevel.LOW_RISK, SafetyLevel.MEDIUM_RISK))
+                else None
+            )
             staff = self._staff_messages(conn, case.case_id, trace)
             replies = self._patient_replies(conn, case.case_id, trace)
         needs_document = status == "needs_document"
@@ -539,17 +551,27 @@ class SessionService:
 
     @staticmethod
     def _instructions(conn, case_id: str) -> PatientInstructions | None:
-        """Sub-project 18 (design D11, review m5): the case's own Data Log `instructions`
-        entry - exactly what was approved and shown (§12.3). `LoadInstructions` can run more
-        than once for one case (e.g. a re-plan after the patient uploads a document), so this
-        is the LATEST entry that is present (not tombstoned), never the first. `None` when
-        there is no such entry at all."""
-        present = [entry.content for entry
-                   in data_log.entries(conn, case_id, data_log.DataKind.INSTRUCTIONS)
-                   if entry.content is not None]
-        if not present:
+        """Sub-project 18 (design D11): the case's own Data Log `instructions` entry - exactly
+        what was approved and shown (§12.3). `LoadInstructions` can run more than once for one
+        case (e.g. a re-plan after the patient uploads a document), so this is the LATEST entry
+        by recency. Fix round 1 (I1/I2, gate d): if that latest entry is tombstoned, this is
+        `None` - it never falls back to an earlier, still-present entry, since a deletion must
+        hide the instructions text, not merely revert to a stale copy of it. `None` too when
+        there is no entry at all.
+
+        `_keep_retrieved_content` (execution/executor.py) writes the entry's content as
+        `f"{title}\\n{text}"`; a title itself can never carry a newline (fix round 1, M5, the
+        appointment-service gateway's own check), so the FIRST newline is always the real
+        boundary. An entry with no newline at all (never produced by that writer today, but not
+        assumed here) gets the generic title "הוראות הכנה" with the whole entry as its text,
+        rather than swallowing the text into the title.
+        """
+        entries = data_log.entries(conn, case_id, data_log.DataKind.INSTRUCTIONS)
+        if not entries or entries[-1].content is None:
             return None
-        title, _, text = present[-1].partition("\n")
+        title, sep, text = entries[-1].content.partition("\n")
+        if not sep:
+            return PatientInstructions(title="הוראות הכנה", text=title)
         return PatientInstructions(title=title, text=text)
 
     def _clinical_answer(self, conn, case_id: str) -> str | None:

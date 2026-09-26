@@ -307,10 +307,28 @@ def test_status_message_maps_every_catalog_department_to_its_hebrew_label(depart
     assert f"({label})" in text
 
 
-def test_status_message_falls_back_to_the_english_value_for_an_unknown_department():
+def test_status_message_drops_the_parenthetical_for_an_unknown_department():
+    """Fix round 1 (M4): never show English - drop the parenthetical entirely."""
     text = status_message(_case(exam_type_label="בדיקה", department="Oncology"),
                           InstructionSource("INSTR-X", "1"))
-    assert "(Oncology)" in text
+    assert "(Oncology)" not in text
+    assert "(" not in text.split(" נקבע ")[0]
+    assert text.startswith("התור שלך לבדיקה נקבע ל־23/09/2026")
+
+
+@pytest.mark.parametrize("label", ["EEG", "1234", "-x"])
+def test_status_message_gets_a_maqaf_before_a_non_hebrew_exam_label(label):
+    """Fix round 1 (M3): "ל" attached straight to a non-Hebrew label reads wrong ("לEEG")."""
+    text = status_message(_case(exam_type_label=label, department="Cardiology"),
+                          InstructionSource("INSTR-X", "1"))
+    assert f"ל־{label} (" in text
+
+
+def test_status_message_attaches_the_prefix_directly_to_a_hebrew_exam_label():
+    text = status_message(_case(exam_type_label="מבחן מאמץ", department="Cardiology"),
+                          InstructionSource("INSTR-X", "1"))
+    assert "למבחן מאמץ (" in text
+    assert "ל־מבחן מאמץ" not in text
 
 
 @pytest.mark.parametrize("upcoming_count", [None, 0, 1])

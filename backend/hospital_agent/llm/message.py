@@ -18,7 +18,8 @@ CLINIC_TZ = ZoneInfo("Asia/Jerusalem")
 
 # Sub-project 18 (design D10): the Hebrew department label, matching the appointment-service's
 # own catalog (app/catalog.py DEPARTMENTS). A department this version does not know (a future
-# catalog addition) falls back to the English value it was given - never invented.
+# catalog addition) is dropped from the message entirely (fix round 1, M4) - never shown in
+# English.
 DEPARTMENT_LABELS: dict[str, str] = {
     "Cardiology": "קרדיולוגיה",
     "Dermatology": "עור",
@@ -28,8 +29,26 @@ DEPARTMENT_LABELS: dict[str, str] = {
 }
 
 
-def department_label(department: str) -> str:
-    return DEPARTMENT_LABELS.get(department, department)
+def department_label(department: str) -> str | None:
+    """The Hebrew label, or `None` for a department this version does not know - fix round 1
+    (M4): an unknown department is dropped from the message entirely, never shown in English."""
+    return DEPARTMENT_LABELS.get(department)
+
+
+# Fix round 1 (M3): "ל" attaches straight onto a Hebrew word ("למבחן מאמץ"), but attached
+# straight onto a non-Hebrew label it reads wrong ("לEEG") - such a label gets a maqaf instead
+# ("ל־EEG"). א-ת is the Hebrew letter block (including the final forms, e.g. ך/ם/ן/ף/ץ).
+def _exam_clause(label: str) -> str:
+    if label and "א" <= label[0] <= "ת":
+        return f"ל{label}"
+    return f"ל־{label}"
+
+
+# Fix round 1 (M4): "" when the department is not one this version's catalog knows (never the
+# English value); " (<label>)" otherwise, leading space included so the template needs none.
+def _department_clause(department: str) -> str:
+    label = department_label(department)
+    return f" ({label})" if label is not None else ""
 
 
 # Kept as a single format string (rather than split further) because tests/test_d33.py formats
@@ -49,15 +68,17 @@ TEMPLATE_NO_DOCUMENTS = (
 )
 
 # Sub-project 18 (design D10): the case has an exam type (a real appointment-service answer) -
-# name the exam and the department alongside the appointment.
+# name the exam and the department alongside the appointment. `exam_clause` already carries its
+# own leading "ל"/"ל־" (see `_exam_clause`), and `department_clause` its own leading space and
+# parentheses, or "" (see `_department_clause`, fix round 1 M4) - the template adds neither.
 TEMPLATE_WITH_EXAM = (
-    "התור שלך ל{exam} ({department}) נקבע ל־{date} בשעה {time} (שעון ישראל). "
+    "התור שלך {exam_clause}{department_clause} נקבע ל־{date} בשעה {time} (שעון ישראל). "
     "המסמכים הנדרשים: {documents} - כולם התקבלו. "
     "הוראות ההכנה המאושרות ({source_id}, גרסה {version}) מופיעות בפנייה זו."
 )
 
 TEMPLATE_WITH_EXAM_NO_DOCUMENTS = (
-    "התור שלך ל{exam} ({department}) נקבע ל־{date} בשעה {time} (שעון ישראל). "
+    "התור שלך {exam_clause}{department_clause} נקבע ל־{date} בשעה {time} (שעון ישראל). "
     "הוראות ההכנה המאושרות ({source_id}, גרסה {version}) מופיעות בפנייה זו."
 )
 
@@ -75,15 +96,16 @@ def status_message(case: CaseRecord, source: InstructionSource) -> str:
     date, time = local.strftime("%d/%m/%Y"), local.strftime("%H:%M")
     has_exam = case.exam_type_label is not None and case.department is not None
     if has_exam:
-        department = department_label(case.department)
+        exam_clause = _exam_clause(case.exam_type_label)
+        department_clause = _department_clause(case.department)
         if not case.required_documents:
             text = TEMPLATE_WITH_EXAM_NO_DOCUMENTS.format(
-                exam=case.exam_type_label, department=department, date=date, time=time,
+                exam_clause=exam_clause, department_clause=department_clause, date=date, time=time,
                 source_id=source.source_id, version=source.version,
             )
         else:
             text = TEMPLATE_WITH_EXAM.format(
-                exam=case.exam_type_label, department=department, date=date, time=time,
+                exam_clause=exam_clause, department_clause=department_clause, date=date, time=time,
                 documents=", ".join(document_label(code) for code in case.required_documents),
                 source_id=source.source_id, version=source.version,
             )

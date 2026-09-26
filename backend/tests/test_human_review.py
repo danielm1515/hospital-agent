@@ -3,10 +3,10 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 
 from hospital_agent import data_log, repository
-from hospital_agent.db import approvals
+from hospital_agent.db import approvals, cases
 from hospital_agent.human_review import (
     RESUMABLE,
     ContextChanged,
@@ -212,6 +212,26 @@ def test_the_context_excludes_tombstoned_content_and_rejected_uploads(review, se
 def test_the_context_of_an_unknown_case(review):
     with pytest.raises(CaseNotFound):
         review.context("CASE-DOES-NOT-EXIST")
+
+
+@pytest.mark.parametrize("field,value", [
+    ("appointment_id", "APT-8392"),
+    ("answered_appointment_id", "APT-8392"),
+    ("department", "Cardiology"),
+    ("exam_type_label", "מבחן מאמץ"),
+    ("instruction_source_id", "INSTR-CARD_STRESS"),
+    ("instruction_version", "1"),
+])
+def test_each_of_the_six_staff_fields_is_part_of_shown_context_ref(review, sm, app_engine, field, value):
+    """Sub-project 18 (design D13): these are part of what the reviewer is shown, so a change
+    to any one of them - even with no new audit row - changes shown_context_ref (M8)."""
+    d = Driver(sm, app_engine)
+    d.to_classified()
+    before = review.context(d.case_id).shown_context_ref
+    with app_engine.begin() as conn:
+        conn.execute(update(cases).where(cases.c.case_id == d.case_id).values(**{field: value}))
+    after = review.context(d.case_id).shown_context_ref
+    assert after != before
 
 
 # --- decide --------------------------------------------------------------------------------

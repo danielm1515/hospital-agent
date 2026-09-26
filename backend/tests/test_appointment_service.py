@@ -363,6 +363,14 @@ def test_a_malformed_title_is_invalid_response(title):
     assert _load(response(200, body))[0] == ToolResult(ERROR, {"error": "invalid_response"})
 
 
+@pytest.mark.parametrize("title", ["line one\nline two", "line one\rline two", "trailing\n"])
+def test_a_title_carrying_a_newline_is_invalid_response(title):
+    """Fix round 1 (M5): instruction_text is `f"{title}\\n{text}"`, and the patient view splits
+    it back on the first newline - a title with its own \\n or \\r would shift that split."""
+    body = {**INSTRUCTION, "title": title}
+    assert _load(response(200, body))[0] == ToolResult(ERROR, {"error": "invalid_response"})
+
+
 @pytest.mark.parametrize("text", ["", "   ", 1, None, "x" * 4001])
 def test_a_malformed_text_is_invalid_response(text):
     body = {**INSTRUCTION, "text": text}

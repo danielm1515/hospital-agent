@@ -1,5 +1,5 @@
 """The Session Service (spec §1, §12.3, D24, D25; sub-project 5 design §4)."""
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -9,7 +9,7 @@ from hospital_agent.case import CaseRecord
 from hospital_agent.execution.gateway import MockGateway
 from hospital_agent.llm.orchestrator import Orchestrator
 from hospital_agent.llm.provider import FakeProvider
-from hospital_agent.naming import Component, EscalationKind, Event, State
+from hospital_agent.naming import Component, EscalationKind, Event, SafetyLevel, State
 from hospital_agent.session import (
     MISSING_DOCUMENT_TEMPLATE_ID,
     CaseNotFound,
@@ -207,7 +207,9 @@ def test_a_completed_view_shows_the_instructions_that_were_loaded(session, sm, a
     assert orchestrator.run_case(case_id) is State.COMPLETED
     with app_engine.connect() as conn:
         [entry] = data_log.entries(conn, case_id, data_log.DataKind.INSTRUCTIONS)
-    title, _, text = entry.content.partition("\n")
+    title, sep, text = entry.content.partition("\n")
+    if not sep:  # fix round 1 (M5): no newline at all -> the generic title, whole entry as text
+        title, text = "הוראות הכנה", title
     view = session.patient_view(case_id)
     assert view.instructions == session_module.PatientInstructions(title=title, text=text)
 
@@ -226,6 +228,29 @@ def test_instructions_is_null_when_completed_with_no_instructions_entry(sm, app_
         assert SessionService._instructions(conn, d.case_id) is None
 
 
+def test_instructions_with_no_newline_gets_the_generic_title(sm, app_engine):
+    """Fix round 1 (M5): an entry with no newline at all gets the generic title "הוראות הכנה",
+    and the whole entry becomes the text - never swallowed into the title."""
+    d = Driver(sm, app_engine)
+    d.submit()
+    with app_engine.begin() as conn:
+        data_log.record(conn, d.case_id, PATIENT, data_log.DataKind.INSTRUCTIONS,
+                        "No newline anywhere in this entry", sm.clock())
+        assert SessionService._instructions(conn, d.case_id) == session_module.PatientInstructions(
+            title="הוראות הכנה", text="No newline anywhere in this entry")
+
+
+def test_instructions_splits_only_on_the_first_newline(sm, app_engine):
+    """Fix round 1 (M5): several newlines - only the first one splits title from text."""
+    d = Driver(sm, app_engine)
+    d.submit()
+    with app_engine.begin() as conn:
+        data_log.record(conn, d.case_id, PATIENT, data_log.DataKind.INSTRUCTIONS,
+                        "Title\nLine one\nLine two\nLine three", sm.clock())
+        assert SessionService._instructions(conn, d.case_id) == session_module.PatientInstructions(
+            title="Title", text="Line one\nLine two\nLine three")
+
+
 def test_instructions_shows_the_latest_present_entry_over_an_earlier_one(session, sm, app_engine, orchestrator):
     """Review m5: LoadInstructions can run more than once for one case (e.g. a re-plan after
     the patient uploads a document) - the LATEST entry wins, never the first."""
@@ -240,22 +265,145 @@ def test_instructions_shows_the_latest_present_entry_over_an_earlier_one(session
     assert view.instructions == session_module.PatientInstructions(title="A newer title", text="A newer text")
 
 
-def test_instructions_skips_a_tombstoned_latest_entry(session, sm, app_engine, orchestrator):
-    """A tombstoned entry (content cleared, §18.4) is never shown, even when it is the latest -
-    the next-latest *present* entry is, exactly like `request_text` (design D11)."""
+def test_instructions_is_null_when_the_latest_entry_is_tombstoned(session, sm, app_engine, orchestrator):
+    """Fix round 1 (I1/I2, gate d): a tombstoned LATEST entry is `null` - it never falls back
+    to an older, still-present entry. A deletion must hide the text, not merely revert to a
+    stale copy of it."""
+    case_id = session.submit_request(PATIENT, REQUEST, identity_verified=True)
+    assert orchestrator.run_case(case_id) is State.AWAITING_PATIENT_INPUT
+    session.upload_document(PATIENT, case_id, "blood_test", "Blood test results: normal.")
+    assert orchestrator.run_case(case_id) is State.COMPLETED
+    with app_engine.begin() as conn:
+        newer = data_log.record(conn, case_id, PATIENT, data_log.DataKind.INSTRUCTIONS,
+                                "A newer title\nA newer text", sm.clock())
+        data_log.tombstone(conn, newer.entry_id, sm.clock())
+    assert session.patient_view(case_id).instructions is None
+
+
+# --- fix round 1 (I3): the gate matrix - (a) delivered by CASE_RESOLVED, (b) has a
+# sub-project 18 source, (c) safety_level LowRisk/MediumRisk, (d) latest entry present --------
+
+def test_instructions_is_null_at_awaiting_patient_input_even_though_an_entry_exists(
+        session, sm, app_engine, orchestrator):
+    """Gate (a): scenario 1 (§0) loads instructions (step 3) before the missing-document
+    escalation (step 4's readiness check) - the entry already exists, but the status is
+    `needs_document`, not `completed`, so `instructions` stays null."""
+    case_id = session.submit_request(PATIENT, REQUEST, identity_verified=True)
+    assert orchestrator.run_case(case_id) is State.AWAITING_PATIENT_INPUT
+    with app_engine.connect() as conn:
+        [entry] = data_log.entries(conn, case_id, data_log.DataKind.INSTRUCTIONS)
+    assert entry.content is not None  # the entry really is there
+    view = session.patient_view(case_id)
+    assert view.status == "needs_document"
+    assert view.instructions is None
+
+
+def test_instructions_is_null_for_an_in_review_case(sm, app_engine):
+    """Gate (a): `in_review` is never `completed`."""
+    d = Driver(sm, app_engine)
+    d.submit()
+    d.validate("Should I stop taking my blood thinner?")
+    d.medical_question()
+    assert d.state is State.AWAITING_HUMAN_REVIEW
+    session = SessionService(sm)
+    view = session.patient_view(d.case_id)
+    assert view.status == "in_review"
+    assert view.instructions is None
+
+
+def test_instructions_is_null_for_a_clinical_answer_completion(sm, app_engine):
+    """Gate (a): a `clinical_staff` answer to a `MedicalQuestion` completes the case (status
+    `completed`) without ever loading instructions - never confused with the agent's own
+    CASE_RESOLVED delivery. `instruction_source_id`/an `instructions` entry are poked onto the
+    case directly (never producible by a real MedicalQuestion, which never reaches
+    CheckAppointment/LoadInstructions at all) precisely so this isolates gate (a) alone -
+    gates (b)/(c)/(d) all hold here, and only (a) - delivered by CASE_RESOLVED - does not."""
+    from sqlalchemy import update
+
+    from hospital_agent.db import cases
+    from hospital_agent.human_review import HumanReviewService
+
+    d = Driver(sm, app_engine)
+    d.submit()
+    d.validate("Should I stop taking my blood thinner?")
+    d.medical_question()
+    with app_engine.begin() as conn:
+        conn.execute(update(cases).where(cases.c.case_id == d.case_id).values(
+            instruction_source_id="INSTR-PREP-COLONOSCOPY", instruction_version="3",
+            safety_level="MediumRisk"))
+        data_log.record(conn, d.case_id, PATIENT, data_log.DataKind.INSTRUCTIONS,
+                        "Colonoscopy prep\nDrink clear liquids only.", sm.clock())
+    session = SessionService(sm)
+    review = HumanReviewService(sm, session)
+    ref = review.context(d.case_id).shown_context_ref
+    result = review.answer(reviewer_id="coordinator_nurse", reviewer_role="clinical_staff",
+                           case_id=d.case_id, answer="אין להפסיק מדלל דם ללא הנחיית הרופא המטפל.",
+                           reason="נענתה בטלפון", shown_context_ref=ref)
+    assert result.committed and d.state is State.COMPLETED
+    view = session.patient_view(d.case_id)
+    assert view.status == "completed" and view.message is not None
+    assert view.instructions is None
+
+
+def test_instructions_is_null_with_no_instruction_source(session, sm, app_engine, orchestrator):
+    """Gate (b): a pre-sub-project-18 case shape - an `instructions` entry present, but no
+    `instruction_source_id` on the case (poked directly: production's own LoadInstructions
+    policy check already fails closed on a missing source, so this shape is defense in depth,
+    not a reachable live path)."""
+    from sqlalchemy import update
+
+    from hospital_agent.db import cases
+
     case_id = session.submit_request(PATIENT, REQUEST, identity_verified=True)
     assert orchestrator.run_case(case_id) is State.AWAITING_PATIENT_INPUT
     session.upload_document(PATIENT, case_id, "blood_test", "Blood test results: normal.")
     assert orchestrator.run_case(case_id) is State.COMPLETED
     with app_engine.connect() as conn:
-        [first] = data_log.entries(conn, case_id, data_log.DataKind.INSTRUCTIONS)
-    first_title, _, first_text = first.content.partition("\n")
+        [entry] = data_log.entries(conn, case_id, data_log.DataKind.INSTRUCTIONS)
+    assert entry.content is not None
     with app_engine.begin() as conn:
-        newer = data_log.record(conn, case_id, PATIENT, data_log.DataKind.INSTRUCTIONS,
-                                "A newer title\nA newer text", sm.clock())
-        data_log.tombstone(conn, newer.entry_id, sm.clock())
-    view = session.patient_view(case_id)
-    assert view.instructions == session_module.PatientInstructions(title=first_title, text=first_text)
+        conn.execute(update(cases).where(cases.c.case_id == case_id).values(instruction_source_id=None))
+    assert session.patient_view(case_id).instructions is None
+
+
+def test_instructions_is_null_when_safety_level_is_high_risk_even_after_a_policy_review_override(
+        sm, app_engine):
+    """Gate (c): a case whose safety_level was raised to HighRisk by LoadInstructions' own
+    Safety re-check, resumed past a PolicyReview escalation by a one-shot human override and
+    completed regardless - the delivered status message may still be fine, but the raw
+    instructions text is never shown once the case's own safety_level says HighRisk."""
+    d = Driver(sm, app_engine)
+    d.to_classified()
+    d.plan()
+    d.retrieve_step(appointment_at=datetime.now(UTC) + timedelta(hours=96),
+                    instruction_source_id="INSTR-PREP-COLONOSCOPY", instruction_version="3")
+    d.advance()
+    d.retrieve_step(required_documents=["referral"], held_documents=["referral"])
+    d.advance()
+    d.retrieve_step(safety_level="HighRisk")  # LoadInstructions' own Safety re-check
+    assert d.case.safety_level == SafetyLevel.HIGH_RISK
+    with app_engine.begin() as conn:
+        data_log.record(conn, d.case_id, PATIENT, data_log.DataKind.INSTRUCTIONS,
+                        "Colonoscopy prep\nDrink clear liquids only.", sm.clock())
+    d.assess()  # Z3 readiness: everything held -> Ready
+    d.plan_delivery()
+    d.propose()
+    denied = d.allow()
+    assert denied.state_after is State.AWAITING_HUMAN_REVIEW
+    assert d.case.escalation_kind is EscalationKind.POLICY_REVIEW
+    case = d.case
+    d.human(Event.HUMAN_APPROVED, d.approval("approve", plan_hash=case.plan_hash, current_step=case.current_step))
+    d.propose()
+    assert d.allow().state_after is State.DELIVERING
+    assert d.deliver(status="succeeded").committed
+    assert d.state is State.COMPLETED
+    session = SessionService(sm)
+    view = session.patient_view(d.case_id)
+    # `message` is null here only because this shortcut never records an OUTGOING_MESSAGE entry
+    # for the delivery (`deliver()` emits CASE_RESOLVED directly, bypassing the Tool Executor) -
+    # not something this test is about; `status` and `instructions` are.
+    assert view.status == "completed"
+    assert view.instructions is None
 
 
 def test_the_history_is_every_status_change_with_its_time(session, sm, app_engine, orchestrator):

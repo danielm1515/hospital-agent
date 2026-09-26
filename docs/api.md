@@ -216,13 +216,24 @@ else shown here.
   (§12.3) - and a status the case entered twice appears twice. The last entry's `status`
   always equals `status`, and the first is the submission. It is `[]` only for a case with
   no committed transition, which the patient routes never return.
-- `instructions` (sub-project 18, design D11) is `{"title": ..., "text": ...}` in `completed`
-  when the case has an `instructions` entry in the Data Log that is present (not tombstoned) -
-  exactly the text that was approved and shown (§12.3), split into its title and body on the
-  first newline. `LoadInstructions` can run more than once for one case (e.g. a re-plan after
-  the patient uploads a document); this is always the *latest* present entry, never the first.
-  `null` for every other status, and `null` in `completed` too when there is no such entry (the
-  mock path before sub-project 18, or a case whose only entry was deleted).
+- `instructions` (sub-project 18, design D11) is `{"title": ..., "text": ...}` only when
+  **every one** of these holds (fix round 1, I1/I2):
+  - the status is `completed` *because* the agent itself delivered a `CASE_RESOLVED` message -
+    never a `clinical_staff` answer to a `MedicalQuestion`, and never `closed`;
+  - the case has a sub-project 18 instruction source (`instruction_source_id` is set) - a
+    pre-sub-project-18 case never shows the old fixed mock text; the mock path itself (design
+    D7) does set one (the demo colonoscopy source) and so is not excluded by this gate alone;
+  - `safety_level` is `LowRisk` or `MediumRisk` - text a later Safety re-check flagged
+    `HighRisk`/`CriticalRisk` is never shown, even when a human overrode a `PolicyReview`
+    escalation to let the case proceed regardless;
+  - the case's **latest** Data Log `instructions` entry (§12.3) is present (not tombstoned) -
+    `LoadInstructions` can run more than once for one case (e.g. a re-plan after the patient
+    uploads a document), so this is always the latest entry by recency; if that latest entry
+    was deleted, the result is `null`, and this never falls back to an older, still-present
+    entry.
+  Exactly what was approved and shown, split into its title and body on the first newline.
+  `null` whenever any of the above fails to hold, in particular for every status but
+  `completed`.
 - `document_upload` says which upload the screen offers for `needs_document`: `"file"` when the
   server is configured with the document-service (`DOCUMENT_SERVICE_URL` and
   `DOCUMENT_API_KEY`) - a document picker (PDF, JPEG or PNG), sent to `POST .../documents/file` - or `"text"` without
@@ -466,8 +477,8 @@ the counters the list above does not carry. `200`:
   "escalated_from_state": null,
   "patient_deadline": "2026-09-20T22:12:38.786253Z",
   "created_at": "2026-09-19T22:12:38.560531Z",
-  "appointment_id": "APT-8391",
-  "answered_appointment_id": "APT-8391",
+  "appointment_id": "APT-8392",
+  "answered_appointment_id": "APT-8392",
   "department": "Cardiology",
   "exam_type_label": "מבחן מאמץ",
   "instruction_source_id": "INSTR-CARD_STRESS",
@@ -482,8 +493,12 @@ the counters the list above does not carry. `200`:
 `instruction_source_id` and `instruction_version` (sub-project 18, design D13) are read-only
 staff fields: the appointment the patient chose (if any) and the one the appointment-service
 actually resolved, its department and exam type, and the instruction source the policy
-approved for this case. All `null` on the mock path or a case that never resolved an
-appointment. Never shown to the patient.
+approved for this case. Fix round 1 (M6): `appointment_id`, `answered_appointment_id`,
+`department` and `exam_type_label` are `null` on the mock path (`MockGateway` never sets them)
+and on a case that never resolved an appointment - but `instruction_source_id` and
+`instruction_version` are **not**: even the mock path stores a source
+(`INSTR-PREP-COLONOSCOPY`/`3`, design D7), since every `LoadInstructions` needs one. Never
+shown to the patient.
 
 ### GET /api/staff/cases/{case_id}/audit
 

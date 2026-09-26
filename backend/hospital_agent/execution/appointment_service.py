@@ -238,6 +238,11 @@ def map_instruction_response(response: HttpResponse, *, requested_source_id: str
     title, text = body.get("title"), body.get("text")
     if not isinstance(title, str) or not title.strip() or len(title) > MAX_INSTRUCTION_TITLE_LENGTH:
         return _error("invalid_response")
+    # Fix round 1 (M5): instruction_text is stored as f"{title}\n{text}" and the patient view
+    # splits it back on the first newline (session.py) - a title carrying its own newline (or a
+    # bare \r) would shift that split, so it is invalid_response here rather than misread later.
+    if "\n" in title or "\r" in title:
+        return _error("invalid_response")
     if not isinstance(text, str) or not text.strip() or len(text) > MAX_INSTRUCTION_TEXT_LENGTH:
         return _error("invalid_response")
     return ToolResult(OK, {"instruction_ids": [f"{requested_source_id}:{requested_version}"],
