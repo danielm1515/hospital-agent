@@ -76,10 +76,10 @@ def read(client: AppointmentListClient | None, patient_id: str, start: str | Non
     except ValueError:
         # AppointmentListClient.list() raises this for a naive start/end, a patient_id that
         # does not fully match its pattern, or the client itself misconfigured (e.g. an
-        # invalid API key header the transport rejects before a request is even sent) - none
-        # reachable through this route in practice (the routes always resolve patient_id from
-        # the token or the case, and window() always returns aware datetimes), never the
-        # patient's fault. Fail closed exactly like AppointmentsUnavailable rather than a 500,
+        # invalid API key header the transport rejects before a request is even sent). The
+        # first two are not reachable through these routes (they always resolve patient_id from
+        # the token or the case, and window() always returns aware datetimes); the third is an
+        # operator's configuration mistake - never the patient's fault. Fail closed exactly like AppointmentsUnavailable rather than a 500,
         # and never name the patient_id in the log (§12.3).
         _log(logging.WARNING, "client_error", started)
         raise HTTPException(status_code=503, detail="appointments_unavailable") from None

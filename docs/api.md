@@ -995,6 +995,6 @@ or zone the appointment-service itself answered with.
   (`no_answer`, `status_<n>`, `invalid_response`), or `client_error` (the appointment-list
   client's own defensive `ValueError` - a naive datetime, a malformed `patient_id`, or the
   client itself misconfigured, e.g. an invalid API key header the transport rejects before a
-  request is even sent; none of these is reachable through this route in practice, since the
-  routes always resolve a token- or case-bound `patient_id` and the window is always built as
-  aware datetimes) - never the patient_id and never an appointment (§12.3, design D9).
+  request is even sent; the first two are not reachable through these routes, since they always
+  resolve a token- or case-bound `patient_id` and always build the window as aware datetimes,
+  so in practice `client_error` means an operator's configuration mistake) - never the patient_id and never an appointment (§12.3, design D9).
