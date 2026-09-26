@@ -4,6 +4,7 @@ import * as api from '../../api/client'
 import type { ReviewItem } from '../../api/types'
 import { Alert } from '../../components/Alert'
 import { Button } from '../../components/Button'
+import { Loading } from '../../components/Loading'
 import { detailOf, escalationLabel, formatDateTime, returnedByLabel, stateLabel } from './labels'
 
 /** The queue is polled rather than pushed (design decision 4). */
@@ -110,9 +111,7 @@ export function ReviewQueue() {
       )}
 
       {items === null ? (
-        <p className="page-loading" role="status">
-          טוען…
-        </p>
+        <Loading label="טוען פניות" />
       ) : items.length === 0 ? (
         <Alert variant="info" title="אין פניות הממתינות להכרעה">
           כל הפניות שהוסלמו הוכרעו. המסך יתעדכן מעצמו כשתגיע פנייה חדשה.

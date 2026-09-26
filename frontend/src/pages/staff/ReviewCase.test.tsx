@@ -137,6 +137,12 @@ beforeEach(() => {
 })
 
 describe('ReviewCase', () => {
+  it('shows the shared loading status while the context is still loading', async () => {
+    vi.mocked(api.getContext).mockReturnValue(new Promise(() => {})) // never resolves
+    renderCase()
+    expect(await screen.findByText('טוען…')).toHaveAttribute('role', 'status')
+  })
+
   it('shows the appointments panel for the patient, loaded with the case id', async () => {
     renderCase()
 

@@ -5,6 +5,7 @@ import { DOCUMENT_FORMATS } from '../../api/types'
 import type { DocumentFormat, PatientView, StatusChange } from '../../api/types'
 import { Alert } from '../../components/Alert'
 import { Button } from '../../components/Button'
+import { Loading } from '../../components/Loading'
 import { StatusPill } from '../../components/StatusPill'
 import { TextField } from '../../components/TextField'
 import { Conversation, ReplyToRequest } from './ReplyToRequest'
@@ -86,11 +87,7 @@ export function RequestDetail() {
       )}
 
       {view === null ? (
-        !error && (
-          <p className="page-loading" role="status">
-            טוען…
-          </p>
-        )
+        !error && <Loading />
       ) : (
         <>
           <div className="req-head">

@@ -58,6 +58,14 @@ beforeEach(() => {
   replyWithFile.mockReset()
 })
 
+describe('RequestDetail: loading', () => {
+  it('shows the shared loading status while the request is still loading', async () => {
+    getRequest.mockReturnValue(new Promise(() => {})) // never resolves
+    renderDetail()
+    expect(await screen.findByText('טוען…')).toHaveAttribute('role', 'status')
+  })
+})
+
 describe('RequestDetail: needs_document (D24)', () => {
   it('renders the missing-document-v1 request and every missing id', async () => {
     getRequest.mockResolvedValue(needsDocument())

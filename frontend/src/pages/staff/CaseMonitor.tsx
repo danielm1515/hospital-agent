@@ -4,6 +4,7 @@ import * as api from '../../api/client'
 import type { CaseDetail, CaseSummary, EscalationKind, ReviewContext, StateGroup } from '../../api/types'
 import { Alert } from '../../components/Alert'
 import { Button } from '../../components/Button'
+import { Loading } from '../../components/Loading'
 import { StatusPill } from '../../components/StatusPill'
 import { AuditTimeline } from './AuditTimeline'
 import { PatientThread } from './PatientThread'
@@ -205,9 +206,7 @@ export function CaseMonitor() {
           <span className="mono">{error}</span>
         </Alert>
       ) : rows === null ? (
-        <p className="page-loading" role="status">
-          טוען…
-        </p>
+        <Loading label="טוען פניות" />
       ) : rows.length === 0 ? (
         <Alert variant="info" title="אין פניות להצגה">
           אין פניות בקבוצה שנבחרה.
@@ -316,9 +315,7 @@ function ExpandableRow({ row, detail, detailError, open, context, contextError, 
                   <span className="mono">{detailError}</span>
                 </Alert>
               ) : (
-                <p className="page-loading" role="status">
-                  טוען…
-                </p>
+                <Loading size="inline" />
               )}
 
               {detail?.ordered_steps && detail.ordered_steps.length > 0 && (
@@ -351,9 +348,7 @@ function ExpandableRow({ row, detail, detailError, open, context, contextError, 
                   <AuditTimeline rows={context.trace} label={`יומן הביקורת של ${row.case_id}`} />
                 </>
               ) : (
-                <p className="page-loading" role="status">
-                  טוען…
-                </p>
+                <Loading size="inline" />
               )}
             </div>
           </td>

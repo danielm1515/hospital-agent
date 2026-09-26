@@ -120,6 +120,12 @@ beforeEach(() => {
 })
 
 describe('CaseMonitor', () => {
+  it('shows the shared loading status while the list is still loading', async () => {
+    vi.mocked(api.listCases).mockReturnValue(new Promise(() => {})) // never resolves
+    renderMonitor()
+    expect(await screen.findByText('טוען פניות')).toHaveAttribute('role', 'status')
+  })
+
   it('lists every case straight from the one call, with no per-row detail call', async () => {
     renderMonitor()
 
@@ -199,6 +205,18 @@ describe('CaseMonitor', () => {
     expect(api.getCase).toHaveBeenCalledWith('CASE-23FE645294B7')
     expect(api.getContext).toHaveBeenCalledTimes(1)
     expect(api.getContext).toHaveBeenCalledWith('CASE-23FE645294B7')
+  })
+
+  it('shows the smaller inline loading status in an expanded row while its detail and context load', async () => {
+    vi.mocked(api.getCase).mockReturnValue(new Promise(() => {})) // never resolves
+    vi.mocked(api.getContext).mockReturnValue(new Promise(() => {})) // never resolves
+    renderMonitor()
+
+    await userEvent.click(await screen.findByRole('button', { name: 'CASE-23FE645294B7' }))
+
+    const statuses = await screen.findAllByText('טוען…')
+    expect(statuses).toHaveLength(2) // the detail panel and the correspondence/audit panel
+    for (const status of statuses) expect(status.closest('.loader')).toHaveClass('loader-inline')
   })
 
   it('offers a "load more" button when the API says there is a next page, and appends the next page', async () => {

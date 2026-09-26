@@ -5,6 +5,7 @@ import type { DataLogEntry, Decision, DecisionBody, MessageTemplate, ReviewConte
 import { Alert } from '../../components/Alert'
 import { AppointmentsPanel } from '../../components/AppointmentsPanel'
 import { Button } from '../../components/Button'
+import { Loading } from '../../components/Loading'
 import { StatusPill } from '../../components/StatusPill'
 import { TextField } from '../../components/TextField'
 import { useAuth } from '../../auth/AuthContext'
@@ -185,9 +186,7 @@ export function ReviewCase() {
             <span className="mono">{loadError}</span>
           </Alert>
         ) : (
-          <p className="page-loading" role="status">
-            טוען…
-          </p>
+          <Loading />
         )}
       </section>
     )

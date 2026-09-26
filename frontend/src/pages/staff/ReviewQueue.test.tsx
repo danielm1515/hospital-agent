@@ -57,6 +57,12 @@ afterEach(() => {
 })
 
 describe('ReviewQueue', () => {
+  it('shows the shared loading status while the queue is still loading', async () => {
+    vi.mocked(api.listReviews).mockReturnValue(new Promise(() => {})) // never resolves
+    renderQueue()
+    expect(await screen.findByText('טוען פניות')).toHaveAttribute('role', 'status')
+  })
+
   it('renders a row per queue item, with the Hebrew label and the code', async () => {
     vi.mocked(api.listReviews).mockResolvedValue(page([MEDICAL, Z3]))
     renderQueue()

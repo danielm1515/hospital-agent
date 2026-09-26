@@ -2,6 +2,7 @@ import type { ReactNode } from 'react'
 import { Navigate, Route, Routes, useLocation } from 'react-router-dom'
 import { useAuth } from './auth/AuthContext'
 import { isStaffRole } from './api/types'
+import { Loading } from './components/Loading'
 import { PatientLogin } from './pages/patient/PatientLogin'
 import { PatientRoutes } from './pages/patient/PatientRoutes'
 import { StaffLogin } from './pages/staff/StaffLogin'
@@ -12,6 +13,9 @@ import { PATIENT_HOME, STAFF_HOME, PATIENT_LOGIN, STAFF_LOGIN } from './routes'
 // themselves live in `./routes`, a leaf module with no imports, to avoid an
 // import cycle (App -> PatientRoutes/StaffRoutes -> ... -> paths -> App).
 export { PATIENT_HOME, STAFF_HOME, PATIENT_LOGIN, STAFF_LOGIN }
+// `Loading` itself now lives in `./components/Loading` (staff-fixes design Task 6),
+// re-exported here so an existing `from '../../App'` import keeps working.
+export { Loading }
 
 type Area = 'patient' | 'staff'
 
@@ -21,14 +25,6 @@ function HomeRedirect() {
   if (status === 'loading') return <Loading />
   if (!user) return <Navigate to={PATIENT_LOGIN} replace />
   return <Navigate to={isStaffRole(user.role) ? STAFF_HOME : PATIENT_HOME} replace />
-}
-
-export function Loading() {
-  return (
-    <p className="page-loading" role="status">
-      טוען…
-    </p>
-  )
 }
 
 /** Route guard: no token means the area's login page; a wrong role means the user's own area. */
