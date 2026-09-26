@@ -15,9 +15,9 @@ from __future__ import annotations
 from .policy import opa_runner
 
 
-def is_approved(source_id: str, version: str) -> bool:
-    """Delegates to the real OPA binary. Fails closed (False) whenever OPA does: unavailable,
-    non-zero exit, a timeout, or an unreadable answer - never an exception, so a missing or
-    misbehaving policy engine must never turn into a 500 for the instruction routes
-    (`api/instructions.py`)."""
+def is_approved(source_id: str, version: str) -> bool | None:
+    """Delegates to the real OPA binary: `True` approved, `False` denied, `None` unavailable
+    (binary missing, non-zero exit, a timeout, or an unreadable answer - Task 8). Never an
+    exception, so a missing or misbehaving policy engine must never turn into a 500 for the
+    instruction routes (`api/instructions.py`); only `True` approves."""
     return opa_runner.instruction_source_approved(source_id, version)

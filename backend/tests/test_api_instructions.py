@@ -172,7 +172,9 @@ def test_a_key_with_an_inner_newline_is_503_not_500(app_engine, caplog):
                                   params={"version": APPROVED_VERSION}, headers=auth(client, PATIENT))
     assert (response.status_code, response.json()["detail"]) == (503, "instructions_unavailable")
     assert "instruction read: client_error in" in caplog.text
-    assert "bad\nkey" not in caplog.text and APPROVED_SOURCE not in caplog.text
+    # Task 8: "bad\nkey" itself could never appear in a one-line log record; the key's own
+    # characters must not appear at all.
+    assert "bad" not in caplog.text and APPROVED_SOURCE not in caplog.text
 
 
 def test_the_patient_route_is_patients_only(app_engine):
@@ -201,6 +203,38 @@ def test_the_log_never_names_the_source_on_failure(app_engine, caplog):
                       headers=auth(client, PATIENT))
     assert "instruction read: no_answer in" in caplog.text
     assert APPROVED_SOURCE not in caplog.text
+
+
+# --- OPA unavailable is not "not approved" (Task 8, carried Task 6 Minor) -----------------
+
+@pytest.mark.parametrize("route", ["patient", "staff"])
+def test_opa_binary_missing_is_503_unavailable_and_the_service_is_never_called(app_engine, caplog,
+                                                                               monkeypatch, tmp_path, route):
+    """The real OPA binary cannot be found (an empty PATH): the registry cannot be asked, so the
+    answer is 503 instructions_unavailable - never 404 instruction_not_approved, which would tell
+    the reader the text is unapproved - and still closed: the appointment-service is never
+    asked. One code-only log line, `policy_unavailable`."""
+    fake = FakeInstructions()
+    user = PATIENT if route == "patient" else NURSE
+    with caplog.at_level(logging.DEBUG, logger="hospital_agent.api.instructions"):
+        with make(app_engine, fake) as client:
+            headers = auth(client, user)
+            monkeypatch.setenv("PATH", str(tmp_path))  # after login: only OPA goes missing
+            response = client.get(f"/api/{route}/instructions/{APPROVED_SOURCE}",
+                                  params={"version": APPROVED_VERSION}, headers=headers)
+    assert (response.status_code, response.json()["detail"]) == (503, "instructions_unavailable")
+    assert fake.calls == []
+    assert "instruction read: policy_unavailable in" in caplog.text
+    assert APPROVED_SOURCE not in caplog.text
+
+
+def test_a_real_deny_is_still_404_and_not_logged_as_unavailable(app_engine, caplog):
+    with caplog.at_level(logging.DEBUG, logger="hospital_agent.api.instructions"):
+        with make(app_engine, FakeInstructions()) as client:
+            response = client.get(f"/api/patient/instructions/{EXPIRED_SOURCE}",
+                                  params={"version": EXPIRED_VERSION}, headers=auth(client, PATIENT))
+    assert (response.status_code, response.json()["detail"]) == (404, "instruction_not_approved")
+    assert "policy_unavailable" not in caplog.text
 
 
 # --- the staff route ----------------------------------------------------------------------

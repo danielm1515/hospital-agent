@@ -2,12 +2,13 @@
 `GET /api/patient/instructions/{source_id}?version=` and its staff counterpart.
 
 Read-only and outside the FSM, exactly like `appointments.py` beside it
-(docs/spec_corrections.md row 89, extended by that same row to cover this read too): nothing
+(docs/spec_corrections.md row 89, which sub-project 18 extends to cover this read too): nothing
 here is proposed, policy-checked, retried, turned into an event or stored. The answer is never
 trusted from the appointment-service alone (D12) - the Approved Source Registry, checked
 through the real OPA (`instruction_registry.is_approved`, fix round 1 I1), is asked first, and a
 source_id/version it does not currently approve is `404 instruction_not_approved` before the
-service is ever asked.
+service is ever asked; when OPA itself cannot be asked it is `503 instructions_unavailable`
+(Task 8), and the service is not asked then either.
 """
 from __future__ import annotations
 
@@ -31,10 +32,10 @@ _ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 def _log(level: int, code: str, started: float) -> None:
     """One format for every *service-call* outcome (§12.3): `ok`, `not_found`, an
     InstructionUnavailable code, or `client_error` - never the source_id, the title or the
-    text. The two checks above `read()`'s call to the client (not configured, a malformed
-    id/version, the registry's own denial) need no log line here: they are a fixed, stateless
-    verdict on the request itself, not an outcome of asking the appointment-service anything
-    (fix round 1 M4)."""
+    text - plus `policy_unavailable` when OPA itself could not be asked (Task 8). The checks
+    above `read()`'s call to the client (not configured, a malformed id/version, the registry's
+    own denial) need no log line here: they are a fixed, stateless verdict on the request
+    itself, not an outcome of asking anything (fix round 1 M4)."""
     logger.log(level, "instruction read: %s in %d ms", code, round((time.perf_counter() - started) * 1000))
 
 
@@ -49,7 +50,14 @@ def read(client: InstructionClient | None, source_id: str, version: str | None) 
     # The registry, never the service, approves (D12): checked - and denied - before the
     # service is asked at all. `is_approved` asks the real OPA (fix round 1 I1) - no `now` is
     # passed, since policy.rego reads its own clock.
-    if not is_approved(source_id, version):
+    started = time.perf_counter()
+    approved = is_approved(source_id, version)
+    if approved is None:
+        # Task 8: OPA itself could not be asked. Not "not approved" - that would tell the reader
+        # the text is unapproved - but exactly as closed: the service is never asked.
+        _log(logging.WARNING, "policy_unavailable", started)
+        raise HTTPException(status_code=503, detail="instructions_unavailable")
+    if approved is not True:
         raise HTTPException(status_code=404, detail="instruction_not_approved")
     started = time.perf_counter()
     try:

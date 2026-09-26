@@ -54,7 +54,7 @@ def evaluate(policy_input: Mapping[str, Any], *, opa_binary: str = "opa",
 
 
 def instruction_source_approved(source_id: str, version: str, *, opa_binary: str = "opa",
-                                 timeout: float = TIMEOUT_SECONDS) -> bool:
+                                 timeout: float = TIMEOUT_SECONDS) -> bool | None:
     """Sub-project 18 (design D12; docs/spec_corrections.md row 89): the real OPA's own
     `instruction_source_approved` rule (`policy.rego`), evaluated fresh against the same bundle
     `decision` reads - never a second, Python reimplementation of its time parsing (fix round 1
@@ -62,15 +62,19 @@ def instruction_source_approved(source_id: str, version: str, *, opa_binary: str
     like `build_opa_input` (`policy/service.py`) never supplies one for the full `decision`
     query either.
 
-    `instruction_source_approved` is a partial rule (no `else` branch), so OPA's own answer is
-    *undefined* - not `false` - whenever the body doesn't hold (unlisted source, wrong version,
-    empty version, not yet valid, expired, or any date the registry stores in a shape
-    `time.parse_rfc3339_ns` can't parse). `opa eval --format json` then omits `"result"`
-    entirely, and the same `KeyError`/`IndexError` this function already fails closed on for a
-    missing/malformed answer covers that case too - no separate branch needed.
+    Three answers (Task 8, the carried Task 6 Minor), and only one of them approves:
 
-    Fails closed (False) exactly like `evaluate()`: binary missing, non-zero exit, timeout, or
-    an answer that isn't literally `true`.
+    - `True`  - OPA answered, and the rule holds (the value is literally `true`).
+    - `False` - OPA answered, and it is a deny. `instruction_source_approved` is a partial rule
+      (no `else` branch), so OPA's own "no" is *undefined* - `opa eval --format json` then
+      prints `{}` with no `"result"` key - whenever the body doesn't hold (unlisted source,
+      wrong version, empty version, not yet valid, expired, or any date the registry stores in
+      a shape `time.parse_rfc3339_ns` can't parse). A value that is not literally `true` is a
+      deny too.
+    - `None`  - OPA could not be asked: binary missing, non-zero exit, timeout, or output that
+      is not the shape `opa eval` prints. Unavailable, not denied - so the instruction routes
+      can say "unavailable" instead of "not approved" - and exactly as closed: it is never
+      `True`, and every caller treats anything but `True` as not approved.
     """
     policy_input = {"instruction_source": {"source_id": source_id, "version": version}}
     command = [opa_binary, "eval", "--format", "json", "--data", str(POLICY_FILE),
@@ -79,11 +83,19 @@ def instruction_source_approved(source_id: str, version: str, *, opa_binary: str
         proc = subprocess.run(command, input=json.dumps(policy_input), capture_output=True,
                               text=True, timeout=timeout, check=False)
     except (OSError, subprocess.TimeoutExpired):
-        return False
+        return None
     if proc.returncode != 0:
-        return False
+        return None
     try:
-        value = json.loads(proc.stdout)["result"][0]["expressions"][0]["value"]
-    except (ValueError, KeyError, IndexError, TypeError):
-        return False
+        answer = json.loads(proc.stdout)
+    except ValueError:
+        return None
+    if not isinstance(answer, dict):
+        return None
+    if "result" not in answer:
+        return False  # undefined: OPA's own deny
+    try:
+        value = answer["result"][0]["expressions"][0]["value"]
+    except (KeyError, IndexError, TypeError):
+        return None
     return value is True

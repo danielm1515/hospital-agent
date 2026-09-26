@@ -82,41 +82,61 @@ def test_an_empty_version_is_not_approved():
     assert is_approved("INSTR-PREP-COLONOSCOPY", "") is False
 
 
-# --- fail closed when OPA itself cannot be asked --------------------------------------------
+# --- OPA itself cannot be asked: unavailable (None), never "approved" -----------------------
+# Task 8 (carried Task 6 Minor): an outage is reported separately from a real deny, so the route
+# can answer 503 instructions_unavailable instead of 404 instruction_not_approved. Both stay
+# closed - neither is ever True.
 
-def test_missing_binary_fails_closed():
-    assert instruction_source_approved("INSTR-PREP-COLONOSCOPY", "3", opa_binary="/nonexistent/opa") is False
-
-
-def test_timeout_fails_closed():
-    assert instruction_source_approved("INSTR-PREP-COLONOSCOPY", "3", timeout=0.000001) is False
-
-
-def test_unreadable_output_fails_closed(monkeypatch):
-    class Done:
-        returncode, stdout = 0, "not json"
-
-    monkeypatch.setattr(subprocess, "run", lambda *a, **k: Done())
-    assert instruction_source_approved("INSTR-PREP-COLONOSCOPY", "3") is False
+class _Done:
+    def __init__(self, stdout, returncode=0):
+        self.stdout, self.returncode = stdout, returncode
 
 
-def test_an_undefined_rule_fails_closed(monkeypatch):
+def test_missing_binary_is_unavailable():
+    assert instruction_source_approved("INSTR-PREP-COLONOSCOPY", "3", opa_binary="/nonexistent/opa") is None
+
+
+def test_timeout_is_unavailable():
+    assert instruction_source_approved("INSTR-PREP-COLONOSCOPY", "3", timeout=0.000001) is None
+
+
+def test_a_non_zero_exit_is_unavailable(monkeypatch):
+    monkeypatch.setattr(subprocess, "run", lambda *a, **k: _Done("", returncode=1))
+    assert instruction_source_approved("INSTR-PREP-COLONOSCOPY", "3") is None
+
+
+@pytest.mark.parametrize("stdout", [
+    "not json",
+    "[]",                                    # JSON, but not an object
+    '{"result": []}',                        # a result with no expression
+    '{"result": [{"expressions": []}]}',
+    '{"result": [{"expressions": [{}]}]}',   # an expression with no value
+])
+def test_unreadable_output_is_unavailable(monkeypatch, stdout):
+    monkeypatch.setattr(subprocess, "run", lambda *a, **k: _Done(stdout))
+    assert instruction_source_approved("INSTR-PREP-COLONOSCOPY", "3") is None
+
+
+def test_is_approved_passes_unavailable_through(monkeypatch):
+    monkeypatch.setattr(subprocess, "run", lambda *a, **k: _Done("not json"))
+    assert is_approved("INSTR-PREP-COLONOSCOPY", "3") is None
+
+
+# --- OPA answered, and the answer is not "approved": a real deny (False) ---------------------
+
+def test_an_undefined_rule_is_a_deny(monkeypatch):
     """opa eval --format json prints a bare {} (no "result" key at all) when a partial rule
-    like instruction_source_approved is undefined for the given input - this must be treated
-    exactly like any other unreadable answer, never crash."""
-    class Done:
-        returncode, stdout = 0, "{}"
-
-    monkeypatch.setattr(subprocess, "run", lambda *a, **k: Done())
+    like instruction_source_approved is undefined for the given input - that is OPA's own
+    "not approved" answer (unlisted, wrong version, outside the validity window), so it is a
+    deny, never an outage."""
+    monkeypatch.setattr(subprocess, "run", lambda *a, **k: _Done("{}"))
     assert instruction_source_approved("INSTR-PREP-COLONOSCOPY", "3") is False
 
 
-def test_a_non_true_answer_fails_closed(monkeypatch):
-    class Done:
-        returncode = 0
-        stdout = '{"result": [{"expressions": [{"value": "yes"}]}]}'  # not literally true
-
-    monkeypatch.setattr(subprocess, "run", lambda *a, **k: Done())
+@pytest.mark.parametrize("value", ['"yes"', "false", "1", "null"])
+def test_a_non_true_answer_is_a_deny(monkeypatch, value):
+    stdout = '{"result": [{"expressions": [{"value": %s}]}]}' % value  # not literally true
+    monkeypatch.setattr(subprocess, "run", lambda *a, **k: _Done(stdout))
     assert instruction_source_approved("INSTR-PREP-COLONOSCOPY", "3") is False
 
 
