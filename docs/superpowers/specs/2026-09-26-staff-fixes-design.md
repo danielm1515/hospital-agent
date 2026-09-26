@@ -36,3 +36,22 @@ escalations at the time: `ClassificationFailed` from `Classifying` 6, `PatientSl
    does not start and every request waits in `Received`), and is now loud: an ERROR log line at startup and
    the same staff banner. The whole server is not made to crash, which would take the patient screen down
    too. There is no mock to switch on or show.
+5. Follow-up diagnosis found decision 1's log lines were silently dropped in practice: Uvicorn configures only
+   its own loggers, and the root logger stays at its default `WARNING`, so every `hospital_agent.*`
+   `logger.info(...)` - not just `llm/telemetry.py`'s, existing ones too (e.g. `session.py`'s `"pdf reply:
+   unreadable"`) - never reached anywhere. `hospital_agent/logging_setup.py`'s `configure()` now sets the
+   `hospital_agent` logger to `INFO`, adds one `StreamHandler` to stderr in the documented format (time,
+   level, logger name, message), and sets `propagate=False` so nothing is logged twice; it is idempotent (a
+   second call adds no second handler) and is called only from `api/app.py`'s owned-app path (a real server),
+   never a test's - a test always injects an engine, and pytest's `caplog` is unaffected either way (verified:
+   the two `test_app_orchestrator.py` tests that do exercise the real owned path, and every `caplog` test in
+   the suite, all still pass).
+
+**Deviations from the text above.** `is_retryable()`'s `NotFoundError` covers "the model" case from decision
+2's diagnosis paragraph, plus the codebase's existing (pre-existing, unrelated to this task) schema-failure
+code is spelled `schema_violation`, not this document's `schema_invalid` - kept as `schema_violation` to avoid
+touching unrelated, already-passing tests; `is_retryable()` treats it as retryable either way, since it is not
+an `api:` code. `LLMUnusable.retryable` (decision 2) is derived automatically from the reason string by
+`is_retryable()` rather than requiring every `raise LLMUnusable(...)` site to pass `retryable=False`
+explicitly, so every existing raise site needed no change; an explicit `retryable=` kwarg is still honoured
+where a caller wants to override it.

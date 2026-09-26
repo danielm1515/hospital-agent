@@ -27,6 +27,7 @@ from sqlalchemy import text
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import SQLAlchemyError
 
+from .. import logging_setup
 from ..appointment_list import AppointmentListClient, build_list_client
 from ..db import make_engine
 from ..document_intake import build_intake_client
@@ -98,6 +99,8 @@ def create_app(engine: Engine | None = None, orchestrator: Orchestrator | None =
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         owned = engine is None
+        if owned:  # never for a test: it always injects an engine (see module docstring)
+            logging_setup.configure()
         app.state.engine = make_engine() if owned else engine
         app.state.orchestrator_status = None  # reported by /health only for a real server
         app.state.appointments_source = None  # likewise: "mock" or "appointment-service"
