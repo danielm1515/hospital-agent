@@ -189,9 +189,19 @@ class ReviewItem(BaseModel):
     reasons: list[str]
     allowed_decisions: list[str]
     required_fields: list[str]
-    updated_at: datetime
+    # Staff-fixes design Task 5: when the case entered AwaitingHumanReview - the queue's
+    # order key (newest first), replacing `updated_at`.
+    entered_at: datetime
     human_engaged: bool
     returned_by: Literal["patient_reply", "reply_timeout"] | None
+
+
+class ReviewQueuePage(BaseModel):
+    """`GET /api/staff/reviews` (staff-fixes design Task 5): keyset-paginated, the same
+    shape as `CaseListPage`."""
+
+    items: list[ReviewItem]
+    next_cursor: str | None
 
 
 class ReviewContext(BaseModel):

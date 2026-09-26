@@ -100,11 +100,11 @@ def test_input_that_cannot_be_a_request_is_refused_before_anything_is_written(sm
 def test_approve_is_gone_once_a_person_has_written(sm, app_engine):
     d = escalated(sm, app_engine)
     reviews = service(sm)
-    assert "approve" in next(i for i in reviews.queue() if i.case_id == d.case_id).allowed_decisions
+    assert "approve" in next(i for i in reviews.queue()[0] if i.case_id == d.case_id).allowed_decisions
     ask(reviews, d, template_id="clarify_general")
     sm.apply(d.case_id, Event.PATIENT_REPLY_SUBMITTED, {"reply_kind": "question", "content_hash": "H"},
              Component.SESSION_SERVICE)
-    item = next(i for i in reviews.queue() if i.case_id == d.case_id)
+    item = next(i for i in reviews.queue()[0] if i.case_id == d.case_id)
     assert item.allowed_decisions == ["resolve", "reject"] and item.required_fields == []
     assert item.human_engaged and item.returned_by == "patient_reply"
     with pytest.raises(DecisionRejected) as refused:
@@ -158,7 +158,7 @@ def test_a_request_that_runs_out_of_time_is_marked_in_the_queue(sm, app_engine):
         conn.execute(text("UPDATE cases SET patient_deadline = now() - interval '1 minute' WHERE case_id = :c"),
                      {"c": d.case_id})
     SlaWorker(sm).tick()
-    assert next(i for i in reviews.queue() if i.case_id == d.case_id).returned_by == "reply_timeout"
+    assert next(i for i in reviews.queue()[0] if i.case_id == d.case_id).returned_by == "reply_timeout"
 
 
 def test_the_templates_are_served(sm):

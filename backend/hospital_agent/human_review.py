@@ -83,7 +83,10 @@ class ReviewItem:
     reasons: list[str]
     allowed_decisions: list[str]
     required_fields: list[str]
-    updated_at: datetime
+    # Staff-fixes design Task 5: when the case last entered AwaitingHumanReview - what the
+    # queue is now ordered by (newest first), replacing `updated_at` (the two agreed on
+    # every live case, but only entered_at is what "oldest/newest first" actually means).
+    entered_at: datetime
     human_engaged: bool = False  # sub-project 15: a person has written to the patient - no approve
     returned_by: str | None = None  # "patient_reply" | "reply_timeout": how the case last came back
 
@@ -106,8 +109,13 @@ def allowed_decisions(kind: EscalationKind | None) -> list[str]:
     return ["approve", "resolve", "reject"] if kind in RESUMABLE else ["resolve", "reject"]
 
 
-def _allowed(case: CaseRecord) -> list[str]:
-    """Sub-project 15 (design §6): once a person has written to the patient, approve is gone."""
+def _allowed(case: CaseRecord | repository.ReviewQueueRow) -> list[str]:
+    """Sub-project 15 (design §6): once a person has written to the patient, approve is gone.
+
+    Takes a `CaseRecord` (`queue_item`, `decide`, `request`, `answer`) or a
+    `ReviewQueueRow` (`queue`, staff-fixes design Task 5) - both carry `escalation_kind`
+    and `human_engaged`, which is all this needs.
+    """
     return [d for d in allowed_decisions(case.escalation_kind) if not (d == "approve" and case.human_engaged)]
 
 
@@ -123,6 +131,18 @@ def _returned_by(trace: list[repository.AuditEntry]) -> str | None:
     return None
 
 
+def _entered_at(case: CaseRecord, trace: list[repository.AuditEntry]) -> datetime:
+    """The case's latest entry into AwaitingHumanReview (staff-fixes design Task 5), used by
+    `queue_item` (one case, so the trace scan `queue_page`'s SQL avoids is cheap here). The
+    `case.updated_at` fallback is defensive only: a case in AwaitingHumanReview always has
+    such a Transition row (EscalationCoordinator.signal() writes it in the same transition
+    that enters the state)."""
+    for row in reversed(trace):
+        if row.record_type == "Transition" and row.state_after == State.AWAITING_HUMAN_REVIEW.value:
+            return row.recorded_at
+    return case.updated_at
+
+
 class HumanReviewService:
     def __init__(self, state_manager: StateManager, session: SessionService, *,
                  wake: Callable[[], None] = lambda: None, approval_ttl: timedelta = DEFAULT_APPROVAL_TTL) -> None:
@@ -134,30 +154,31 @@ class HumanReviewService:
 
     # --- reading -------------------------------------------------------------------------
 
-    def queue(self) -> list[ReviewItem]:
-        """The cases waiting for a reviewer, oldest update first."""
+    def queue(self, *, limit: int = 50, cursor: tuple[datetime, str] | None = None) -> tuple[list[ReviewItem], bool]:
+        """The cases waiting for a reviewer, newest entry into AwaitingHumanReview first
+        (staff-fixes design Task 5) - a case that returns from AwaitingPatientReply re-enters
+        and jumps to the top, since it needs attention again. One repository statement (a
+        LATERAL join to each case's latest entry row), keyset-paginated; no Python sort."""
         with self.engine.connect() as conn:
-            cases = repository.list_cases(conn, State.AWAITING_HUMAN_REVIEW)
-            traces = {case.case_id: repository.load_trace(conn, case.case_id) for case in cases}
-        cases.sort(key=lambda case: (case.updated_at, case.case_id))
+            rows, has_more = repository.queue_page(conn, limit, cursor)
         return [
             ReviewItem(
-                case_id=case.case_id,
-                patient_id=case.patient_id,
+                case_id=row.case_id,
+                patient_id=row.patient_id,
                 # A case in AwaitingHumanReview always carries a kind (EscalationCoordinator.
                 # signal() sets it in the same transition that enters this state), so the ""
                 # fallback here is defensive only, never actually taken.
-                escalation_kind=case.escalation_kind.value if case.escalation_kind else "",
-                escalated_from_state=case.escalated_from_state.value if case.escalated_from_state else None,
-                reasons=_escalation_reasons(traces[case.case_id]),
-                allowed_decisions=_allowed(case),
-                required_fields=[] if case.human_engaged else list(RESUMABLE.get(case.escalation_kind, ())),
-                updated_at=case.updated_at,
-                human_engaged=case.human_engaged,
-                returned_by=_returned_by(traces[case.case_id]),
+                escalation_kind=row.escalation_kind.value if row.escalation_kind else "",
+                escalated_from_state=row.escalated_from_state.value if row.escalated_from_state else None,
+                reasons=row.reasons,
+                allowed_decisions=_allowed(row),
+                required_fields=[] if row.human_engaged else list(RESUMABLE.get(row.escalation_kind, ())),
+                entered_at=row.entered_at,
+                human_engaged=row.human_engaged,
+                returned_by=row.returned_by,
             )
-            for case in cases
-        ]
+            for row in rows
+        ], has_more
 
     def queue_item(self, case_id: str) -> ReviewItem:
         """Staff-fixes design Task 3: one queue item, without loading every other case's
@@ -177,7 +198,7 @@ class HumanReviewService:
             reasons=_escalation_reasons(trace),
             allowed_decisions=_allowed(case),
             required_fields=[] if case.human_engaged else list(RESUMABLE.get(case.escalation_kind, ())),
-            updated_at=case.updated_at,
+            entered_at=_entered_at(case, trace),
             human_engaged=case.human_engaged,
             returned_by=_returned_by(trace),
         )

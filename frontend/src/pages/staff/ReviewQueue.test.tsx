@@ -1,9 +1,9 @@
-import { render, screen } from '@testing-library/react'
+import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { describe, expect, it, vi } from 'vitest'
 import * as api from '../../api/client'
-import type { ReviewItem } from '../../api/types'
+import type { ReviewItem, ReviewQueuePage } from '../../api/types'
 import { ReviewQueue } from './ReviewQueue'
 
 vi.mock('../../api/client', async (importOriginal) => ({
@@ -19,7 +19,7 @@ const MEDICAL: ReviewItem = {
   reasons: [],
   allowed_decisions: ['resolve', 'reject'],
   required_fields: [],
-  updated_at: '2026-09-19T22:12:39.693277Z',
+  entered_at: '2026-09-19T22:12:39.693277Z',
   human_engaged: false,
   returned_by: null,
 }
@@ -32,9 +32,13 @@ const Z3: ReviewItem = {
   reasons: ['hours_until:20'],
   allowed_decisions: ['approve', 'resolve', 'reject'],
   required_fields: ['patient_deadline'],
-  updated_at: '2026-09-19T22:14:02.100000Z',
+  entered_at: '2026-09-19T22:14:02.100000Z',
   human_engaged: false,
   returned_by: null,
+}
+
+function page(items: ReviewItem[], next_cursor: string | null = null): ReviewQueuePage {
+  return { items, next_cursor }
 }
 
 function renderQueue(route = '/staff') {
@@ -50,7 +54,7 @@ function renderQueue(route = '/staff') {
 
 describe('ReviewQueue', () => {
   it('renders a row per queue item, with the Hebrew label and the code', async () => {
-    vi.mocked(api.listReviews).mockResolvedValue([MEDICAL, Z3])
+    vi.mocked(api.listReviews).mockResolvedValue(page([MEDICAL, Z3]))
     renderQueue()
 
     expect(await screen.findByText('CASE-6FFF40DFB8DA')).toBeInTheDocument()
@@ -62,7 +66,7 @@ describe('ReviewQueue', () => {
   })
 
   it('shows the returned_by mark with its Hebrew label and the code', async () => {
-    vi.mocked(api.listReviews).mockResolvedValue([{ ...MEDICAL, returned_by: 'patient_reply' }])
+    vi.mocked(api.listReviews).mockResolvedValue(page([{ ...MEDICAL, returned_by: 'patient_reply' }]))
     renderQueue()
 
     expect(await screen.findByText('התקבלה תשובת מטופל')).toBeInTheDocument()
@@ -72,7 +76,7 @@ describe('ReviewQueue', () => {
   })
 
   it('opens the case when its row is clicked', async () => {
-    vi.mocked(api.listReviews).mockResolvedValue([MEDICAL])
+    vi.mocked(api.listReviews).mockResolvedValue(page([MEDICAL]))
     renderQueue()
 
     await userEvent.click(await screen.findByText('P-10041'))
@@ -81,7 +85,7 @@ describe('ReviewQueue', () => {
   })
 
   it('shows the empty state when nothing waits for a decision', async () => {
-    vi.mocked(api.listReviews).mockResolvedValue([])
+    vi.mocked(api.listReviews).mockResolvedValue(page([]))
     renderQueue()
 
     expect(await screen.findByText('אין פניות הממתינות להכרעה')).toBeInTheDocument()
@@ -89,7 +93,7 @@ describe('ReviewQueue', () => {
   })
 
   it('shows the notice a finished decision navigated back with', async () => {
-    vi.mocked(api.listReviews).mockResolvedValue([])
+    vi.mocked(api.listReviews).mockResolvedValue(page([]))
     render(
       <MemoryRouter initialEntries={[{ pathname: '/staff', state: { notice: 'הפנייה CASE-1 עברה למצב Completed.' } }]}>
         <Routes>
@@ -107,5 +111,30 @@ describe('ReviewQueue', () => {
 
     expect(await screen.findByRole('alert')).toHaveTextContent('not_authenticated')
     expect(screen.queryByText('אין פניות הממתינות להכרעה')).not.toBeInTheDocument()
+  })
+
+  it('shows entered_at, the queue order key, in the last column', async () => {
+    vi.mocked(api.listReviews).mockResolvedValue(page([MEDICAL]))
+    renderQueue()
+
+    await screen.findByText('CASE-6FFF40DFB8DA')
+    const headers = screen.getAllByRole('columnheader').map((cell) => cell.textContent)
+    expect(headers).toContain('נכנסה לתור')
+    expect(headers).not.toContain('עדכון אחרון')
+  })
+
+  it('offers a "load more" button when the API says there is a next page, and appends the next page', async () => {
+    vi.mocked(api.listReviews).mockResolvedValue(page([MEDICAL], 'CURSOR-1'))
+    renderQueue()
+    await screen.findByText('CASE-6FFF40DFB8DA')
+    expect(screen.queryByText('CASE-23FE645294B7')).not.toBeInTheDocument()
+
+    vi.mocked(api.listReviews).mockResolvedValue(page([Z3], null))
+    await userEvent.click(screen.getByRole('button', { name: 'טעינת עוד' }))
+
+    expect(api.listReviews).toHaveBeenLastCalledWith({ cursor: 'CURSOR-1' })
+    expect(await screen.findByText('CASE-23FE645294B7')).toBeInTheDocument()
+    expect(screen.getByText('CASE-6FFF40DFB8DA')).toBeInTheDocument()
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'טעינת עוד' })).not.toBeInTheDocument())
   })
 })

@@ -27,6 +27,7 @@ import type {
   PdfUploadResponse,
   ReviewContext,
   ReviewItem,
+  ReviewQueuePage,
   State,
   StateGroup,
   SystemStatus,
@@ -251,8 +252,17 @@ export function getAudit(caseId: string): Promise<AuditRecord[]> {
   return request<AuditRecord[]>('GET', `/staff/cases/${id(caseId)}/audit`)
 }
 
-export function listReviews(): Promise<ReviewItem[]> {
-  return request<ReviewItem[]>('GET', '/staff/reviews')
+/**
+ * `GET /api/staff/reviews` (staff-fixes design Task 5): one call, keyset-paginated, newest
+ * entry into AwaitingHumanReview first. `options.cursor` asks for the page after the
+ * previous response's `next_cursor`.
+ */
+export function listReviews(options: { cursor?: string; limit?: number } = {}): Promise<ReviewQueuePage> {
+  const params = new URLSearchParams()
+  if (options.cursor) params.set('cursor', options.cursor)
+  if (options.limit) params.set('limit', String(options.limit))
+  const query = params.toString()
+  return request<ReviewQueuePage>('GET', `/staff/reviews${query ? `?${query}` : ''}`)
 }
 
 /**

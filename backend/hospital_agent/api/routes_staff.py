@@ -32,6 +32,7 @@ from .schemas import (
     PatientRequestBody,
     ReviewContext,
     ReviewItem,
+    ReviewQueuePage,
     SystemStatusView,
 )
 
@@ -121,9 +122,23 @@ def system_status(request: Request) -> SystemStatusView:
 
 # --- human review -----------------------------------------------------------------------------
 
-@router.get("/reviews", response_model=list[ReviewItem])
-def review_queue(reviews: HumanReviewService = Depends(get_reviews)) -> list[ReviewItem]:
-    return [ReviewItem.model_validate(item) for item in reviews.queue()]
+@router.get("/reviews", response_model=ReviewQueuePage)
+def review_queue(limit: int = DEFAULT_LIST_LIMIT, cursor: str | None = None,
+                 reviews: HumanReviewService = Depends(get_reviews)) -> ReviewQueuePage:
+    """Staff-fixes design Task 5: one call, keyset-paginated, newest entry into
+    AwaitingHumanReview first."""
+    if not (1 <= limit <= MAX_LIST_LIMIT):
+        raise HTTPException(status_code=422, detail="invalid_limit")
+    parsed_cursor = None
+    if cursor is not None:
+        try:
+            parsed_cursor = repository.decode_cases_cursor(cursor)
+        except ValueError:
+            raise HTTPException(status_code=422, detail="invalid_cursor") from None
+    items, has_more = reviews.queue(limit=limit, cursor=parsed_cursor)
+    next_cursor = (repository.encode_cases_cursor(items[-1].entered_at, items[-1].case_id)
+                  if has_more and items else None)
+    return ReviewQueuePage(items=[ReviewItem.model_validate(item) for item in items], next_cursor=next_cursor)
 
 
 @router.get("/reviews/{case_id}", response_model=ReviewItem)

@@ -268,11 +268,22 @@ export interface ReviewItem {
   reasons: string[]
   allowed_decisions: Decision[]
   required_fields: RequiredField[]
-  updated_at: IsoDateTime
+  /**
+   * When the case entered AwaitingHumanReview (staff-fixes design Task 5) - the queue's
+   * order key, newest first. Replaces `updated_at`, which agreed with it on every case
+   * that had never re-entered review, but meant the wrong thing for one that had.
+   */
+  entered_at: IsoDateTime
   /** Sub-project 15: a person has written to the patient - `approve` is never offered again. */
   human_engaged: boolean
   /** How the case last came back to review. */
   returned_by: 'patient_reply' | 'reply_timeout' | null
+}
+
+/** `GET /api/staff/reviews` → 200 (staff-fixes design Task 5): keyset-paginated. */
+export interface ReviewQueuePage {
+  items: ReviewItem[]
+  next_cursor: string | null
 }
 
 /** A non-tombstoned Data Log entry in the review context. */

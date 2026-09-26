@@ -3,6 +3,7 @@ import { Link, useLocation, useNavigate } from 'react-router-dom'
 import * as api from '../../api/client'
 import type { ReviewItem } from '../../api/types'
 import { Alert } from '../../components/Alert'
+import { Button } from '../../components/Button'
 import { detailOf, escalationLabel, formatDateTime, returnedByLabel, stateLabel } from './labels'
 
 /** The queue is polled rather than pushed (design decision 4). */
@@ -14,9 +15,12 @@ export interface QueueNotice {
 }
 
 /**
- * `GET /api/staff/reviews`: the cases in `AwaitingHumanReview`, oldest update
- * first. Every column comes from the response - the escalation kind is shown
- * with its code, and `reasons` exactly as the API returned them.
+ * `GET /api/staff/reviews` (staff-fixes design Task 5): the cases in `AwaitingHumanReview`,
+ * newest entry into that State first - a case that returns from a patient's reply or a
+ * timed-out request re-enters and jumps to the top, since it needs attention again. Every
+ * column comes from the response - the escalation kind is shown with its code, and
+ * `reasons` exactly as the API returned them. Keyset-paginated: "טעינת עוד" asks for the
+ * page after `next_cursor`; each poll still reloads the first page from the top.
  */
 export function ReviewQueue() {
   const navigate = useNavigate()
@@ -24,15 +28,18 @@ export function ReviewQueue() {
   const notice = (location.state as QueueNotice | null)?.notice ?? null
 
   const [items, setItems] = useState<ReviewItem[] | null>(null)
+  const [nextCursor, setNextCursor] = useState<string | null>(null)
+  const [loadingMore, setLoadingMore] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
     let cancelled = false
     async function load() {
       try {
-        const rows = await api.listReviews()
+        const page = await api.listReviews()
         if (cancelled) return
-        setItems(rows)
+        setItems(page.items)
+        setNextCursor(page.next_cursor)
         setError(null)
       } catch (caught) {
         if (!cancelled) setError(detailOf(caught))
@@ -46,13 +53,31 @@ export function ReviewQueue() {
     }
   }, [])
 
+  async function loadMore() {
+    if (nextCursor === null) return
+    setLoadingMore(true)
+    try {
+      const page = await api.listReviews({ cursor: nextCursor })
+      setItems((previous) => [...(previous ?? []), ...page.items])
+      setNextCursor(page.next_cursor)
+    } catch (caught) {
+      setError(detailOf(caught))
+    } finally {
+      setLoadingMore(false)
+    }
+  }
+
   const open = useCallback((caseId: string) => navigate(`/staff/cases/${encodeURIComponent(caseId)}`), [navigate])
 
   return (
     <section className="staff-page">
       <header className="page-head">
         <h1 className="page-h">תור הסלמות</h1>
-        <p className="lede">פניות שממתינות להכרעת אדם. הרשימה מתרעננת כל חמש שניות.</p>
+        <p className="lede">
+          פניות שממתינות להכרעת אדם, מהחדשה שנכנסה לתור ועד הישנה. הרשימה מתרעננת כל חמש
+          שניות; פנייה שחזרה מתשובת מטופל או מבקשה שפג זמנה נכנסת מחדש וקופצת לראש התור, כי
+          היא זקוקה שוב לתשומת לב.
+        </p>
       </header>
 
       {notice && (
@@ -84,7 +109,7 @@ export function ReviewQueue() {
                 <th scope="col">סוג ההסלמה</th>
                 <th scope="col">ממצב</th>
                 <th scope="col">סיבות</th>
-                <th scope="col">עדכון אחרון</th>
+                <th scope="col">נכנסה לתור</th>
               </tr>
             </thead>
             <tbody>
@@ -128,7 +153,7 @@ export function ReviewQueue() {
                     )}
                   </td>
                   <td className="nowrap">
-                    {formatDateTime(item.updated_at)}
+                    {formatDateTime(item.entered_at)}
                     {item.returned_by && (
                       <span className="cell-sub">
                         {returnedByLabel(item.returned_by)} <span className="mono">{item.returned_by}</span>
@@ -139,6 +164,13 @@ export function ReviewQueue() {
               ))}
             </tbody>
           </table>
+          {nextCursor !== null && (
+            <div className="table-footer">
+              <Button variant="secondary" busy={loadingMore} onClick={() => void loadMore()}>
+                טעינת עוד
+              </Button>
+            </div>
+          )}
         </div>
       )}
     </section>

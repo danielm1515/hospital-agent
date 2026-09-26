@@ -10,12 +10,12 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import insert, select, tuple_, update
+from sqlalchemy import and_, insert, or_, select, true, tuple_, update
 from sqlalchemy.engine import Connection, RowMapping
 
 from .case import ApprovalRecord, CaseRecord, ExecutionRecord
 from .db import approvals, audit_log, cases, executions
-from .naming import EscalationKind, SafetyLevel, State
+from .naming import EscalationKind, Event, SafetyLevel, State
 
 
 @dataclass(frozen=True)
@@ -238,6 +238,96 @@ def load_trace(conn: Connection, case_id: str) -> list[AuditEntry]:
         select(audit_log).where(audit_log.c.case_id == case_id).order_by(audit_log.c.audit_id)
     ).mappings()
     return [AuditEntry(**dict(row)) for row in rows]
+
+
+@dataclass(frozen=True)
+class ReviewQueueRow:
+    """One `GET /api/staff/reviews` item's columns (staff-fixes design Task 5): the case's
+    own columns plus its latest entry into `AwaitingHumanReview`, from one LATERAL join."""
+
+    case_id: str
+    patient_id: str
+    escalation_kind: EscalationKind | None
+    escalated_from_state: State | None
+    human_engaged: bool
+    entered_at: datetime
+    reasons: list[str]
+    returned_by: str | None
+
+
+def _queue_row(row: RowMapping) -> ReviewQueueRow:
+    event, state_before = row["event"], row["state_before"]
+    if event == Event.PATIENT_REPLY_SUBMITTED.value:
+        returned_by = "patient_reply"
+    elif event == Event.TIMEOUT_EXPIRED.value and state_before == State.AWAITING_PATIENT_REPLY.value:
+        returned_by = "reply_timeout"
+    else:
+        returned_by = None
+    return ReviewQueueRow(
+        case_id=row["case_id"],
+        patient_id=row["patient_id"],
+        escalation_kind=EscalationKind(row["escalation_kind"]) if row["escalation_kind"] else None,
+        escalated_from_state=State(row["escalated_from_state"]) if row["escalated_from_state"] else None,
+        human_engaged=row["human_engaged"],
+        entered_at=row["entered_at"],
+        reasons=list(row["reasons"]),
+        returned_by=returned_by,
+    )
+
+
+def queue_page(
+    conn: Connection, limit: int, cursor: tuple[datetime, str] | None
+) -> tuple[list[ReviewQueueRow], bool]:
+    """The cases waiting for a reviewer, newest entry into `AwaitingHumanReview` first
+    (staff-fixes design Task 5): one statement, with a LATERAL join to each case's latest
+    `record_type='Transition' AND state_after='AwaitingHumanReview'` row (a `Blocked` row can
+    carry that `state_after` too, hence the `record_type` filter - the FSM has no Transition
+    from AwaitingHumanReview back into itself). `reasons` and `returned_by` come from that
+    same row, replacing the Python-side `_escalation_reasons` / `_returned_by` scan of the
+    whole trace. Ordered `entered_at DESC, case_id ASC`, keyset-paginated the same way as
+    Task 3's case list, fetching `limit + 1` rows to know whether there is a next page.
+    """
+    entry = (
+        select(
+            audit_log.c.recorded_at.label("entered_at"),
+            audit_log.c.policy_reasons.label("reasons"),
+            audit_log.c.event.label("event"),
+            audit_log.c.state_before.label("state_before"),
+        )
+        .where(
+            audit_log.c.case_id == cases.c.case_id,
+            audit_log.c.record_type == "Transition",
+            audit_log.c.state_after == State.AWAITING_HUMAN_REVIEW.value,
+        )
+        .order_by(audit_log.c.audit_id.desc())
+        .limit(1)
+        .lateral("entry")
+    )
+    query = (
+        select(
+            cases.c.case_id,
+            cases.c.patient_id,
+            cases.c.escalation_kind,
+            cases.c.escalated_from_state,
+            cases.c.human_engaged,
+            entry.c.entered_at,
+            entry.c.reasons,
+            entry.c.event,
+            entry.c.state_before,
+        )
+        .select_from(cases.join(entry, true()))
+        .where(cases.c.state == State.AWAITING_HUMAN_REVIEW.value)
+    )
+    if cursor is not None:
+        at, case_id = cursor
+        # entered_at DESC, case_id ASC: "after the cursor" is an earlier entered_at, or the
+        # same entered_at with a greater case_id (the tuple_() shortcut needs both columns
+        # sorted the same direction, which is not the case here).
+        query = query.where(or_(entry.c.entered_at < at, and_(entry.c.entered_at == at, cases.c.case_id > case_id)))
+    query = query.order_by(entry.c.entered_at.desc(), cases.c.case_id.asc()).limit(limit + 1)
+    rows = [_queue_row(row) for row in conn.execute(query).mappings()]
+    has_more = len(rows) > limit
+    return rows[:limit], has_more
 
 
 # --- approvals ---------------------------------------------------------------------

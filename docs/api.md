@@ -76,7 +76,7 @@ methods: `GET`, `POST`, `DELETE`, `OPTIONS`. Allowed headers: `Authorization`,
 | GET | `/api/staff/cases/{case_id}` | staff | One case, in full (plan, documents, counters) |
 | GET | `/api/staff/cases/{case_id}/audit` | staff | The case's audit trace |
 | GET | `/api/staff/cases/{case_id}/appointments` | staff | The case's patient's appointments (`?from=&to=`, sub-project 16) |
-| GET | `/api/staff/reviews` | staff | The human-review queue |
+| GET | `/api/staff/reviews` | staff | The human-review queue, keyset-paginated, newest entry first (staff-fixes design Task 5) |
 | GET | `/api/staff/reviews/{case_id}` | staff | One queue item (staff-fixes design Task 3) |
 | GET | `/api/staff/cases/{case_id}/context` | staff | What the reviewer is shown |
 | POST | `/api/staff/cases/{case_id}/decision` | staff | Approve / resolve / reject |
@@ -479,23 +479,32 @@ message or document text - only ids, decisions and hashes (§12.3). `404 case_no
 
 ### GET /api/staff/reviews
 
-The queue of cases in `AwaitingHumanReview`, oldest update first. `200`:
+The queue of cases in `AwaitingHumanReview`, **newest entry into that State first**
+(staff-fixes design Task 5) - a case that returns from a patient's reply or a request that
+ran out of time re-enters and jumps to the top, since it needs attention again. One
+statement (a LATERAL join to each case's latest entry row), keyset-paginated the same way
+as `GET /api/staff/cases`: `?limit=` (default 50, at most 200; otherwise `422
+invalid_limit`) and `?cursor=` (opaque, base64 of `entered_at|case_id`; a bad cursor is
+`422 invalid_cursor`). `200`:
 
 ```json
-[
-  {
-    "case_id": "CASE-6FFF40DFB8DA",
-    "patient_id": "P-10041",
-    "escalation_kind": "MedicalQuestion",
-    "escalated_from_state": "Classifying",
-    "reasons": [],
-    "allowed_decisions": ["resolve", "reject"],
-    "required_fields": [],
-    "updated_at": "2026-09-19T22:12:39.693277Z",
-    "human_engaged": false,
-    "returned_by": null
-  }
-]
+{
+  "items": [
+    {
+      "case_id": "CASE-6FFF40DFB8DA",
+      "patient_id": "P-10041",
+      "escalation_kind": "MedicalQuestion",
+      "escalated_from_state": "Classifying",
+      "reasons": [],
+      "allowed_decisions": ["resolve", "reject"],
+      "required_fields": [],
+      "entered_at": "2026-09-19T22:12:39.693277Z",
+      "human_engaged": false,
+      "returned_by": null
+    }
+  ],
+  "next_cursor": null
+}
 ```
 
 - `escalation_kind`: `PatientVerificationFailed`, `MedicalQuestion`, `SafetyEscalation`,
@@ -505,6 +514,9 @@ The queue of cases in `AwaitingHumanReview`, oldest update first. `200`:
 - `human_engaged` / `returned_by` (sub-project 15) - see §8 below.
 - `reasons`: the `policy_reasons` of the row that escalated the case (e.g.
   `["medical_answer_attempt"]`, `["hours_until:20"]`). May be empty.
+- `entered_at`: when the case entered `AwaitingHumanReview` - the queue's order key
+  (staff-fixes design Task 5), replacing the older `updated_at` (the two agreed on every
+  case that had never re-entered review, but meant the wrong thing for one that had).
 - `allowed_decisions`: **render exactly these buttons.** `approve` appears only for the
   five kinds a case can resume from (`PatientVerificationFailed`, `RetryExhausted`,
   `PolicyReview`, `Z3Counterexample`, `PatientSlaExpired`); `resolve` and `reject` always.
@@ -518,7 +530,7 @@ The queue of cases in `AwaitingHumanReview`, oldest update first. `200`:
 
 Staff-fixes design Task 3: one queue item, in the same shape as a `GET /api/staff/reviews`
 item (above) - so `ReviewCase` reads its own row without fetching the whole queue. `200` is
-the single object (not wrapped in a list); `404 not_in_review` when the case is not (or no
+the single object (not wrapped in a page); `404 not_in_review` when the case is not (or no
 longer) in `AwaitingHumanReview`; `404 case_not_found` for an unknown case.
 
 ### GET /api/staff/cases/{case_id}/context

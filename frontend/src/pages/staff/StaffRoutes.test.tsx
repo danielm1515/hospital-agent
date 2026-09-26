@@ -19,7 +19,7 @@ const staffArea = (
 )
 
 beforeEach(() => {
-  vi.mocked(api.listReviews).mockResolvedValue([])
+  vi.mocked(api.listReviews).mockResolvedValue({ items: [], next_cursor: null })
   vi.mocked(api.getMetrics).mockReturnValue(new Promise(() => {}))
   vi.mocked(api.getSystemStatus).mockReturnValue(new Promise(() => {}))
 })

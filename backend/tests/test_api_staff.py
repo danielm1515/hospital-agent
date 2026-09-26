@@ -234,18 +234,21 @@ def test_case_audit_is_the_ordered_trace(client, staff, sm, app_engine):
 # --- the review queue ------------------------------------------------------------------------
 
 def test_the_review_queue_shape(client, staff, sm, app_engine):
+    """Staff-fixes design Task 5: `{items, next_cursor}`, newest entry first."""
     medical = medical_question(sm, app_engine)
     retry = retry_exhausted(sm, app_engine)
     Driver(sm, app_engine).to_classified()  # not in review
 
-    queue = client.get("/api/staff/reviews", headers=staff).json()
-    assert [item["case_id"] for item in queue] == [medical.case_id, retry.case_id]
+    page = client.get("/api/staff/reviews", headers=staff).json()
+    queue = page["items"]
+    assert [item["case_id"] for item in queue] == [retry.case_id, medical.case_id]
+    assert page["next_cursor"] is None
     assert set(queue[0]) == {"case_id", "patient_id", "escalation_kind", "escalated_from_state", "reasons",
-                             "allowed_decisions", "required_fields", "updated_at", "human_engaged", "returned_by"}
-    assert queue[0]["escalation_kind"] == "MedicalQuestion"
-    assert queue[0]["allowed_decisions"] == ["resolve", "reject"]
-    assert queue[1]["allowed_decisions"] == ["approve", "resolve", "reject"]
-    assert queue[1]["required_fields"] == []
+                             "allowed_decisions", "required_fields", "entered_at", "human_engaged", "returned_by"}
+    assert queue[1]["escalation_kind"] == "MedicalQuestion"
+    assert queue[1]["allowed_decisions"] == ["resolve", "reject"]
+    assert queue[0]["allowed_decisions"] == ["approve", "resolve", "reject"]
+    assert queue[0]["required_fields"] == []
 
 
 def test_one_review_item_by_case_id(client, staff, sm, app_engine):
@@ -257,7 +260,7 @@ def test_one_review_item_by_case_id(client, staff, sm, app_engine):
     item = client.get(f"/api/staff/reviews/{medical.case_id}", headers=staff).json()
     assert item["case_id"] == medical.case_id
     assert set(item) == {"case_id", "patient_id", "escalation_kind", "escalated_from_state", "reasons",
-                         "allowed_decisions", "required_fields", "updated_at", "human_engaged", "returned_by"}
+                         "allowed_decisions", "required_fields", "entered_at", "human_engaged", "returned_by"}
 
     refused = client.get(f"/api/staff/reviews/{not_escalated.case_id}", headers=staff)
     assert refused.status_code == 404 and refused.json() == {"detail": "not_in_review"}
@@ -287,7 +290,7 @@ def test_resolving_a_medical_question_round_trip(client, staff, sm, app_engine):
     assert response.status_code == 200
     assert response.json() == {"case_id": d.case_id, "state": "Completed"}
     assert d.state is State.COMPLETED
-    assert client.get("/api/staff/reviews", headers=staff).json() == []
+    assert client.get("/api/staff/reviews", headers=staff).json()["items"] == []
 
 
 def test_approving_retry_exhausted_opens_a_new_cycle(client, staff, sm, app_engine):
