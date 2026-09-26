@@ -2302,3 +2302,53 @@ img {
   font-weight: 600;
   color: var(--ink-500);
 }
+
+/* ==== Appointments panel (sub-project 16) ================================= */
+
+.appointments {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.appointments-filter {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--space-3);
+}
+
+.appointment-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.appointment-item {
+  padding: var(--space-4);
+  border-radius: var(--radius-md);
+  background: var(--surface-100);
+}
+
+.appointment-item.is-cancelled {
+  color: var(--ink-500);
+}
+
+.appointment-item.is-cancelled time {
+  text-decoration: line-through;
+}
+
+.appointment-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin: 0;
+  margin-block-start: var(--space-1);
+  padding: 0;
+  font-size: 13px;
+  line-height: 20px;
+  color: var(--ink-500);
+}

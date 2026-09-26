@@ -10,6 +10,7 @@
  */
 import type {
   AnswerBody,
+  AppointmentList,
   AuditRecord,
   CaseDetail,
   CaseSummary,
@@ -305,4 +306,20 @@ export function replyWithFile(caseId: string, file: File): Promise<PdfUploadResp
 export function getMetrics(from: Date, to: Date): Promise<Metrics> {
   const query = new URLSearchParams({ from: from.toISOString(), to: to.toISOString() })
   return request<Metrics>('GET', `/admin/metrics?${query.toString()}`)
+}
+
+// ---- Appointments (sub-project 16) -------------------------------------------
+
+function windowQuery(from: Date, to: Date): string {
+  return new URLSearchParams({ from: from.toISOString(), to: to.toISOString() }).toString()
+}
+
+/** `GET /api/patient/appointments` - the token's patient. `from` inclusive, `to` exclusive. */
+export function listMyAppointments(from: Date, to: Date): Promise<AppointmentList> {
+  return request<AppointmentList>('GET', `/patient/appointments?${windowQuery(from, to)}`)
+}
+
+/** `GET /api/staff/cases/{case_id}/appointments` - the case's patient. */
+export function listCaseAppointments(caseId: string, from: Date, to: Date): Promise<AppointmentList> {
+  return request<AppointmentList>('GET', `/staff/cases/${id(caseId)}/appointments?${windowQuery(from, to)}`)
 }

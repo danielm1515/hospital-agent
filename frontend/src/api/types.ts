@@ -439,3 +439,24 @@ export interface Metrics {
   patient_sla: MetricsPatientSla
   policy: MetricsPolicy
 }
+
+// ---- Appointments (sub-project 16, docs/api.md §9) --------------------------
+
+export type AppointmentStatus = 'Scheduled' | 'Cancelled'
+
+export interface Appointment {
+  appointment_id: string
+  appointment_at: IsoDateTime
+  department: string
+  doctor_name: string | null
+  location: string | null
+  status: AppointmentStatus
+  required_documents: string[]
+}
+
+export interface AppointmentList {
+  from: IsoDateTime
+  to: IsoDateTime
+  appointments: Appointment[]
+  truncated: boolean
+}
