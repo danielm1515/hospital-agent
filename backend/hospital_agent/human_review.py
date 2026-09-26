@@ -105,6 +105,15 @@ class ReviewContext:
     data: list[dict]
     trace: list[dict]
     shown_context_ref: str
+    # Sub-project 18 (design D13): the chosen appointment, its exam type/department and the
+    # instruction source, read-only - part of what the reviewer is shown, so they are part of
+    # `shown_context_ref` too (design D13/D14).
+    appointment_id: str | None = None
+    answered_appointment_id: str | None = None
+    department: str | None = None
+    exam_type_label: str | None = None
+    instruction_source_id: str | None = None
+    instruction_version: str | None = None
 
 
 def allowed_decisions(kind: EscalationKind | None) -> list[str]:
@@ -235,6 +244,12 @@ class HumanReviewService:
             "reasons": _escalation_reasons(trace) if case.state is State.AWAITING_HUMAN_REVIEW else [],
             "data": data,
             "trace": rows,
+            "appointment_id": case.appointment_id,
+            "answered_appointment_id": case.answered_appointment_id,
+            "department": case.department,
+            "exam_type_label": case.exam_type_label,
+            "instruction_source_id": case.instruction_source_id,
+            "instruction_version": case.instruction_version,
         }
         return ReviewContext(**shown, shown_context_ref=_context_ref(shown))
 

@@ -139,6 +139,16 @@ class ConversationEntry:
     at: datetime
 
 
+@dataclass(frozen=True)
+class PatientInstructions:
+    """Sub-project 18 (design D11): exactly what was approved and shown - the case's own Data
+    Log `instructions` entry, split on its first newline (`_keep_retrieved_content` writes it
+    as `f"{title}\\n{text}"`, design D8)."""
+
+    title: str
+    text: str
+
+
 MAX_REPLY_LENGTH = 2000
 # The exact reference line reply_pdf writes (§9): a document-service id in the same shape
 # document_intake._ID accepts (1-64 letters/digits/_/-, so a 1-character id is possible), a
@@ -195,6 +205,7 @@ class PatientView:
     document_upload: Literal["file", "text"] = "text"
     reply_request: ReplyRequest | None = None  # sub-project 15, while status is needs_reply
     conversation: list[ConversationEntry] = field(default_factory=list)  # staff messages and replies
+    instructions: PatientInstructions | None = None  # sub-project 18 (design D11), only in "completed"
 
 
 _STATUS: dict[State, str] = {
@@ -482,6 +493,7 @@ class SessionService:
             history = status_history(trace, delivered=bool(resolved) or answer is not None)
             message = (self._delivered_message(conn, case.case_id, resolved[-1]) if resolved
                        else answer) if status == "completed" else None
+            instructions = self._instructions(conn, case.case_id) if status == "completed" else None
             staff = self._staff_messages(conn, case.case_id, trace)
             replies = self._patient_replies(conn, case.case_id, trace)
         needs_document = status == "needs_document"
@@ -511,6 +523,7 @@ class SessionService:
             document_upload="file" if self.document_intake is not None else "text",
             reply_request=reply_request,
             conversation=conversation,
+            instructions=instructions,
         )
 
     @staticmethod
@@ -523,6 +536,21 @@ class SessionService:
         sent = [entry.content for entry in data_log.entries(conn, case_id, data_log.DataKind.OUTGOING_MESSAGE)
                 if entry.content is not None and entry.content_hash == execution.content_hash]
         return sent[-1] if sent else None
+
+    @staticmethod
+    def _instructions(conn, case_id: str) -> PatientInstructions | None:
+        """Sub-project 18 (design D11, review m5): the case's own Data Log `instructions`
+        entry - exactly what was approved and shown (§12.3). `LoadInstructions` can run more
+        than once for one case (e.g. a re-plan after the patient uploads a document), so this
+        is the LATEST entry that is present (not tombstoned), never the first. `None` when
+        there is no such entry at all."""
+        present = [entry.content for entry
+                   in data_log.entries(conn, case_id, data_log.DataKind.INSTRUCTIONS)
+                   if entry.content is not None]
+        if not present:
+            return None
+        title, _, text = present[-1].partition("\n")
+        return PatientInstructions(title=title, text=text)
 
     def _clinical_answer(self, conn, case_id: str) -> str | None:
         """The answer a clinical_staff reviewer gave and approved (§5, §12.4), or None.

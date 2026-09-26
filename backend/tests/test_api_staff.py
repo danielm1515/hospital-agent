@@ -370,13 +370,56 @@ def test_the_context_shows_the_data_log_and_the_trace(client, staff, sm, app_eng
     d = medical_question(sm, app_engine)
     context = client.get(f"/api/staff/cases/{d.case_id}/context", headers=staff).json()
     assert set(context) == {"case_id", "patient_id", "state", "escalation_kind", "escalated_from_state",
-                            "reasons", "data", "trace", "shown_context_ref"}
+                            "reasons", "data", "trace", "shown_context_ref", "appointment_id",
+                            "answered_appointment_id", "department", "exam_type_label",
+                            "instruction_source_id", "instruction_version"}
     assert context["state"] == "AwaitingHumanReview"
     assert [entry["kind"] for entry in context["data"]] == ["request_text"]
     assert context["data"][0]["content"] == MEDICAL
     assert [row["event"] for row in context["trace"]][:2] == ["REQUEST_SUBMITTED", "REQUEST_VALIDATED"]
     assert context["shown_context_ref"].startswith("ctx-")
+    # A MedicalQuestion never reaches CheckAppointment: these are all null, never invented.
+    assert (context["appointment_id"], context["answered_appointment_id"], context["department"],
+            context["exam_type_label"], context["instruction_source_id"], context["instruction_version"]
+            ) == (None, None, None, None, None, None)
     assert client.get("/api/staff/cases/CASE-NOPE/context", headers=staff).status_code == 404
+
+
+def test_the_context_carries_the_chosen_appointment_and_instruction_source(client, staff, sm, app_engine):
+    """Sub-project 18 (design D13): staff see the chosen appointment, its exam type/department
+    and the instruction source on the case."""
+    d = Driver(sm, app_engine)
+    d.to_classified(appointment_id="APT-8391")
+    d.plan()
+    d.propose()
+    d.allow()
+    d.retrieved(department="Cardiology", exam_type_label="מבחן מאמץ", answered_appointment_id="APT-8391",
+               instruction_source_id="INSTR-CARD_STRESS", instruction_version="1")
+    context = client.get(f"/api/staff/cases/{d.case_id}/context", headers=staff).json()
+    assert context["appointment_id"] == "APT-8391"
+    assert context["answered_appointment_id"] == "APT-8391"
+    assert context["department"] == "Cardiology"
+    assert context["exam_type_label"] == "מבחן מאמץ"
+    assert context["instruction_source_id"] == "INSTR-CARD_STRESS"
+    assert context["instruction_version"] == "1"
+
+
+def test_case_detail_carries_the_chosen_appointment_and_instruction_source(client, staff, sm, app_engine):
+    """Sub-project 18 (design D13): the same fields, on GET /api/staff/cases/{case_id}."""
+    d = Driver(sm, app_engine)
+    d.to_classified(appointment_id="APT-8391")
+    d.plan()
+    d.propose()
+    d.allow()
+    d.retrieved(department="Cardiology", exam_type_label="מבחן מאמץ", answered_appointment_id="APT-8391",
+               instruction_source_id="INSTR-CARD_STRESS", instruction_version="1")
+    detail = client.get(f"/api/staff/cases/{d.case_id}", headers=staff).json()
+    assert detail["appointment_id"] == "APT-8391"
+    assert detail["answered_appointment_id"] == "APT-8391"
+    assert detail["department"] == "Cardiology"
+    assert detail["exam_type_label"] == "מבחן מאמץ"
+    assert detail["instruction_source_id"] == "INSTR-CARD_STRESS"
+    assert detail["instruction_version"] == "1"
 
 
 # --- deciding --------------------------------------------------------------------------------

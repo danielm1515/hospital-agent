@@ -60,6 +60,14 @@ class CaseDetail(BaseModel):
     escalated_from_state: State | None
     patient_deadline: datetime | None
     created_at: datetime
+    # Sub-project 18 (design D13): the chosen appointment, its exam type/department and the
+    # instruction source - staff-only, read-only, never shown to the patient.
+    appointment_id: str | None = None
+    answered_appointment_id: str | None = None
+    department: str | None = None
+    exam_type_label: str | None = None
+    instruction_source_id: str | None = None
+    instruction_version: str | None = None
 
 
 class AuditRecord(BaseModel):
@@ -144,6 +152,16 @@ class ConversationEntryView(BaseModel):
     at: datetime
 
 
+class PatientInstructionsView(BaseModel):
+    """Sub-project 18 (design D11): the case's own Data Log `instructions` entry, split into
+    its title and text."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    title: str
+    text: str
+
+
 class PatientCaseView(BaseModel):
     """What a patient may see (design decision 8): never an escalation kind, a reason or Audit."""
 
@@ -161,6 +179,7 @@ class PatientCaseView(BaseModel):
     document_upload: Literal["file", "text"]
     reply_request: ReplyRequestView | None
     conversation: list[ConversationEntryView]
+    instructions: PatientInstructionsView | None = None
 
 
 class UploadResult(BaseModel):
@@ -219,6 +238,13 @@ class ReviewContext(BaseModel):
     data: list[dict[str, Any]]
     trace: list[dict[str, Any]]
     shown_context_ref: str
+    # Sub-project 18 (design D13): read-only, same as CaseDetail above.
+    appointment_id: str | None = None
+    answered_appointment_id: str | None = None
+    department: str | None = None
+    exam_type_label: str | None = None
+    instruction_source_id: str | None = None
+    instruction_version: str | None = None
 
 
 class MessageBody(BaseModel):

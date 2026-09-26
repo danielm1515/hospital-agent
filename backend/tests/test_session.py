@@ -198,6 +198,66 @@ def test_a_completed_case_shows_the_delivered_message(session, sm, app_engine, o
     assert view.missing_document_ids == [] and view.missing_document_request_template_id is None
 
 
+# --- sub-project 18 (design D11): the delivered instructions -----------------------------------
+
+def test_a_completed_view_shows_the_instructions_that_were_loaded(session, sm, app_engine, orchestrator):
+    case_id = session.submit_request(PATIENT, REQUEST, identity_verified=True)
+    assert orchestrator.run_case(case_id) is State.AWAITING_PATIENT_INPUT
+    session.upload_document(PATIENT, case_id, "blood_test", "Blood test results: normal.")
+    assert orchestrator.run_case(case_id) is State.COMPLETED
+    with app_engine.connect() as conn:
+        [entry] = data_log.entries(conn, case_id, data_log.DataKind.INSTRUCTIONS)
+    title, _, text = entry.content.partition("\n")
+    view = session.patient_view(case_id)
+    assert view.instructions == session_module.PatientInstructions(title=title, text=text)
+
+
+def test_instructions_is_null_outside_completed(session):
+    case_id = session.submit_request(PATIENT, REQUEST, identity_verified=True)
+    assert session.patient_view(case_id).instructions is None
+
+
+def test_instructions_is_null_when_completed_with_no_instructions_entry(sm, app_engine):
+    """The mock/pre-sub-project-18 path never wrote an `instructions` entry for some cases
+    (e.g. a clinical answer, sub-project 8) - `None`, never an error."""
+    d = Driver(sm, app_engine)
+    d.submit()
+    with app_engine.connect() as conn:
+        assert SessionService._instructions(conn, d.case_id) is None
+
+
+def test_instructions_shows_the_latest_present_entry_over_an_earlier_one(session, sm, app_engine, orchestrator):
+    """Review m5: LoadInstructions can run more than once for one case (e.g. a re-plan after
+    the patient uploads a document) - the LATEST entry wins, never the first."""
+    case_id = session.submit_request(PATIENT, REQUEST, identity_verified=True)
+    assert orchestrator.run_case(case_id) is State.AWAITING_PATIENT_INPUT
+    session.upload_document(PATIENT, case_id, "blood_test", "Blood test results: normal.")
+    assert orchestrator.run_case(case_id) is State.COMPLETED
+    with app_engine.begin() as conn:
+        data_log.record(conn, case_id, PATIENT, data_log.DataKind.INSTRUCTIONS,
+                        "A newer title\nA newer text", sm.clock())
+    view = session.patient_view(case_id)
+    assert view.instructions == session_module.PatientInstructions(title="A newer title", text="A newer text")
+
+
+def test_instructions_skips_a_tombstoned_latest_entry(session, sm, app_engine, orchestrator):
+    """A tombstoned entry (content cleared, §18.4) is never shown, even when it is the latest -
+    the next-latest *present* entry is, exactly like `request_text` (design D11)."""
+    case_id = session.submit_request(PATIENT, REQUEST, identity_verified=True)
+    assert orchestrator.run_case(case_id) is State.AWAITING_PATIENT_INPUT
+    session.upload_document(PATIENT, case_id, "blood_test", "Blood test results: normal.")
+    assert orchestrator.run_case(case_id) is State.COMPLETED
+    with app_engine.connect() as conn:
+        [first] = data_log.entries(conn, case_id, data_log.DataKind.INSTRUCTIONS)
+    first_title, _, first_text = first.content.partition("\n")
+    with app_engine.begin() as conn:
+        newer = data_log.record(conn, case_id, PATIENT, data_log.DataKind.INSTRUCTIONS,
+                                "A newer title\nA newer text", sm.clock())
+        data_log.tombstone(conn, newer.entry_id, sm.clock())
+    view = session.patient_view(case_id)
+    assert view.instructions == session_module.PatientInstructions(title=first_title, text=first_text)
+
+
 def test_the_history_is_every_status_change_with_its_time(session, sm, app_engine, orchestrator):
     """The patient screen's timeline: what happened, and when (docs/api.md §4)."""
     case_id = session.submit_request(PATIENT, REQUEST, identity_verified=True)

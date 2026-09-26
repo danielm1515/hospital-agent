@@ -180,12 +180,14 @@ Every patient route answers with this object, and nothing else (the document upl
   ],
   "document_upload": "text",
   "reply_request": null,
-  "conversation": []
+  "conversation": [],
+  "instructions": null
 }
 ```
 
-`reply_request` and `conversation` are sub-project 15 (§8 below documents them); every other
-patient route already returned everything else shown here.
+`reply_request` and `conversation` are sub-project 15 (§8 below documents them); `instructions`
+is sub-project 18 (documented below); every other patient route already returned everything
+else shown here.
 
 | `status` | Meaning | What the UI shows |
 |---|---|---|
@@ -194,7 +196,7 @@ patient route already returned everything else shown here.
 | `needs_document` | A document is missing | The upload form for `missing_document_ids` |
 | `in_review` | A human is handling it | "A staff member is reviewing your request" - **no** reason, no kind |
 | `needs_reply` | Sub-project 15: a staff member asked a question or for a document | `reply_request` - the question or the requested document, and the deadline |
-| `completed` | An answer was delivered | `message` - either the status update the agent sent, or a clinical answer a `clinical_staff` reviewer wrote and approved |
+| `completed` | An answer was delivered | `message` - either the status update the agent sent, or a clinical answer a `clinical_staff` reviewer wrote and approved; `instructions` when the case loaded a preparation instruction |
 | `closed` | Finished without a delivered message (a reviewer resolved or rejected it) | `message` when the reviewer sent a closing message (sub-project 15), otherwise "Your request was closed. The clinic will contact you." |
 
 - `request_text` is the text the patient submitted; `null` once a staff member has deleted
@@ -212,6 +214,13 @@ patient route already returned everything else shown here.
   (§12.3) - and a status the case entered twice appears twice. The last entry's `status`
   always equals `status`, and the first is the submission. It is `[]` only for a case with
   no committed transition, which the patient routes never return.
+- `instructions` (sub-project 18, design D11) is `{"title": ..., "text": ...}` in `completed`
+  when the case has an `instructions` entry in the Data Log that is present (not tombstoned) -
+  exactly the text that was approved and shown (§12.3), split into its title and body on the
+  first newline. `LoadInstructions` can run more than once for one case (e.g. a re-plan after
+  the patient uploads a document); this is always the *latest* present entry, never the first.
+  `null` for every other status, and `null` in `completed` too when there is no such entry (the
+  mock path before sub-project 18, or a case whose only entry was deleted).
 - `document_upload` says which upload the screen offers for `needs_document`: `"file"` when the
   server is configured with the document-service (`DOCUMENT_SERVICE_URL` and
   `DOCUMENT_API_KEY`) - a document picker (PDF, JPEG or PNG), sent to `POST .../documents/file` - or `"text"` without
@@ -454,12 +463,25 @@ the counters the list above does not carry. `200`:
   "held_documents": ["referral", "blood_test"],
   "escalated_from_state": null,
   "patient_deadline": "2026-09-20T22:12:38.786253Z",
-  "created_at": "2026-09-19T22:12:38.560531Z"
+  "created_at": "2026-09-19T22:12:38.560531Z",
+  "appointment_id": "APT-8391",
+  "answered_appointment_id": "APT-8391",
+  "department": "Cardiology",
+  "exam_type_label": "מבחן מאמץ",
+  "instruction_source_id": "INSTR-CARD_STRESS",
+  "instruction_version": "1"
 }
 ```
 
 `intent` is `AppointmentPreparation`, `MedicalQuestion` or `Unsupported`; `safety_level` is
 `LowRisk`, `MediumRisk`, `HighRisk` or `CriticalRisk`. `404 case_not_found`.
+
+`appointment_id`, `answered_appointment_id`, `department`, `exam_type_label`,
+`instruction_source_id` and `instruction_version` (sub-project 18, design D13) are read-only
+staff fields: the appointment the patient chose (if any) and the one the appointment-service
+actually resolved, its department and exam type, and the instruction source the policy
+approved for this case. All `null` on the mock path or a case that never resolved an
+appointment. Never shown to the patient.
 
 ### GET /api/staff/cases/{case_id}/audit
 
@@ -586,10 +608,20 @@ Everything the reviewer is shown, plus the reference that binds the decision to 
       "recorded_at": "2026-09-19T22:12:39.678380Z"
     }
   ],
-  "shown_context_ref": "ctx-ba3e0652b0ea355663db57e7d19550c61ee1d156fea64c91c2cacd539bbc7d83"
+  "shown_context_ref": "ctx-ba3e0652b0ea355663db57e7d19550c61ee1d156fea64c91c2cacd539bbc7d83",
+  "appointment_id": null,
+  "answered_appointment_id": null,
+  "department": null,
+  "exam_type_label": null,
+  "instruction_source_id": null,
+  "instruction_version": null
 }
 ```
 
+- `appointment_id` … `instruction_version` (sub-project 18, design D13) are the same
+  read-only fields as `GET /api/staff/cases/{case_id}` above - part of what the reviewer is
+  shown, so they are part of `shown_context_ref` too (a case whose source changed after the
+  context was fetched is `409 context_changed`, same as any other change).
 - `data` is the Data Log (§12.3) - the only place content lives. `kind` is `request_text`,
   `uploaded_document`, `instructions`, `outgoing_message`, `staff_message` or `patient_reply`
   (the last two, sub-project 15, §8). Deleted entries and uploads the case never accepted
