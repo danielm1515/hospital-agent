@@ -10,9 +10,11 @@ interface AlertProps {
   /** The `.text` part: text, a `.mono` fragment, a list or an action button. */
   children?: ReactNode
   className?: string
+  /** Shows a "סגירה" close button, e.g. for a transient notice (staff-fixes design Task 7). */
+  onClose?: () => void
 }
 
-export function Alert({ variant = 'info', title, children, className }: AlertProps) {
+export function Alert({ variant = 'info', title, children, className, onClose }: AlertProps) {
   return (
     <div
       className={['alert', variant, className].filter(Boolean).join(' ')}
@@ -26,6 +28,11 @@ export function Alert({ variant = 'info', title, children, className }: AlertPro
         {title !== undefined && <p className="title">{title}</p>}
         {children !== undefined && <div className="text">{children}</div>}
       </div>
+      {onClose && (
+        <button type="button" className="alert-close" aria-label="סגירה" onClick={onClose}>
+          <span aria-hidden="true">✕</span>
+        </button>
+      )}
     </div>
   )
 }

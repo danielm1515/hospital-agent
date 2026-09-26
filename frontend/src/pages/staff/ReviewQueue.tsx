@@ -10,9 +10,13 @@ import { detailOf, escalationLabel, formatDateTime, returnedByLabel, stateLabel 
 /** The queue is polled rather than pushed (design decision 4). */
 export const QUEUE_POLL_MS = 5000
 
+/** How long the decision notice stays on screen before it dismisses itself (Task 7). */
+export const NOTICE_DISMISS_MS = 8000
+
 /** The `location.state` a finished decision navigates back with. */
 export interface QueueNotice {
   notice?: string
+  title?: string
 }
 
 /**
@@ -31,7 +35,29 @@ export interface QueueNotice {
 export function ReviewQueue() {
   const navigate = useNavigate()
   const location = useLocation()
-  const notice = (location.state as QueueNotice | null)?.notice ?? null
+
+  // Copied out of `location.state` once, on mount (a lazy initializer runs exactly once) -
+  // never read from `location.state` again after that, because a reload keeps the browser's
+  // `history.state` around, and the notice must not come back from a reload or Back (Task 7).
+  const [notice, setNotice] = useState<{ text: string; title: string } | null>(() => {
+    const state = location.state as QueueNotice | null
+    return state?.notice ? { text: state.notice, title: state.title ?? 'ההכרעה נשמרה' } : null
+  })
+
+  useEffect(() => {
+    // Replaces the history entry's state with `null` right after reading it, so a refresh
+    // or the Back button finds nothing to show again.
+    if (location.state !== null) {
+      navigate(location.pathname, { replace: true, state: null })
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  useEffect(() => {
+    if (!notice) return
+    const timer = setTimeout(() => setNotice(null), NOTICE_DISMISS_MS)
+    return () => clearTimeout(timer)
+  }, [notice])
 
   const [items, setItems] = useState<ReviewItem[] | null>(null)
   const [nextCursor, setNextCursor] = useState<string | null>(null)
@@ -100,8 +126,8 @@ export function ReviewQueue() {
       </header>
 
       {notice && (
-        <Alert variant="ok" title="ההכרעה נשמרה">
-          {notice}
+        <Alert variant="ok" title={notice.title} onClose={() => setNotice(null)}>
+          {notice.text}
         </Alert>
       )}
       {error && (

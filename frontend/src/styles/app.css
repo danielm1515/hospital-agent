@@ -389,6 +389,29 @@ img {
   color: var(--success-500);
 }
 
+.alert-close {
+  margin-inline-start: auto;
+  padding: var(--space-1);
+  flex: none;
+  align-self: flex-start;
+  background: none;
+  border: 0;
+  border-radius: var(--radius-sm);
+  color: var(--ink-500);
+  cursor: pointer;
+  font-size: 13px;
+  line-height: 1;
+}
+
+.alert-close:hover {
+  color: var(--ink-900);
+}
+
+.alert-close:focus-visible {
+  outline: 2px solid var(--focus-500);
+  outline-offset: 2px;
+}
+
 /* ---- StatusPill --------------------------------------------------------- */
 
 .pill {

@@ -151,7 +151,10 @@ export function ReviewCase() {
       const result = await api.decide(caseId, body)
       navigate('/staff', {
         replace: true,
-        state: { notice: `הפנייה ${result.case_id} עברה למצב ${stateLabel(result.state)} (${result.state}).` },
+        state: {
+          title: 'ההכרעה נשמרה',
+          notice: `הפנייה ${result.case_id} עברה למצב ${stateLabel(result.state)} (${result.state}).`,
+        },
       })
     } catch (caught) {
       const detail = detailOf(caught)
@@ -289,7 +292,10 @@ export function ReviewCase() {
               onAnswered={() =>
                 navigate('/staff', {
                   replace: true,
-                  state: { notice: `נשלחה תשובה למטופל בפנייה ${caseId}, והפנייה נסגרה.` },
+                  state: {
+                    title: 'התשובה נשלחה',
+                    notice: `נשלחה תשובה למטופל בפנייה ${caseId}, והפנייה נסגרה.`,
+                  },
                 })
               }
               onContextChanged={() => void refreshContext()}
@@ -305,7 +311,7 @@ export function ReviewCase() {
               onSent={() =>
                 navigate('/staff', {
                   replace: true,
-                  state: { notice: `נשלחה בקשה למטופל בפנייה ${caseId}.` },
+                  state: { title: 'הבקשה נשלחה', notice: `נשלחה בקשה למטופל בפנייה ${caseId}.` },
                 })
               }
               onContextChanged={() => void refreshContext()}

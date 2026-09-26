@@ -1,14 +1,23 @@
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import * as api from '../../api/client'
-import type { ReviewItem, ReviewQueuePage } from '../../api/types'
-import { QUEUE_POLL_MS, ReviewQueue } from './ReviewQueue'
+import type { ReviewContext, ReviewItem, ReviewQueuePage } from '../../api/types'
+import { authValue, STAFF_USER, TestAuthProvider } from '../../test/helpers'
+import { NOTICE_DISMISS_MS, QUEUE_POLL_MS, ReviewQueue } from './ReviewQueue'
+import { ReviewCase } from './ReviewCase'
 
 vi.mock('../../api/client', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../api/client')>()),
   listReviews: vi.fn(),
+  getContext: vi.fn(),
+  getReviewItem: vi.fn(),
+  decide: vi.fn(),
+  getMessageTemplates: vi.fn(),
+  listCaseAppointments: vi.fn(),
+  requestFromPatient: vi.fn(),
+  answer: vi.fn(),
 }))
 
 const MEDICAL: ReviewItem = {
@@ -102,10 +111,14 @@ describe('ReviewQueue', () => {
     expect(screen.queryByRole('table')).not.toBeInTheDocument()
   })
 
-  it('shows the notice a finished decision navigated back with', async () => {
+  it('shows the notice a finished decision navigated back with, titled as the decision said', async () => {
     vi.mocked(api.listReviews).mockResolvedValue(page([]))
     render(
-      <MemoryRouter initialEntries={[{ pathname: '/staff', state: { notice: 'הפנייה CASE-1 עברה למצב Completed.' } }]}>
+      <MemoryRouter
+        initialEntries={[
+          { pathname: '/staff', state: { title: 'ההכרעה נשמרה', notice: 'הפנייה CASE-1 עברה למצב Completed.' } },
+        ]}
+      >
         <Routes>
           <Route path="/staff" element={<ReviewQueue />} />
         </Routes>
@@ -113,6 +126,79 @@ describe('ReviewQueue', () => {
     )
 
     expect(await screen.findByText('הפנייה CASE-1 עברה למצב Completed.')).toBeInTheDocument()
+    expect(screen.getByText('ההכרעה נשמרה')).toHaveClass('title')
+  })
+
+  it('auto-dismisses the notice after 8 s', async () => {
+    vi.useFakeTimers()
+    vi.mocked(api.listReviews).mockResolvedValue(page([]))
+    render(
+      <MemoryRouter initialEntries={[{ pathname: '/staff', state: { notice: 'X', title: 'ההכרעה נשמרה' } }]}>
+        <Routes>
+          <Route path="/staff" element={<ReviewQueue />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+    expect(screen.getByText('X')).toBeInTheDocument()
+
+    await act(() => vi.advanceTimersByTimeAsync(NOTICE_DISMISS_MS))
+
+    expect(screen.queryByText('X')).not.toBeInTheDocument()
+  })
+
+  it('closes the notice with the close button', async () => {
+    vi.mocked(api.listReviews).mockResolvedValue(page([]))
+    render(
+      <MemoryRouter initialEntries={[{ pathname: '/staff', state: { notice: 'X', title: 'ההכרעה נשמרה' } }]}>
+        <Routes>
+          <Route path="/staff" element={<ReviewQueue />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+    expect(screen.getByText('X')).toBeInTheDocument()
+
+    await userEvent.click(screen.getByRole('button', { name: 'סגירה' }))
+
+    expect(screen.queryByText('X')).not.toBeInTheDocument()
+  })
+
+  it('does not show the notice again on remount - the history entry was replaced (Task 7)', async () => {
+    vi.mocked(api.listReviews).mockResolvedValue(page([]))
+
+    function Harness({ show }: { show: boolean }) {
+      return show ? <ReviewQueue /> : null
+    }
+
+    const { rerender } = render(
+      <MemoryRouter initialEntries={[{ pathname: '/staff', state: { notice: 'X', title: 'ההכרעה נשמרה' } }]}>
+        <Routes>
+          <Route path="/staff" element={<Harness show={true} />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+    // The notice shows once, from the entry's original state.
+    expect(screen.getByText('X')).toBeInTheDocument()
+
+    // Unmount, then remount at the same route: the mount effect already replaced the
+    // history entry's state with `null`, so a fresh ReviewQueue (a reload, or Back to
+    // this same entry) reads no notice at all - this is what a real reload would see.
+    rerender(
+      <MemoryRouter initialEntries={[{ pathname: '/staff' }]}>
+        <Routes>
+          <Route path="/staff" element={<Harness show={false} />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+    rerender(
+      <MemoryRouter initialEntries={[{ pathname: '/staff' }]}>
+        <Routes>
+          <Route path="/staff" element={<Harness show={true} />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+    await act(async () => {}) // flushes the remounted queue's own listReviews call
+
+    expect(screen.queryByText('X')).not.toBeInTheDocument()
   })
 
   it('reports a failed load instead of showing an empty queue', async () => {
@@ -178,5 +264,130 @@ describe('ReviewQueue', () => {
     expect(screen.getByText('CASE-23FE645294B7')).toBeInTheDocument()
     const rows = screen.getAllByRole('row')
     expect(rows).toHaveLength(3) // header + exactly one row per case - no duplicate keys
+  })
+})
+
+describe('ReviewCase -> ReviewQueue: the decision notice (Task 7)', () => {
+  function reviewContext(overrides: Partial<ReviewContext> = {}): ReviewContext {
+    return {
+      case_id: MEDICAL.case_id,
+      patient_id: MEDICAL.patient_id,
+      state: 'AwaitingHumanReview',
+      escalation_kind: 'MedicalQuestion',
+      escalated_from_state: 'Classifying',
+      reasons: [],
+      data: [],
+      trace: [],
+      shown_context_ref: 'ctx-1',
+      ...overrides,
+    }
+  }
+
+  it('shows a titled notice once and the queue no longer carries the decided case', async () => {
+    vi.mocked(api.getContext).mockResolvedValue(reviewContext())
+    vi.mocked(api.getReviewItem).mockResolvedValue(MEDICAL)
+    vi.mocked(api.getMessageTemplates).mockResolvedValue([])
+    vi.mocked(api.listCaseAppointments).mockResolvedValue({
+      from: '2026-09-26T00:00:00Z',
+      to: '2026-10-26T00:00:00Z',
+      appointments: [],
+      truncated: false,
+    })
+    vi.mocked(api.decide).mockResolvedValue({ case_id: MEDICAL.case_id, state: 'Completed' })
+    // The decision already committed server-side before the queue is asked again, so the
+    // one call the queue makes on mount (Task 3/5) already reflects it - no stale row.
+    vi.mocked(api.listReviews).mockResolvedValue(page([]))
+
+    render(
+      <MemoryRouter initialEntries={[`/staff/cases/${MEDICAL.case_id}`]}>
+        <TestAuthProvider value={authValue({ user: STAFF_USER })}>
+          <Routes>
+            <Route path="/staff" element={<ReviewQueue />} />
+            <Route path="/staff/cases/:caseId" element={<ReviewCase />} />
+          </Routes>
+        </TestAuthProvider>
+      </MemoryRouter>,
+    )
+
+    await userEvent.type(await screen.findByLabelText(/סיבת ההכרעה/), 'טופלה מול הרופא.')
+    await userEvent.click(screen.getByRole('button', { name: 'סגירת הפנייה' }))
+
+    // The queue screen, reached through the decision's own navigate.
+    expect(await screen.findByText('ההכרעה נשמרה')).toHaveClass('title')
+    expect(screen.getByText(`הפנייה ${MEDICAL.case_id} עברה למצב הושלמה (Completed).`)).toBeInTheDocument()
+    expect(await screen.findByText('אין פניות הממתינות להכרעה')).toBeInTheDocument()
+    expect(screen.queryByText(MEDICAL.case_id)).not.toBeInTheDocument()
+  })
+
+  it('titles the notice "הבקשה נשלחה" when a request to the patient is sent (PatientRequest onSent)', async () => {
+    vi.mocked(api.getContext).mockResolvedValue(reviewContext())
+    vi.mocked(api.getReviewItem).mockResolvedValue(MEDICAL)
+    vi.mocked(api.getMessageTemplates).mockResolvedValue([
+      { template_id: 'clarify_general', purpose: 'question', text: 'לא הצלחנו להבין', param: null, options: {} },
+    ])
+    vi.mocked(api.listCaseAppointments).mockResolvedValue({
+      from: '2026-09-26T00:00:00Z',
+      to: '2026-10-26T00:00:00Z',
+      appointments: [],
+      truncated: false,
+    })
+    vi.mocked(api.requestFromPatient).mockResolvedValue({
+      case_id: MEDICAL.case_id,
+      state: 'AwaitingPatientReply',
+    })
+    vi.mocked(api.listReviews).mockResolvedValue(page([]))
+
+    render(
+      <MemoryRouter initialEntries={[`/staff/cases/${MEDICAL.case_id}`]}>
+        <TestAuthProvider value={authValue({ user: STAFF_USER })}>
+          <Routes>
+            <Route path="/staff" element={<ReviewQueue />} />
+            <Route path="/staff/cases/:caseId" element={<ReviewCase />} />
+          </Routes>
+        </TestAuthProvider>
+      </MemoryRouter>,
+    )
+
+    // Scoped to the "בקשה מהמטופל" panel: the decision form's own closing-message picker
+    // uses the same "הודעה" label, so an unscoped query would be ambiguous.
+    const panel = within((await screen.findByRole('heading', { name: 'בקשה מהמטופל' })).closest('section')!)
+    await userEvent.selectOptions(panel.getByLabelText('הודעה'), 'clarify_general')
+    await userEvent.type(panel.getByLabelText('סיבת הבקשה (פנימית)'), 'לא ברור מה נשאל')
+    await userEvent.click(panel.getByRole('button', { name: 'שליחה למטופל' }))
+
+    expect(await screen.findByText('הבקשה נשלחה')).toHaveClass('title')
+    expect(screen.getByText(`נשלחה בקשה למטופל בפנייה ${MEDICAL.case_id}.`)).toBeInTheDocument()
+  })
+
+  it('titles the notice "התשובה נשלחה" when a clinical answer is sent (ClinicalAnswer onAnswered)', async () => {
+    vi.mocked(api.getContext).mockResolvedValue(reviewContext())
+    vi.mocked(api.getReviewItem).mockResolvedValue(MEDICAL)
+    vi.mocked(api.getMessageTemplates).mockResolvedValue([])
+    vi.mocked(api.listCaseAppointments).mockResolvedValue({
+      from: '2026-09-26T00:00:00Z',
+      to: '2026-10-26T00:00:00Z',
+      appointments: [],
+      truncated: false,
+    })
+    vi.mocked(api.answer).mockResolvedValue({ case_id: MEDICAL.case_id, state: 'Completed' })
+    vi.mocked(api.listReviews).mockResolvedValue(page([]))
+
+    render(
+      <MemoryRouter initialEntries={[`/staff/cases/${MEDICAL.case_id}`]}>
+        <TestAuthProvider value={authValue({ user: STAFF_USER })}>
+          <Routes>
+            <Route path="/staff" element={<ReviewQueue />} />
+            <Route path="/staff/cases/:caseId" element={<ReviewCase />} />
+          </Routes>
+        </TestAuthProvider>
+      </MemoryRouter>,
+    )
+
+    await userEvent.type(await screen.findByLabelText(/התשובה למטופל/), 'אין להפסיק את הטיפול.')
+    await userEvent.type(screen.getByLabelText(/סיבה/), 'נענתה טלפונית')
+    await userEvent.click(screen.getByRole('button', { name: 'אישור ושליחת התשובה' }))
+
+    expect(await screen.findByText('התשובה נשלחה')).toHaveClass('title')
+    expect(screen.getByText(`נשלחה תשובה למטופל בפנייה ${MEDICAL.case_id}, והפנייה נסגרה.`)).toBeInTheDocument()
   })
 })
