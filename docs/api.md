@@ -933,9 +933,9 @@ time zone offset (a value with no offset is rejected, not assumed to be UTC or l
 the other is 30 days from it (before `to`, or after `from`). Both bounds in the answer are
 the exact instants the read actually used - a default `from` fixed once for that request, not
 recomputed - converted to UTC regardless of what offset the query sent. A reversed window
-(`to` at or before `from`), one longer than 366 days, or one whose bound - or whose default
-30-day span from a bound near the very edge of the representable date range (year 1 or 9999)
-- cannot be represented at all, is `422 invalid_range`.
+(`to` at or before `from`), one longer than 366 days, or one whose bound, or whose default
+30-day span computed from a bound near the very edge of the representable date range (year 1
+or 9999), cannot be represented at all, is `422 invalid_range`.
 
 A literal `+` in an offset (e.g. `+03:00`) must be percent-encoded as `%2B` in the query
 string: an unencoded `+` is decoded as a space by ordinary URL decoding, and the resulting
@@ -991,9 +991,10 @@ or zone the appointment-service itself answered with.
 - `503 appointments_unavailable` - the appointment-service did not answer, answered
   something other than its documented 200/404 shape, or answered any other status. The
   application log records one line, `appointment list: <code> in <n> ms`, for every outcome
-  - success included - where `<code>` is `ok`, `patient_not_found`, one of the codes above
+  (success included), where `<code>` is `ok`, `patient_not_found`, one of the codes above
   (`no_answer`, `status_<n>`, `invalid_response`), or `client_error` (the appointment-list
-  client's own defensive check on a naive datetime or a malformed `patient_id`, neither
-  reachable through this route in practice, since the routes always resolve a token- or
-  case-bound `patient_id` and the window is always built as aware datetimes) - never the
-  patient_id and never an appointment (§12.3, design D9).
+  client's own defensive `ValueError` - a naive datetime, a malformed `patient_id`, or the
+  client itself misconfigured, e.g. an invalid API key header the transport rejects before a
+  request is even sent; none of these is reachable through this route in practice, since the
+  routes always resolve a token- or case-bound `patient_id` and the window is always built as
+  aware datetimes) - never the patient_id and never an appointment (§12.3, design D9).

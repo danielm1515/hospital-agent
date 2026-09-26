@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import logging
 import time
-from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 
 from fastapi import HTTPException
@@ -75,16 +74,17 @@ def read(client: AppointmentListClient | None, patient_id: str, start: str | Non
         _log(logging.WARNING, failure.code, started)
         raise HTTPException(status_code=503, detail="appointments_unavailable") from None
     except ValueError:
-        # AppointmentListClient.list() raises this for a naive start/end or a patient_id that
-        # does not fully match its pattern - both programming errors (the routes always
-        # resolve patient_id from the token or the case, and window() always returns aware
-        # datetimes), never the client's fault. Fail closed exactly like AppointmentsUnavailable
-        # rather than a 500, and never name the patient_id in the log (§12.3).
+        # AppointmentListClient.list() raises this for a naive start/end, a patient_id that
+        # does not fully match its pattern, or the client itself misconfigured (e.g. an
+        # invalid API key header the transport rejects before a request is even sent) - none
+        # reachable through this route in practice (the routes always resolve patient_id from
+        # the token or the case, and window() always returns aware datetimes), never the
+        # patient's fault. Fail closed exactly like AppointmentsUnavailable rather than a 500,
+        # and never name the patient_id in the log (§12.3).
         _log(logging.WARNING, "client_error", started)
         raise HTTPException(status_code=503, detail="appointments_unavailable") from None
     _log(logging.INFO, "ok", started)
-    appointments = [
-        AppointmentView.model_validate(replace(a, appointment_at=a.appointment_at.astimezone(UTC)))
-        for a in result.appointments
-    ]
+    # appointment_at is already normalised to UTC by the client (appointment_list._appointment),
+    # the one place that can see - and safely reject - a row whose own conversion overflows.
+    appointments = [AppointmentView.model_validate(a) for a in result.appointments]
     return AppointmentsView(window_from=low, window_to=high, truncated=result.truncated, appointments=appointments)

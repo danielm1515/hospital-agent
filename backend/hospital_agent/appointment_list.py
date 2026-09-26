@@ -20,7 +20,7 @@ import re
 import urllib.parse
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 
 from .execution import http
 from .execution.http import MAX_BODY_BYTES, HttpResponse
@@ -89,6 +89,13 @@ def _appointment(item: object, patient_id: str) -> Appointment:
         raise AppointmentsUnavailable("invalid_response") from None
     if at.tzinfo is None:
         raise AppointmentsUnavailable("invalid_response")
+    try:
+        at = at.astimezone(UTC)  # normalised here, once, so every caller sees a UTC instant
+    except (ValueError, OverflowError):
+        # A year at the edge of datetime's range (e.g. 9999 or 1) can convert to an instant
+        # that no longer fits - the appointment-service's own contract, not the caller's
+        # fault either way, so it fails closed the same as any other unparseable row.
+        raise AppointmentsUnavailable("invalid_response") from None
     return Appointment(item["appointment_id"], at, item["department"], item.get("doctor_name"),
                        item.get("location"), status, tuple(sorted(set(documents))))
 

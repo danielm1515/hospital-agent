@@ -75,6 +75,18 @@ def test_anything_but_the_contract_is_invalid(body):
     assert caught.value.code == "invalid_response"
 
 
+@pytest.mark.parametrize("appointment_at", ["9999-12-31T23:00:00-03:00", "0001-01-01T00:00:00+03:00"])
+def test_a_utc_conversion_out_of_range_is_invalid(appointment_at):
+    """Fix round 2, item 1: a row whose own offset converts to an instant that no longer fits
+    (`astimezone(UTC)` overflowing/underflowing at the edge of datetime's range) is the
+    appointment-service's own contract failure, not the caller's - the same `invalid_response`,
+    never an unhandled OverflowError."""
+    with pytest.raises(AppointmentsUnavailable) as caught:
+        map_answer(answer({"appointments": [{**ONE, "appointment_at": appointment_at}], "truncated": False}),
+                  PATIENT_ID)
+    assert caught.value.code == "invalid_response"
+
+
 def test_an_oversized_or_non_json_body_is_invalid():
     for response in (HttpResponse(200, b"x" * MAX_BODY_BYTES), HttpResponse(200, b"not json")):
         with pytest.raises(AppointmentsUnavailable) as caught:

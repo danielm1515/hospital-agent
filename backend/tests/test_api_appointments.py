@@ -1,7 +1,7 @@
 """Sub-project 16 (design D5, D6, D9): the patient's and the staff's appointment routes."""
+import json
 import logging
 from datetime import UTC, datetime, timedelta
-from zoneinfo import ZoneInfo
 
 import pytest
 from fastapi.testclient import TestClient
@@ -12,8 +12,10 @@ from hospital_agent.appointment_list import (
     AppointmentList,
     AppointmentsUnavailable,
     PatientNotFound,
+    map_answer,
 )
 from hospital_agent.auth import demo_password
+from hospital_agent.execution.http import HttpResponse
 
 PATIENT, OTHER, NURSE, ADMIN = "P-10041", "P-20000", "coordinator_nurse", "admin_coordinator"
 AT = datetime(2026, 10, 3, 7, 30, tzinfo=UTC)
@@ -140,11 +142,15 @@ def test_not_configured_wins_over_a_bad_window(app_engine):
 
 
 def test_appointment_at_goes_out_in_utc_whatever_zone_the_service_used(app_engine):
-    """Fix round 1, item 2: the appointment-service's own `appointment_at` is normalised to
-    UTC before the answer goes out, exactly like the window bounds."""
-    local = Appointment("APT-1", datetime(2026, 10, 3, 10, 30, tzinfo=ZoneInfo("Asia/Jerusalem")),
-                        "Neurology", "Dr. Cohen", "Building B", "Scheduled", ())
-    fake = FakeList(result=AppointmentList((local,), False))
+    """Fix round 1, item 2 / fix round 2, item 1: `appointment_at` is normalised to UTC by the
+    client (`appointment_list._appointment`), not by the route - so this goes through
+    `map_answer`, exactly as the real client would, rather than a directly-constructed
+    Appointment that would bypass that conversion entirely."""
+    row = {"appointment_id": "APT-1", "patient_id": PATIENT, "department": "Neurology",
+          "doctor_name": "Dr. Cohen", "location": "Building B", "status": "Scheduled",
+          "required_documents": [], "appointment_at": "2026-10-03T10:30:00+03:00"}
+    body = json.dumps({"appointments": [row], "truncated": False}).encode()
+    fake = FakeList(result=map_answer(HttpResponse(200, body), PATIENT))
     with make(app_engine, fake) as client:
         response = client.get("/api/patient/appointments", headers=auth(client, PATIENT))
     assert response.json()["appointments"][0]["appointment_at"] == "2026-10-03T07:30:00Z"
@@ -173,13 +179,17 @@ def test_each_failure_is_one_code(app_engine, raises, status, code):
     assert (response.status_code, response.json()["detail"]) == (status, code)
 
 
-def test_a_bad_patient_id_is_503_not_500(app_engine):
-    """Controller ruling 1: the client's ValueError (its own patient_id pattern check) must
-    never surface as a 500 - it is fail-closed the same as AppointmentsUnavailable, and the
-    application log names the failure, never the patient_id."""
-    with make(app_engine, FakeList(raises=ValueError("invalid patient_id"))) as client:
-        response = client.get("/api/patient/appointments", headers=auth(client, PATIENT))
+def test_a_bad_patient_id_is_503_not_500(app_engine, caplog):
+    """Controller ruling 1: the client's ValueError (its own patient_id pattern check, a naive
+    datetime, or the client itself misconfigured) must never surface as a 500 - it is fail
+    closed the same as AppointmentsUnavailable, and the application log names the outcome
+    (`client_error`, fix round 2 item 3), never the patient_id."""
+    with caplog.at_level(logging.DEBUG, logger="hospital_agent.api.appointments"):
+        with make(app_engine, FakeList(raises=ValueError("invalid patient_id"))) as client:
+            response = client.get("/api/patient/appointments", headers=auth(client, PATIENT))
     assert (response.status_code, response.json()["detail"]) == (503, "appointments_unavailable")
+    assert "appointment list: client_error in" in caplog.text
+    assert PATIENT not in caplog.text
 
 
 def test_not_configured_is_404_not_enabled(app_engine):
