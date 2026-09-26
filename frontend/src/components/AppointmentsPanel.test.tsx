@@ -131,6 +131,22 @@ describe('AppointmentsPanel', () => {
     expect(load).toHaveBeenCalledTimes(1)
   })
 
+  it('refuses a range where "to" is exactly one day before "from", without calling load', async () => {
+    const load = vi.fn().mockResolvedValue(appointmentList())
+    const user = userEvent.setup()
+    render(<AppointmentsPanel audience="patient" load={load} />)
+    await waitFor(() => expect(load).toHaveBeenCalledTimes(1))
+
+    fireEvent.change(screen.getByLabelText('מתאריך'), { target: { value: '2026-10-10' } })
+    fireEvent.change(screen.getByLabelText('עד תאריך'), { target: { value: '2026-10-09' } })
+    await user.click(screen.getByRole('button', { name: 'הצגה' }))
+
+    expect(
+      await screen.findByText('תאריך הסיום חייב להיות אחרי תאריך ההתחלה או באותו יום'),
+    ).toBeInTheDocument()
+    expect(load).toHaveBeenCalledTimes(1)
+  })
+
   it('refuses a span over 366 days, without calling load', async () => {
     const load = vi.fn().mockResolvedValue(appointmentList())
     const user = userEvent.setup()
@@ -285,9 +301,11 @@ describe('AppointmentsPanel - fix round 1', () => {
     await waitFor(() => expect(load).toHaveBeenCalledTimes(1))
 
     // The mount's load is still pending, so the submit button's own busy-click guard
-    // would swallow a second `user.click` - dispatch the form's submit event directly,
-    // exactly as a native Enter-key resubmission would (never blocked by `busy`, which
-    // is only a class/aria attribute here, not the `disabled` attribute).
+    // would swallow a second `user.click`. In the real app a second, overlapping load
+    // comes from React StrictMode's double-invoked effect (both mount calls run before
+    // either resolves) rather than from any click; dispatching the form's submit event
+    // directly reproduces that same "two in-flight requests" shape without depending on
+    // StrictMode being enabled in this test render.
     fireEvent.change(screen.getByLabelText('מתאריך'), { target: { value: '2026-10-01' } })
     fireEvent.change(screen.getByLabelText('עד תאריך'), { target: { value: '2026-10-05' } })
     fireEvent.submit(container.querySelector('form')!)
