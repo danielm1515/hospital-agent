@@ -9,6 +9,7 @@ The provider's strict mode is not trusted alone: validate() checks every answer 
 """
 from __future__ import annotations
 
+import re
 from enum import StrEnum
 from typing import Any
 
@@ -52,9 +53,47 @@ PROPOSAL_SCHEMA = _object(action={"type": "string", "enum": _ACTIONS}, from_step
 EVALUATION_SCHEMA = _object(medical_content_flag={"type": "boolean"})
 
 
+_CODE_PATTERN = re.compile(r"[A-Za-z0-9_]{1,64}")
+
+# Staff-fixes design Task 1, decision 2: no retry can fix these - ask()/the Evaluator give up
+# at once instead of spending MAX_ATTEMPTS on a call that cannot succeed.
+NON_RETRYABLE_EXCEPTION_TYPES = frozenset({"AuthenticationError", "PermissionDeniedError", "NotFoundError"})
+NON_RETRYABLE_RATE_LIMIT_CODES = frozenset({"insufficient_quota", "credit_balance_exhausted"})
+
+
+def sanitize_code(code: object) -> str | None:
+    """A short API error code, safe to log and to put in a reason string - or None. Never the
+    model's output, never patient data: just OpenAI's own short error-code token."""
+    if isinstance(code, str):
+        match = _CODE_PATTERN.fullmatch(code)
+        if match:
+            return match.group()
+    return None
+
+
+def is_retryable(reason: str) -> bool:
+    """Whether a reason from LLMUnusable can still be fixed by trying again. `unparsable` and
+    `schema_violation` always are; an `api:<ExceptionType>[:<code>]` reason is not when no
+    retry could help (LLM design decision 2)."""
+    if not reason.startswith("api:"):
+        return True
+    exc_type, _, code = reason.removeprefix("api:").partition(":")
+    if exc_type in NON_RETRYABLE_EXCEPTION_TYPES:
+        return False
+    return not (exc_type == "RateLimitError" and code in NON_RETRYABLE_RATE_LIMIT_CODES)
+
+
 class LLMUnusable(Exception):
     """One answer that cannot be used: an API or network error, a timeout, bad JSON, or a
-    schema violation (LLM design §3). The message is a code, never the model's output."""
+    schema violation (LLM design §3). The message is a code, never the model's output.
+
+    `retryable` defaults to `is_retryable(reason)` - true for `unparsable`/`schema_violation`
+    and for an API error no retry could fix; an explicit value overrides it (e.g. a test)."""
+
+    def __init__(self, reason: str, *, retryable: bool | None = None) -> None:
+        super().__init__(reason)
+        self.reason = reason
+        self.retryable = is_retryable(reason) if retryable is None else retryable
 
 
 def validate(schema: dict[str, Any], data: object) -> dict[str, Any]:

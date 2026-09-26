@@ -147,6 +147,19 @@ def test_three_unusable_answers_escalate(run, call, kind):
     assert patient.trace()[-1].policy_reasons == [f"llm_failed:{call.value}"]
 
 
+def test_a_non_retryable_llm_failure_escalates_after_one_attempt(run):
+    """Staff-fixes design Task 1, decision 2: the escalation is exactly the same as after
+    three retryable failures - only the two pointless calls are saved."""
+    provider = FakeProvider({Call.INTENT: [LLMUnusable("api:RateLimitError:insufficient_quota")]})
+    patient, agent = run(provider)
+    patient.submit()
+    patient.validate()
+    agent.run_case(patient.case_id)
+    assert escalation(patient) == (State.AWAITING_HUMAN_REVIEW, EscalationKind.CLASSIFICATION_FAILED)
+    assert patient.trace()[-1].policy_reasons == [f"llm_failed:{Call.INTENT.value}"]
+    assert [call for call, _ in provider.calls].count(Call.INTENT) == 1
+
+
 def test_an_unsupported_intent_has_no_complete_plan(run):
     patient, agent = run()
     patient.submit()

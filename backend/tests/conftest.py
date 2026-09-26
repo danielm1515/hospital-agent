@@ -13,6 +13,7 @@ from alembic.config import Config
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Engine
 
+from hospital_agent.llm import telemetry
 from hospital_agent.state_manager import StateManager
 from hospital_agent.wiring import build_state_manager
 
@@ -42,6 +43,14 @@ def _no_real_appointment_service(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("APPOINTMENT_API_KEY", raising=False)
     monkeypatch.delenv("DOCUMENT_SERVICE_URL", raising=False)
     monkeypatch.delenv("DOCUMENT_API_KEY", raising=False)
+
+
+@pytest.fixture(autouse=True)
+def _fresh_llm_telemetry() -> None:
+    """`llm/telemetry.py` keeps the last outcome in a process-wide global (staff-fixes design
+    Task 1, decision 3) - reset it before every test so one test's LLM calls never leak into
+    another's `telemetry.status()` assertion."""
+    telemetry.reset()
 
 
 @pytest.fixture(scope="session")

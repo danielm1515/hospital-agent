@@ -1,7 +1,10 @@
 """The server starts the Agent Orchestrator only when the Model Selector finds a provider (LLM design §3)."""
+import logging
+
 from fastapi.testclient import TestClient
 
 from hospital_agent.api import app as app_module
+from hospital_agent.llm import telemetry
 from hospital_agent.llm.orchestrator import Orchestrator
 from hospital_agent.llm.provider import FakeProvider
 
@@ -14,7 +17,20 @@ def test_the_server_starts_the_orchestrator_only_with_a_provider(monkeypatch, ap
     monkeypatch.setattr(app_module, "select_provider", FakeProvider)
     with TestClient(app_module.create_app()) as client:
         assert client.get("/health").json() == {"status": "ok", "database": "ok", "orchestrator": "running",
+                                                "llm": telemetry.status(),
                                                 "appointments": "mock", "documents": "mock"}
+
+
+def test_a_missing_key_logs_an_error_at_startup(monkeypatch, app_engine, caplog):
+    """Staff-fixes design Task 1, decision 4: a missing key stays fail-closed (the server still
+    runs) but is now loud."""
+    monkeypatch.setenv("DATABASE_URL", app_engine.url.render_as_string(hide_password=False))
+    monkeypatch.setattr(app_module, "select_provider", lambda: None)
+    with caplog.at_level(logging.ERROR, logger="hospital_agent.api.app"):
+        with TestClient(app_module.create_app()) as client:
+            assert client.get("/health").json()["orchestrator"] == "disabled: OPENAI_API_KEY is not set"
+    assert any(record.message == "OPENAI_API_KEY is not set: the Agent Orchestrator is disabled"
+              for record in caplog.records)
 
 
 def test_the_app_exposes_the_running_orchestrator(monkeypatch, app_engine):
@@ -36,6 +52,7 @@ def test_the_server_uses_the_appointment_service_when_configured(monkeypatch, ap
     monkeypatch.setenv("APPOINTMENT_API_KEY", "dummy")
     with TestClient(app_module.create_app()) as client:
         assert client.get("/health").json() == {"status": "ok", "database": "ok", "orchestrator": "running",
+                                                "llm": telemetry.status(),
                                                 "appointments": "appointment-service", "documents": "mock"}
 
 

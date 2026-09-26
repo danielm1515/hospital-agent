@@ -83,6 +83,7 @@ methods: `GET`, `POST`, `DELETE`, `OPTIONS`. Allowed headers: `Authorization`,
 | GET | `/api/staff/message-templates` | staff | The fixed staff messages (sub-project 15) |
 | POST | `/api/staff/cases/{case_id}/request` | staff | Ask the patient a question or for a document (sub-project 15) |
 | DELETE | `/api/staff/cases/{case_id}/data/{entry_id}` | staff | Delete one Data Log entry |
+| GET | `/api/staff/system-status` | staff | Whether the Agent Orchestrator runs and the LLM's last outcome (staff-fixes design Task 1) |
 | GET | `/api/admin/metrics` | admin_staff | System metrics over a window (sub-project 14) |
 
 Codes used everywhere: `401 not_authenticated` (no token, a malformed token, an expired or
@@ -100,7 +101,9 @@ in this document, so leaving them enabled is fine for the demo. A non-demo build
 ### GET /health
 
 ```json
-{"status": "ok", "database": "ok", "orchestrator": "running", "appointments": "mock", "documents": "mock"}
+{"status": "ok", "database": "ok", "orchestrator": "running",
+ "llm": {"last_ok_at": "2026-09-26T10:00:03.512Z", "last_error": null, "last_error_at": null},
+ "appointments": "mock", "documents": "mock"}
 ```
 
 `orchestrator` appears only on a real server: `"running"`, `"disabled: OPENAI_API_KEY is not set"`,
@@ -109,7 +112,9 @@ in this document, so leaving them enabled is fine for the demo. A non-demo build
 While it runs, `appointments` says where `CheckAppointment` goes: `"mock"`, or `"appointment-service"`
 when `APPOINTMENT_SERVICE_URL` is set (sub-project 10), and `documents` says where `CheckDocuments`
 goes: `"mock"`, or `"document-service"` when `DOCUMENT_SERVICE_URL` is set (sub-project 13) - the
-word only, never the URL. `503` with
+word only, never the URL. `llm` appears alongside `orchestrator` (staff-fixes design Task 1): the
+last time any of the four LLM calls (Intent, Safety, Planner, Response Evaluator) succeeded, and the
+last outcome code and time when one was unusable - both `null` until the first call. `503` with
 `{"status": "degraded", "database": "unavailable"}` when Postgres cannot be reached.
 
 ### POST /api/auth/login
@@ -618,6 +623,26 @@ Errors - all of them leave the case exactly as it was:
 
 Take `entry_id` from the context's `data`. After a delete, re-fetch the context: the
 previous `shown_context_ref` is no longer valid.
+
+### GET /api/staff/system-status
+
+Staff-fixes design Task 1, decision 3: is the LLM (still) called at all, and does the Agent
+Orchestrator run. `200`:
+
+```json
+{"orchestrator": "running",
+ "llm": {"last_ok_at": "2026-09-26T10:00:03.512Z", "last_error": null, "last_error_at": null}}
+```
+
+- `orchestrator` is exactly `/health`'s field: `null` on an injected (test) server, `"running"`,
+  or a `"disabled: ..."` reason.
+- `llm` is exactly `/health`'s `llm` field (see §3): the last success time and the last error
+  code and time, all `null` until the first LLM call. The error code is one of `unparsable`,
+  `schema_violation`, or `api:<ExceptionType>[:<code>]` (e.g. `api:AuthenticationError`,
+  `api:RateLimitError:insufficient_quota`) - never request text, a prompt or an answer.
+
+The staff UI shows a banner while `orchestrator` is not `"running"`, or `last_error` is set and
+newer than `last_ok_at` - each with a Hebrew label beside the code.
 
 ## 6. Notes for the UI
 

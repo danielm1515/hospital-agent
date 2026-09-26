@@ -13,6 +13,7 @@ from sqlalchemy.engine import Engine
 from .. import repository
 from ..auth import Principal
 from ..human_review import AnswerRejected, ContextChanged, DecisionRejected, HumanReviewService, NotInReview
+from ..llm import telemetry
 from ..naming import State
 from ..session import CaseNotFound
 from . import appointments
@@ -29,6 +30,7 @@ from .schemas import (
     PatientRequestBody,
     ReviewContext,
     ReviewItem,
+    SystemStatusView,
 )
 
 router = APIRouter(prefix="/api/staff", tags=["staff"], dependencies=[Depends(require_staff)])
@@ -70,6 +72,13 @@ def get_audit(case_id: str, db: Engine = Depends(get_engine)) -> list[AuditRecor
         if repository.load_case(conn, case_id) is None:
             raise HTTPException(status_code=404, detail="case_not_found")
         return [AuditRecord.model_validate(entry) for entry in repository.load_trace(conn, case_id)]
+
+
+@router.get("/system-status", response_model=SystemStatusView)
+def system_status(request: Request) -> SystemStatusView:
+    """Staff-fixes design Task 1, decision 3: whether the Agent Orchestrator runs, and the
+    LLM's last outcome - shown as a banner while the last call failed or it does not run."""
+    return SystemStatusView(orchestrator=request.app.state.orchestrator_status, llm=telemetry.status())
 
 
 # --- human review -----------------------------------------------------------------------------

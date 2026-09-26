@@ -353,3 +353,17 @@ class AppointmentsView(BaseModel):
     window_to: datetime = Field(alias="to")
     appointments: list[AppointmentView]
     truncated: bool
+
+
+# --- staff-fixes design Task 1: is the LLM (still) called at all? --------------------------
+
+
+class LlmStatusView(BaseModel):
+    last_ok_at: str | None
+    last_error: str | None
+    last_error_at: str | None
+
+
+class SystemStatusView(BaseModel):
+    orchestrator: str | None
+    llm: LlmStatusView

@@ -324,3 +324,33 @@ def test_a_patient_token_cannot_reach_the_answer_route(client, sm, app_engine):
                           headers=token_for(client, PATIENT))
 
     assert refused.status_code == 403
+
+
+# --- staff-fixes design Task 1: GET /api/staff/system-status --------------------------------
+
+def test_system_status_is_staff_only(client, sm, app_engine):
+    refused = client.get("/api/staff/system-status", headers=token_for(client, PATIENT))
+    assert refused.status_code == 403 and refused.json()["detail"] == "staff_only"
+
+
+def test_system_status_shape_on_an_injected_test_server(client, staff):
+    """`client` here is built on an injected engine, exactly like every other test in this
+    file - no Orchestrator runs, so `orchestrator` is null and the LLM never ran."""
+    response = client.get("/api/staff/system-status", headers=staff)
+    assert response.status_code == 200
+    assert response.json() == {"orchestrator": None,
+                               "llm": {"last_ok_at": None, "last_error": None, "last_error_at": None}}
+
+
+def test_system_status_reports_the_llm_telemetry(client, staff):
+    from hospital_agent.llm import telemetry
+    from hospital_agent.llm.schemas import Call
+
+    telemetry.record(Call.INTENT, "gpt-5.6-luna", 12, "api:RateLimitError:insufficient_quota")
+
+    response = client.get("/api/staff/system-status", headers=staff)
+
+    body = response.json()
+    assert body["llm"]["last_error"] == "api:RateLimitError:insufficient_quota"
+    assert body["llm"]["last_error_at"] is not None
+    assert body["llm"]["last_ok_at"] is None

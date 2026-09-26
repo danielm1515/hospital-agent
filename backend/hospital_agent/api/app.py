@@ -14,6 +14,7 @@ or staff action calls, so a case moves the moment its event commits.
 from __future__ import annotations
 
 import json
+import logging
 import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -33,6 +34,7 @@ from ..execution.appointment_service import build_gateway
 from ..execution.background import sla_interval_seconds, start_background
 from ..execution.document_service import build_document_gateway
 from ..human_review import HumanReviewService
+from ..llm import telemetry
 from ..llm.model_selector import llm_version, select_provider
 from ..llm.orchestrator import Orchestrator, orchestrator_interval_seconds
 from ..session import DocumentIntake, SessionService
@@ -46,6 +48,8 @@ __all__ = ["UPLOAD_BODY_LIMIT", "UploadSizeLimit", "app", "cors_origins", "creat
 # The UI's dev server (sub-project 6). CORS_ORIGINS adds any deployed origin.
 DEFAULT_CORS_ORIGINS = ("http://localhost:5273", "http://127.0.0.1:5273",
                         "http://localhost:5173", "http://127.0.0.1:5173")
+
+logger = logging.getLogger(__name__)
 
 
 def cors_origins(env: dict[str, str] | None = None) -> list[str]:
@@ -122,6 +126,7 @@ def create_app(engine: Engine | None = None, orchestrator: Orchestrator | None =
             stops.append(start_background(sm, sla_interval_seconds()))
             if provider is None:
                 app.state.orchestrator_status = "disabled: OPENAI_API_KEY is not set"
+                logger.error("OPENAI_API_KEY is not set: the Agent Orchestrator is disabled")
             else:
                 # The demo's external systems are mocks (spec §18); on the owner's stack
                 # CheckAppointment may ask the real appointment-service (sub-project 10) and
@@ -165,7 +170,7 @@ def create_app(engine: Engine | None = None, orchestrator: Orchestrator | None =
     @app.get("/health")
     def health(request: Request, db: Engine = Depends(get_engine)) -> JSONResponse:
         orchestrator_status = request.app.state.orchestrator_status
-        extra = {} if orchestrator_status is None else {"orchestrator": orchestrator_status}
+        extra = {} if orchestrator_status is None else {"orchestrator": orchestrator_status, "llm": telemetry.status()}
         if request.app.state.appointments_source is not None:
             extra["appointments"] = request.app.state.appointments_source
         if request.app.state.documents_source is not None:

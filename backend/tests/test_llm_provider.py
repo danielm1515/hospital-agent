@@ -1,16 +1,19 @@
 """LLM providers, schemas and the Model Selector (spec §18.5; LLM design §3, §4). No network."""
 import json
+import logging
 import pickle
 
 import httpx
 import pytest
 
+from hospital_agent.llm import telemetry
 from hospital_agent.llm.model_selector import DEFAULT_MODEL, llm_version, select_provider
 from hospital_agent.llm.provider import (
     DEMO_PLAN, MAX_ATTEMPTS, FakeProvider, LLMFailed, OpenAIProvider, ask, prompt, prompts_version,
 )
 from hospital_agent.llm.schemas import (
-    EVALUATION_SCHEMA, INTENT_SCHEMA, PLAN_SCHEMA, PROPOSAL_SCHEMA, SAFETY_SCHEMA, Call, LLMUnusable, validate,
+    EVALUATION_SCHEMA, INTENT_SCHEMA, PLAN_SCHEMA, PROPOSAL_SCHEMA, SAFETY_SCHEMA, Call, LLMUnusable, is_retryable,
+    sanitize_code, validate,
 )
 from hospital_agent.wiring import build_state_manager
 
@@ -66,6 +69,89 @@ def test_a_scripted_answer_is_still_schema_checked():
     provider = FakeProvider({Call.SAFETY: [{"safety_level": "Unknown"}]})
     with pytest.raises(LLMUnusable):
         provider.complete(Call.SAFETY, {"content": "x"}, SAFETY_SCHEMA)
+
+
+# --- staff-fixes design Task 1: no retry can fix some failures ------------------------------
+
+@pytest.mark.parametrize("reason", [
+    "unparsable", "schema_violation", "api:InternalServerError", "api:RateLimitError",
+    "api:RateLimitError:some_other_code", "x",
+])
+def test_retryable_reasons(reason):
+    assert is_retryable(reason)
+
+
+@pytest.mark.parametrize("reason", [
+    "api:AuthenticationError", "api:PermissionDeniedError", "api:NotFoundError",
+    "api:RateLimitError:insufficient_quota", "api:RateLimitError:credit_balance_exhausted",
+])
+def test_non_retryable_reasons(reason):
+    assert not is_retryable(reason)
+
+
+def test_llm_unusable_computes_retryable_from_its_reason_by_default():
+    assert LLMUnusable("schema_violation").retryable
+    assert not LLMUnusable("api:AuthenticationError").retryable
+
+
+def test_llm_unusable_retryable_can_be_overridden():
+    assert not LLMUnusable("schema_violation", retryable=False).retryable
+    assert LLMUnusable("api:AuthenticationError", retryable=True).retryable
+
+
+def test_llm_unusable_pickles_with_its_retryable_flag():
+    """The Response Evaluator's worker process pickles LLMUnusable across the process
+    boundary (evaluator.py) - the new attribute must survive that."""
+    clone = pickle.loads(pickle.dumps(LLMUnusable("api:AuthenticationError")))
+    assert (clone.reason, clone.retryable) == ("api:AuthenticationError", False)
+
+
+@pytest.mark.parametrize("code, expected", [
+    ("insufficient_quota", "insufficient_quota"),
+    ("a" * 64, "a" * 64),
+    ("a" * 65, None),          # over the length limit
+    ("bad code!", None),       # not [A-Za-z0-9_]
+    (None, None),
+    (123, None),               # not a string
+])
+def test_sanitize_code(code, expected):
+    assert sanitize_code(code) == expected
+
+
+def test_ask_gives_up_at_once_on_a_non_retryable_reason():
+    provider = FakeProvider({Call.INTENT: [LLMUnusable("api:AuthenticationError")]})
+    with pytest.raises(LLMFailed, match="intent"):
+        ask(provider, Call.INTENT, {"request_text": "hi"}, INTENT_SCHEMA)
+    assert len(provider.calls) == 1  # the two pointless retries are saved
+
+
+def test_ask_still_retries_a_retryable_api_error():
+    provider = FakeProvider({Call.INTENT: [LLMUnusable("api:RateLimitError")] * MAX_ATTEMPTS})
+    with pytest.raises(LLMFailed, match="intent"):
+        ask(provider, Call.INTENT, {"request_text": "hi"}, INTENT_SCHEMA)
+    assert len(provider.calls) == MAX_ATTEMPTS == 3
+
+
+def test_ask_logs_and_records_every_attempt(caplog):
+    provider = FakeProvider({Call.INTENT: [LLMUnusable("schema_violation"), {"intent": "Unsupported"}]})
+    with caplog.at_level(logging.INFO, logger="hospital_agent.llm"):
+        ask(provider, Call.INTENT, {"request_text": "very private patient text"}, INTENT_SCHEMA)
+    lines = [record.message for record in caplog.records]
+    assert any(l.startswith("llm call=intent model=fake ms=") and l.endswith("outcome=schema_violation")
+              for l in lines)
+    assert any(l.startswith("llm call=intent model=fake ms=") and l.endswith("outcome=ok") for l in lines)
+    assert not any("very private patient text" in l for l in lines)  # §12.3: no request content
+    assert telemetry.status()["last_ok_at"] is not None
+
+
+def test_ask_records_the_last_error_when_it_finally_fails():
+    provider = FakeProvider({Call.INTENT: [LLMUnusable("schema_violation")] * MAX_ATTEMPTS})
+    with pytest.raises(LLMFailed):
+        ask(provider, Call.INTENT, {"request_text": "hi"}, INTENT_SCHEMA)
+    status = telemetry.status()
+    assert status["last_error"] == "schema_violation"
+    assert status["last_error_at"] is not None
+    assert status["last_ok_at"] is None
 
 
 # --- FakeProvider's deterministic rules -----------------------------------------------------
@@ -142,6 +228,34 @@ def test_openai_timeout_is_unusable():
 
     with pytest.raises(LLMUnusable, match="api:APITimeoutError"):
         _openai(handler).complete(Call.INTENT, {"request_text": "x"}, INTENT_SCHEMA)
+
+
+@pytest.mark.parametrize("status, body, reason, retryable", [
+    (429, {"error": {"message": "no credit", "code": "insufficient_quota"}},
+     "api:RateLimitError:insufficient_quota", False),
+    (429, {"error": {"message": "no credit", "code": "credit_balance_exhausted"}},
+     "api:RateLimitError:credit_balance_exhausted", False),
+    (429, {"error": {"message": "slow down", "code": "rate_limit_exceeded"}},
+     "api:RateLimitError:rate_limit_exceeded", True),
+    (401, {"error": {"message": "bad key", "code": "invalid_api_key"}},
+     "api:AuthenticationError:invalid_api_key", False),
+    (401, {"error": {"message": "bad key"}}, "api:AuthenticationError", False),  # no code at all
+    (403, {"error": {"message": "denied"}}, "api:PermissionDeniedError", False),
+    (404, {"error": {"message": "no such model"}}, "api:NotFoundError", False),
+])
+def test_openai_carries_the_api_code_and_marks_it_retryable(status, body, reason, retryable):
+    with pytest.raises(LLMUnusable, match=f"^{reason}$") as excinfo:
+        _openai(lambda request: httpx.Response(status, json=body)).complete(
+            Call.INTENT, {"request_text": "x"}, INTENT_SCHEMA)
+    assert (excinfo.value.reason, excinfo.value.retryable) == (reason, retryable)
+
+
+def test_openai_drops_an_unsafe_looking_code():
+    # A code with characters outside [A-Za-z0-9_] is dropped rather than logged verbatim (§12.3).
+    body = {"error": {"message": "boom", "code": "weird; code with spaces"}}
+    with pytest.raises(LLMUnusable, match="^api:InternalServerError$"):
+        _openai(lambda request: httpx.Response(500, json=body)).complete(
+            Call.INTENT, {"request_text": "x"}, INTENT_SCHEMA)
 
 
 def test_openai_provider_pickles_without_its_client():
