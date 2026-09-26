@@ -119,7 +119,7 @@ patient can read it on the request screen and in the appointments panel.
 ### Task 7 (hospital-agent frontend)
 
 - New request form: "לאיזה תור הפנייה?" select from `listMyAppointments` (next 90 days, Scheduled only):
-  exam label + department + date; one → pre-selected; always "התור הקרוב ביותר" (no id); a failed load leaves
+  exam label + department + date; one → pre-selected; "התור הקרוב ביותר" (no id) only when there is at most one upcoming appointment (more → choosing is mandatory); a pre-send check matches the text against the other appointments (d/m or d.m dates, department and exam labels) and offers to switch ("נראה שכתבת על … - לעבור לתור הזה?"), switch or send as is; a failed load leaves
   only that option with a quiet note; sends `appointment_id`.
 - RequestDetail `completed`: the instructions under the message, title + text, as a readable section.
 - AppointmentsPanel: exam type label beside the department; instruction title with a "הצגת הוראות ההכנה"
