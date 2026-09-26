@@ -105,6 +105,9 @@ class NewRequest(BaseModel):
     """§3.1 RequestValid also checks the text; this is the first, cheap gate."""
 
     text: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=2000)]
+    # Sub-project 18 (design D5): the appointment the patient picked, from the sub-project 16
+    # appointments list - optional; "the nearest appointment" (no id) omits it entirely.
+    appointment_id: Annotated[str, StringConstraints(pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")] | None = None
 
 
 class DocumentUpload(BaseModel):

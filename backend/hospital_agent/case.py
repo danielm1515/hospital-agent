@@ -56,6 +56,14 @@ class CaseRecord:
     human_engaged: bool = False
     reply_kind: str | None = None  # "question" | "document" while AwaitingPatientReply
     requested_document: str | None = None  # the catalog type a document request asks for
+    # Sub-project 18 (design D5/D6): the patient-chosen appointment (set once, when the case is
+    # opened) and the facts CheckAppointment's answer carries about it (RECORD_RETRIEVAL).
+    appointment_id: str | None = None
+    department: str | None = None
+    exam_type_label: str | None = None
+    instruction_source_id: str | None = None
+    instruction_version: str | None = None
+    upcoming_count: int | None = None
 
     def step_action(self, step: int | None) -> Action | None:
         """The action at 1-based `step` of the approved plan, or None outside the plan."""
@@ -77,8 +85,13 @@ class CaseRecord:
         return None if self.current_step is None else self.step_action(self.current_step + 1)
 
 
-def new_case(case_id: str, patient_id: str, now: datetime) -> CaseRecord:
-    """The row REQUEST_SUBMITTED creates (§3 Initial -> Received)."""
+def new_case(case_id: str, patient_id: str, now: datetime, *, appointment_id: str | None = None) -> CaseRecord:
+    """The row REQUEST_SUBMITTED creates (§3 Initial -> Received).
+
+    `appointment_id` (sub-project 18, D5): the patient's chosen appointment, when
+    `POST /api/patient/requests` carried one - stored on the creation insert itself, not a
+    later effect, since there is no case row to update before this one exists.
+    """
     return CaseRecord(
         case_id=case_id,
         patient_id=patient_id,
@@ -86,6 +99,7 @@ def new_case(case_id: str, patient_id: str, now: datetime) -> CaseRecord:
         state_version=1,
         created_at=now,
         updated_at=now,
+        appointment_id=appointment_id,
     )
 
 

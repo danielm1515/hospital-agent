@@ -13,26 +13,46 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Any, Protocol
 
+from ..case import CaseRecord
 from ..naming import AUTOMATIC_ACTIONS, Action
 
 # Execution design decision 3: every automatic action is idempotent; the patient channel
 # ignores a repeated idempotency_key.
 IDEMPOTENT_ACTIONS = frozenset(a.value for a in AUTOMATIC_ACTIONS)
 
-# action -> (target_system, the patient fields it receives)
+# action -> (target_system, the patient fields it receives). Sub-project 18 (design §2, D5/D6):
+# CheckAppointment may also receive appointment_id - the patient-chosen appointment, stored on
+# the case (§11: minimized(appointment_id, appointment_system) is in the spec) - but only when
+# the case has one; see present_patient_fields() below.
 ACTION_TARGETS: dict[str, tuple[str, tuple[str, ...]]] = {
-    Action.CHECK_APPOINTMENT.value: ("appointment_system", ("patient_id",)),
+    Action.CHECK_APPOINTMENT.value: ("appointment_system", ("patient_id", "appointment_id")),
     Action.CHECK_DOCUMENTS.value: ("document_system", ("patient_id",)),
     Action.LOAD_INSTRUCTIONS.value: ("instruction_system", ()),
     Action.SEND_STATUS_UPDATE.value: ("patient_channel", ("patient_id",)),
 }
 
+
+def present_patient_fields(case: CaseRecord, action: str) -> tuple[str, ...]:
+    """The patient fields ACTION_TARGETS declares for `action` that this case actually holds.
+
+    Every fixed field (patient_id) is never None, so this changes nothing for them; it exists
+    for CheckAppointment's optional appointment_id (sub-project 18, D5/D6), sent - to the real
+    system and to the Policy Service's OPA input alike - only when the patient chose one.
+    """
+    _, fields = ACTION_TARGETS[action]
+    return tuple(name for name in fields if getattr(case, name, None) is not None)
+
+
 # action -> the result fields its owning system may set on DATA_RETRIEVED (design §3.4): each
 # system supplies only its own facts, so e.g. the instruction system cannot set held_documents.
 # design §5.1 (sub-projects 11-13): the appointment system owns what an appointment requires,
-# the document system what the patient holds.
+# the document system what the patient holds. Sub-project 18 (D6): the appointment system also
+# owns appointment_id, department, exam_type_label, instruction_source_id, instruction_version
+# and upcoming_count - each optional in its answer (design §2, an older service omits some).
 RESULT_FIELDS: dict[str, tuple[str, ...]] = {
-    Action.CHECK_APPOINTMENT.value: ("appointment_at", "required_documents"),
+    Action.CHECK_APPOINTMENT.value: ("appointment_at", "required_documents", "appointment_id", "department",
+                                     "exam_type_label", "instruction_source_id", "instruction_version",
+                                     "upcoming_count"),
     Action.CHECK_DOCUMENTS.value: ("held_documents",),
     Action.LOAD_INSTRUCTIONS.value: ("instruction_ids",),  # instruction_text goes to the Data Log, not the event
     Action.SEND_STATUS_UPDATE.value: ("delivered",),
@@ -105,7 +125,11 @@ class MockGateway:
         match action:
             case Action.CHECK_APPOINTMENT.value:
                 at = self.clock() + timedelta(hours=self.hours_until_appointment)
-                return ToolResult(OK, {"appointment_at": at, "required_documents": list(self.required_documents)})
+                # Sub-project 18 (D7): the mock's own instruction source, so a case without a
+                # real appointment-service still resolves to the demo colonoscopy instructions
+                # and the three golden traces (§0, §15) keep loading them unchanged.
+                return ToolResult(OK, {"appointment_at": at, "required_documents": list(self.required_documents),
+                                       "instruction_source_id": "INSTR-PREP-COLONOSCOPY", "instruction_version": "3"})
             case Action.CHECK_DOCUMENTS.value:
                 return ToolResult(OK, {"held_documents": list(self.held_documents)})
             case Action.LOAD_INSTRUCTIONS.value:

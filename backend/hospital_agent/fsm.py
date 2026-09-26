@@ -298,6 +298,21 @@ def apply_effects(case: CaseRecord, row: Transition, ctx: GuardContext) -> CaseR
                     changes["required_documents"] = list(p["required_documents"])
                 if "held_documents" in p:
                     changes["held_documents"] = list(p["held_documents"])
+                # Sub-project 18 (D6): CheckAppointment's own facts about the appointment it
+                # read, each stored only when the answer actually carried it (older services,
+                # or the mock, omit some of these - absent means "leave unchanged", never None).
+                if "appointment_id" in p:
+                    changes["appointment_id"] = p["appointment_id"]
+                if "department" in p:
+                    changes["department"] = p["department"]
+                if "exam_type_label" in p:
+                    changes["exam_type_label"] = p["exam_type_label"]
+                if "instruction_source_id" in p:
+                    changes["instruction_source_id"] = p["instruction_source_id"]
+                if "instruction_version" in p:
+                    changes["instruction_version"] = p["instruction_version"]
+                if "upcoming_count" in p:
+                    changes["upcoming_count"] = p["upcoming_count"]
                 if "safety_level" in p:  # LLM design §5: a re-check only ever raises the risk
                     changes["safety_level"] = _higher_risk(case.safety_level, SafetyLevel(p["safety_level"]))
             case Effect.RECORD_PATIENT_DEADLINE:

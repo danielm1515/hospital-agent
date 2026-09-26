@@ -71,6 +71,12 @@ def _case_from_row(row: RowMapping) -> CaseRecord:
         human_engaged=row["human_engaged"],
         reply_kind=row["reply_kind"],
         requested_document=row["requested_document"],
+        appointment_id=row["appointment_id"],
+        department=row["department"],
+        exam_type_label=row["exam_type_label"],
+        instruction_source_id=row["instruction_source_id"],
+        instruction_version=row["instruction_version"],
+        upcoming_count=row["upcoming_count"],
     )
 
 
@@ -97,6 +103,12 @@ def _case_values(case: CaseRecord) -> dict[str, Any]:
         "human_engaged": case.human_engaged,
         "reply_kind": case.reply_kind,
         "requested_document": case.requested_document,
+        "appointment_id": case.appointment_id,
+        "department": case.department,
+        "exam_type_label": case.exam_type_label,
+        "instruction_source_id": case.instruction_source_id,
+        "instruction_version": case.instruction_version,
+        "upcoming_count": case.upcoming_count,
         "updated_at": case.updated_at,
     }
 

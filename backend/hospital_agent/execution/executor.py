@@ -31,7 +31,15 @@ from .. import data_log
 from ..case import CaseRecord, ExecutionRecord
 from ..naming import Action, Component, EscalationKind, Event, SafetyLevel
 from ..state_manager import ExecutionOutcome, StateManager, TransitionResult
-from .gateway import ACTION_TARGETS, KNOWN_TOOL_ERRORS, OK, RESULT_FIELDS, TRANSIENT_FAILURE, ToolGateway, ToolResult
+from .gateway import (
+    KNOWN_TOOL_ERRORS,
+    OK,
+    RESULT_FIELDS,
+    TRANSIENT_FAILURE,
+    ToolGateway,
+    ToolResult,
+    present_patient_fields,
+)
 from .retry import after_failure
 from .verify import EXECUTING_STATES
 
@@ -131,8 +139,14 @@ class ToolExecutor:
 
     @staticmethod
     def _parameters(case: CaseRecord, execution: ExecutionRecord) -> dict[str, Any]:
-        """Only the patient fields the target may receive (spec §11), plus the message reference."""
-        _, fields = ACTION_TARGETS[execution.action]
+        """Only the patient fields the target may receive (spec §11), plus the message reference.
+
+        present_patient_fields (sub-project 18) drops a declared field the case does not
+        actually hold - CheckAppointment's appointment_id is sent only when the patient chose
+        an appointment (D5/D6); every other action's fields are always present, so this changes
+        nothing for them.
+        """
+        fields = present_patient_fields(case, execution.action)
         parameters: dict[str, Any] = {name: getattr(case, name) for name in fields}
         if execution.action == Action.SEND_STATUS_UPDATE.value:
             parameters["content_hash"] = execution.content_hash

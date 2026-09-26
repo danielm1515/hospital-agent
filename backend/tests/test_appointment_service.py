@@ -47,7 +47,8 @@ def test_a_found_appointment_is_ok_with_an_aware_time():
     result = map_response(response(200, FOUND), now=NOW)
     assert result == ToolResult(OK, {"appointment_at": datetime(2026, 10, 3, 10, 30,
                                                                 tzinfo=timezone(timedelta(hours=3))),
-                                     "required_documents": ["CBC", "COAGULATION_TESTS", "ECG"]})
+                                     "required_documents": ["CBC", "COAGULATION_TESTS", "ECG"],
+                                     "appointment_id": "APT-1", "department": "Neurology"})
     assert result.data["appointment_at"].utcoffset() == timedelta(hours=3)
 
 
@@ -71,6 +72,81 @@ def test_an_appointment_service_without_the_field_is_an_invalid_response():
     """An older appointment-service (before sub-project 11) cannot say what is required: fail closed."""
     appointment = {k: v for k, v in FOUND["appointment"].items() if k != "required_documents"}
     assert map_response(response(200, {"found": True, "appointment": appointment}), now=NOW).data == {"error": "invalid_response"}
+
+
+# --- sub-project 18: the patient-chosen appointment's new, optional facts (design §2, D3/D6) ----
+
+FOUND_WITH_EXTRAS = {
+    "found": True,
+    "appointment": {**FOUND["appointment"], "appointment_id": "APT-1", "department": "Cardiology",
+                    "exam_type": {"code": "CARD_STRESS", "label": "מבחן מאמץ"},
+                    "instruction": {"source_id": "INSTR-CARD-STRESS", "version": "1", "title": "הכנה למבחן מאמץ"}},
+    "upcoming_count": 3,
+}
+
+
+def test_the_new_fields_are_carried_when_present():
+    data = map_response(response(200, FOUND_WITH_EXTRAS), now=NOW).data
+    assert data["appointment_id"] == "APT-1"
+    assert data["department"] == "Cardiology"
+    assert data["exam_type_label"] == "מבחן מאמץ"
+    assert data["instruction_source_id"] == "INSTR-CARD-STRESS"
+    assert data["instruction_version"] == "1"
+    assert data["upcoming_count"] == 3
+
+
+def test_the_new_fields_are_absent_without_a_substitute_when_the_answer_omits_them():
+    """design §2: every new field is optional - absent means None (no key at all), never a
+    fallback value - so an older appointment-service still works exactly as before."""
+    appointment = {k: v for k, v in FOUND["appointment"].items() if k not in ("appointment_id", "department")}
+    data = map_response(response(200, {"found": True, "appointment": appointment}), now=NOW).data
+    for key in ("appointment_id", "department", "exam_type_label", "instruction_source_id",
+               "instruction_version", "upcoming_count"):
+        assert key not in data
+
+
+@pytest.mark.parametrize("appointment_patch, top_level", [
+    ({"appointment_id": ""}, {}),
+    ({"appointment_id": 1}, {}),
+    ({"department": ""}, {}),
+    ({"department": 1}, {}),
+    ({"exam_type": "CARD_STRESS"}, {}),          # not a dict
+    ({"exam_type": {"code": "CARD_STRESS"}}, {}),  # no label
+    ({"exam_type": {"label": ""}}, {}),           # empty label
+    ({"instruction": "INSTR-CARD-STRESS"}, {}),   # not a dict
+    ({"instruction": {"source_id": "INSTR-CARD-STRESS"}}, {}),  # no version
+    ({"instruction": {"version": "1"}}, {}),      # no source_id
+    ({"instruction": {"source_id": "", "version": "1"}}, {}),
+    ({}, {"upcoming_count": "3"}),
+    ({}, {"upcoming_count": True}),
+    ({}, {"upcoming_count": 1.5}),
+])
+def test_a_present_but_malformed_new_field_is_invalid_response(appointment_patch, top_level):
+    appointment = {**FOUND_WITH_EXTRAS["appointment"], **appointment_patch}
+    body = {**FOUND_WITH_EXTRAS, "appointment": appointment, **top_level}
+    assert map_response(response(200, body), now=NOW) == ToolResult(ERROR, {"error": "invalid_response"})
+
+
+def test_a_chosen_appointment_that_is_not_the_patients_is_not_found_with_no_substitute():
+    """design D6: a chosen appointment that is not the patient's (the service answers
+    found=false) takes the existing not_found path - never a fallback to some other
+    appointment."""
+    result = map_response(response(200, {"found": False, "appointment": None, "upcoming_count": 2}), now=NOW)
+    assert result == ToolResult(ERROR, {"error": "not_found"})
+
+
+def test_appointment_id_is_sent_as_a_query_parameter_when_present():
+    gw, transport = gateway(response(200, FOUND))
+    gw.call("CheckAppointment", {"patient_id": "P-10041", "appointment_id": "APT-8391"}, "K-1")
+    [(url, _, _)] = transport.requests
+    assert url == "http://appointments.test/api/v1/patients/P-10041/appointment?appointment_id=APT-8391"
+
+
+def test_no_query_parameter_when_appointment_id_is_absent():
+    gw, transport = gateway(response(200, FOUND))
+    gw.call("CheckAppointment", {"patient_id": "P-10041"}, "K-1")
+    [(url, _, _)] = transport.requests
+    assert url == "http://appointments.test/api/v1/patients/P-10041/appointment"
 
 
 @pytest.mark.parametrize("answer, error", [

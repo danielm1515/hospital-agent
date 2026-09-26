@@ -46,6 +46,25 @@ def _json(body: bytes) -> Any:
         return None
 
 
+def _optional_str(value: Any) -> tuple[bool, str | None]:
+    """(ok, value): ok is False only for a present field with the wrong shape (sub-project 18
+    design §2 - every new field is optional; absent means None, a non-empty string is kept, and
+    anything else - "", a number, a list - is invalid_response, fail closed)."""
+    if value is None:
+        return True, None
+    if isinstance(value, str) and value:
+        return True, value
+    return False, None
+
+
+def _optional_int(value: Any) -> tuple[bool, int | None]:
+    if value is None:
+        return True, None
+    if isinstance(value, int) and not isinstance(value, bool):
+        return True, value
+    return False, None
+
+
 def map_response(response: HttpResponse, *, now: datetime) -> ToolResult:
     """design §2.6, row by row."""
     if response.status in _TRANSIENT:
@@ -79,7 +98,51 @@ def map_response(response: HttpResponse, *, now: datetime) -> ToolResult:
     required = _required_documents(appointment.get("required_documents"))
     if required is None:
         return _error("invalid_response")
-    return ToolResult(OK, {"appointment_at": at, "required_documents": required})
+    # Sub-project 18 (design §2, D3/D6): every field below is optional (an older service simply
+    # omits it - absent means None, never a substitute value) - but a *present* field with an
+    # invalid shape is invalid_response, fail closed.
+    ok, appointment_id = _optional_str(appointment.get("appointment_id"))
+    if not ok:
+        return _error("invalid_response")
+    ok, department = _optional_str(appointment.get("department"))
+    if not ok:
+        return _error("invalid_response")
+    exam_type_label = None
+    exam_type = appointment.get("exam_type")
+    if exam_type is not None:
+        if not isinstance(exam_type, dict):
+            return _error("invalid_response")
+        ok, exam_type_label = _optional_str(exam_type.get("label"))
+        if not ok or exam_type_label is None:
+            return _error("invalid_response")
+    instruction_source_id = instruction_version = None
+    instruction = appointment.get("instruction")
+    if instruction is not None:
+        if not isinstance(instruction, dict):
+            return _error("invalid_response")
+        ok, instruction_source_id = _optional_str(instruction.get("source_id"))
+        if not ok or instruction_source_id is None:
+            return _error("invalid_response")
+        ok, instruction_version = _optional_str(instruction.get("version"))
+        if not ok or instruction_version is None:
+            return _error("invalid_response")
+    ok, upcoming_count = _optional_int(body.get("upcoming_count"))
+    if not ok:
+        return _error("invalid_response")
+    data: dict[str, Any] = {"appointment_at": at, "required_documents": required}
+    if appointment_id is not None:
+        data["appointment_id"] = appointment_id
+    if department is not None:
+        data["department"] = department
+    if exam_type_label is not None:
+        data["exam_type_label"] = exam_type_label
+    if instruction_source_id is not None:
+        data["instruction_source_id"] = instruction_source_id
+    if instruction_version is not None:
+        data["instruction_version"] = instruction_version
+    if upcoming_count is not None:
+        data["upcoming_count"] = upcoming_count
+    return ToolResult(OK, data)
 
 
 def _required_documents(value: Any) -> list[str] | None:
@@ -118,6 +181,9 @@ class AppointmentServiceGateway:
         if not isinstance(patient_id, str) or not patient_id:
             return _error("invalid_request")
         url = f"{self._base_url}/api/v1/patients/{urllib.parse.quote(patient_id, safe='')}/appointment"
+        appointment_id = parameters.get("appointment_id")
+        if isinstance(appointment_id, str) and appointment_id:
+            url += f"?appointment_id={urllib.parse.quote(appointment_id, safe='')}"
         headers = {"X-API-Key": self._api_key, "X-Execution-ID": idempotency_key, "Accept": "application/json"}
         try:
             answer = self._transport(url, headers, self._timeout)

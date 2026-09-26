@@ -252,8 +252,9 @@ class SessionService:
 
     # --- events --------------------------------------------------------------------------
 
-    def open_case(self, patient_id: str) -> TransitionResult:
-        return self.sm.apply(None, Event.REQUEST_SUBMITTED, {"patient_id": patient_id}, Component.EXTERNAL)
+    def open_case(self, patient_id: str, *, appointment_id: str | None = None) -> TransitionResult:
+        return self.sm.apply(None, Event.REQUEST_SUBMITTED,
+                             {"patient_id": patient_id, "appointment_id": appointment_id}, Component.EXTERNAL)
 
     def validate_request(self, case_id: str, text: str, *, identity_verified: bool = True) -> TransitionResult:
         case = self._load(case_id)
@@ -263,13 +264,19 @@ class SessionService:
     def verification_failed(self, case_id: str) -> TransitionResult:
         return self.sm.apply(case_id, Event.PATIENT_VERIFICATION_FAILED, {}, Component.SESSION_SERVICE)
 
-    def submit_request(self, patient_id: str, text: str, *, identity_verified: bool) -> str:
+    def submit_request(self, patient_id: str, text: str, *, identity_verified: bool,
+                       appointment_id: str | None = None) -> str:
         """Open a case for the patient's request. An empty request is refused before anything
         is written: RequestValid (§3.1) would block it anyway, and an orphan case with an empty
-        Data Log entry must not be left behind."""
+        Data Log entry must not be left behind.
+
+        `appointment_id` (sub-project 18, D5): the appointment the patient picked - rides on
+        REQUEST_SUBMITTED and is stored on the case as it is created. The LLM never supplies
+        it; CheckAppointment (§11) is the only later step allowed to read it back.
+        """
         if not (text or "").strip():
             raise EventRejected(REQUEST_TEXT_REQUIRED)
-        opened = _committed(self.open_case(patient_id))
+        opened = _committed(self.open_case(patient_id, appointment_id=appointment_id))
         case_id = opened.case_id
         if identity_verified:
             _committed(self.validate_request(case_id, text))

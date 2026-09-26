@@ -41,7 +41,7 @@ import uuid
 
 from .. import data_log, repository
 from ..execution.executor import ToolExecutor
-from ..execution.gateway import ACTION_TARGETS, ToolGateway
+from ..execution.gateway import ACTION_TARGETS, ToolGateway, present_patient_fields
 from ..execution.verify import EXECUTING_STATES
 from ..naming import Action, Component, EscalationKind, Event, State
 from ..policy.readiness import ReadinessCheck
@@ -230,7 +230,8 @@ class Orchestrator:
     def _decide_and_execute(self, case_id: str) -> TransitionResult:
         case = self.sm.load(case_id)
         action = case.current_action
-        target, fields = ACTION_TARGETS[action.value]
+        target, _ = ACTION_TARGETS[action.value]
+        fields = present_patient_fields(case, action.value)
         request = PolicyRequest(
             execution_id=f"EXEC-{uuid.uuid4().hex[:12]}",
             proposed_action=ProposedAction(action.value, case.current_step, target, fields),

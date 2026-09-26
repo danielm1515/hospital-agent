@@ -227,16 +227,23 @@ being `in_progress`.
 Request:
 
 ```json
-{"text": "When is my appointment and which documents do I need?"}
+{"text": "When is my appointment and which documents do I need?", "appointment_id": "APT-8391"}
 ```
 
-`text` is trimmed, and must then be 1-2000 characters.
+`text` is trimmed, and must then be 1-2000 characters. `appointment_id` (sub-project 18,
+design D5) is optional - the appointment the patient picked from their own upcoming list
+(`GET /api/patient/appointments`, §9); omit it (or send "the nearest appointment") for the
+old behaviour. When 1-64 characters of `A-Z a-z 0-9 . _ -`, starting with a letter or digit.
+It is stored on the case as it is opened and is never read from anywhere else - the LLM
+never supplies it - and `CheckAppointment` (§11) reads it back to answer about that exact
+appointment.
 
 `201`: the patient view. A verified patient's case starts in `in_progress`; `P-30000`'s
 case comes back `in_review` at once.
 
 - `403 patients_only` - a staff token.
-- `422 invalid_body` - empty, whitespace-only or over 2000 characters.
+- `422 invalid_body` - `text` empty, whitespace-only or over 2000 characters, or
+  `appointment_id` present but not that shape.
 - `409 request_rejected` - the state machine refused the request. It does not happen for a
   valid body; the exact reason stays on the server (the Blocked audit row and the
   application log), because a guard's reason code is internal (§12.3). Show a general

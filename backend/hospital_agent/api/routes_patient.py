@@ -54,7 +54,8 @@ def submit_request(body: NewRequest, principal: Principal = Depends(require_pati
                    session: SessionService = Depends(get_session)) -> PatientCaseView:
     try:
         case_id = session.submit_request(principal.patient_id, body.text,
-                                         identity_verified=_identity_verified(principal))
+                                         identity_verified=_identity_verified(principal),
+                                         appointment_id=body.appointment_id)
     except EventRejected as rejected:
         # The patient gets one code: a guard's reason (§3.1) is internal, and §12.3 keeps it
         # out of an answer a patient sees. The reason stays on the server - in the Blocked

@@ -9,6 +9,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from fastapi.testclient import TestClient
 
+from hospital_agent import repository
 from hospital_agent.api.app import create_app
 from hospital_agent.auth import DEMO_USERS, auth_secret, demo_password, issue_token
 
@@ -159,6 +160,43 @@ def test_a_422_body_never_echoes_what_was_sent(client):
 
 def test_a_request_of_the_maximum_length_is_accepted(client):
     assert submit(client, PATIENT, "x" * 2000).status_code == 201
+
+
+# --- the patient-chosen appointment (sub-project 18, design D5) ----------------------------
+
+def test_appointment_id_is_optional_and_stored_on_the_case(client, app_engine):
+    response = client.post("/api/patient/requests", json={"text": REQUEST, "appointment_id": "APT-8391"},
+                           headers=auth(client, PATIENT))
+    assert response.status_code == 201
+    case_id = response.json()["case_id"]
+    with app_engine.connect() as conn:
+        case = repository.load_case(conn, case_id)
+    assert case.appointment_id == "APT-8391"
+
+
+def test_appointment_id_is_absent_by_default(client, app_engine):
+    case_id = submit(client, PATIENT).json()["case_id"]
+    with app_engine.connect() as conn:
+        case = repository.load_case(conn, case_id)
+    assert case.appointment_id is None
+
+
+def test_the_case_belongs_to_the_token_regardless_of_appointment_id(client, app_engine):
+    """appointment_id never carries identity (§18.3) - each patient's own token still decides
+    whose case it is, even when two patients happen to send the same id."""
+    for patient in (PATIENT, OTHER):
+        case_id = client.post("/api/patient/requests", json={"text": REQUEST, "appointment_id": "APT-8391"},
+                              headers=auth(client, patient)).json()["case_id"]
+        with app_engine.connect() as conn:
+            case = repository.load_case(conn, case_id)
+        assert (case.patient_id, case.appointment_id) == (patient, "APT-8391")
+
+
+@pytest.mark.parametrize("appointment_id", ["", " ", "a b", "a" * 65, ".abc", "-abc", "_abc", "abc/def"])
+def test_a_malformed_appointment_id_is_422(client, appointment_id):
+    response = client.post("/api/patient/requests", json={"text": REQUEST, "appointment_id": appointment_id},
+                           headers=auth(client, PATIENT))
+    assert response.status_code == 422 and response.json() == {"detail": "invalid_body"}
 
 
 @pytest.mark.parametrize("document", [

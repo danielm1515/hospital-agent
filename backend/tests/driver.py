@@ -16,7 +16,7 @@ from sqlalchemy.engine import Engine
 from hospital_agent import repository
 from hospital_agent.case import ExecutionRecord
 from hospital_agent.execution.executor import ToolExecutor
-from hospital_agent.execution.gateway import ACTION_TARGETS, MockGateway, ToolGateway
+from hospital_agent.execution.gateway import ACTION_TARGETS, MockGateway, ToolGateway, present_patient_fields
 from hospital_agent.execution.verify import EXECUTING_STATES
 from hospital_agent.naming import Action, Component, Event
 from hospital_agent.policy.readiness import ReadinessCheck
@@ -75,7 +75,8 @@ class Driver(ScriptedAgents):
         """A well-formed PolicyRequest for the current plan step; overrides replace fields."""
         case = self.case
         action = case.current_action
-        target, fields = ACTION_TARGETS[action.value]
+        target, _ = ACTION_TARGETS[action.value]
+        fields = present_patient_fields(case, action.value)
         request = PolicyRequest(
             execution_id=f"EXEC-{uuid.uuid4().hex[:8]}",
             proposed_action=ProposedAction(action.value, case.current_step, target, fields),
@@ -144,8 +145,8 @@ class Driver(ScriptedAgents):
 
     # --- scenario prefixes -------------------------------------------------------------------
 
-    def to_classified(self) -> None:
-        self.submit()
+    def to_classified(self, appointment_id: str | None = None) -> None:
+        self.submit(appointment_id)
         self.validate()
         self.classify()
 

@@ -355,7 +355,8 @@ class StateManager:
             row = resolution.transition
 
             if case is None:
-                after = new_case(self.new_case_id(), payload["patient_id"], now)
+                after = new_case(self.new_case_id(), payload["patient_id"], now,
+                                  appointment_id=payload.get("appointment_id"))
             else:
                 after = replace(apply_effects(case, row, ctx), state_version=case.state_version + 1, updated_at=now)
 

@@ -447,3 +447,30 @@ def test_a_tick_forgets_errors_of_cases_no_longer_active(run):
     agent._consecutive_errors["CASE-GONE"] = 2
     agent.tick()
     assert "CASE-GONE" not in agent._consecutive_errors
+
+
+# --- sub-project 18: the patient-chosen appointment (design D5/D6) --------------------------
+
+def test_check_appointment_carries_the_chosen_appointment_id_through_the_real_pipeline(run):
+    """The policy still Allows CheckAppointment with appointment_id sent (§11:
+    minimized(appointment_id, appointment_system)), the Tool Executor sends it because the
+    case has one, and it stays stored on the case throughout."""
+    gateway = MockGateway()
+    patient, agent = run(gateway=gateway)
+    patient.submit(appointment_id="APT-8391")
+    patient.validate()
+    assert agent.run_case(patient.case_id) is State.AWAITING_PATIENT_INPUT  # unaffected: still needs blood_test
+    assert patient.case.appointment_id == "APT-8391"
+    check = next(call for call in gateway.calls if call[0] == "CheckAppointment")
+    assert check[1] == {"patient_id": patient.patient_id, "appointment_id": "APT-8391"}
+
+
+def test_check_appointment_sends_only_patient_id_without_a_chosen_appointment(run):
+    gateway = MockGateway()
+    patient, agent = run(gateway=gateway)
+    patient.submit()
+    patient.validate()
+    agent.run_case(patient.case_id)
+    assert patient.case.appointment_id is None
+    check = next(call for call in gateway.calls if call[0] == "CheckAppointment")
+    assert check[1] == {"patient_id": patient.patient_id}

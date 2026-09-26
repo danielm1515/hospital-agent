@@ -68,6 +68,17 @@ def test_a_verified_patient_submits_and_the_case_is_classifying(session, sm, app
     assert wake.calls == 1
 
 
+def test_a_chosen_appointment_id_is_stored_on_the_case(session, sm):
+    """Sub-project 18 (D5): rides on REQUEST_SUBMITTED and is stored as the case is created."""
+    case_id = session.submit_request(PATIENT, REQUEST, identity_verified=True, appointment_id="APT-8391")
+    assert sm.load(case_id).appointment_id == "APT-8391"
+
+
+def test_without_a_chosen_appointment_the_case_has_none(session, sm):
+    case_id = session.submit_request(PATIENT, REQUEST, identity_verified=True)
+    assert sm.load(case_id).appointment_id is None
+
+
 def test_an_unverified_patient_goes_to_review_and_the_text_is_kept(session, sm, app_engine):
     case_id = session.submit_request("P-30000", REQUEST, identity_verified=False)
     case = sm.load(case_id)
