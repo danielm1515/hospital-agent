@@ -140,9 +140,10 @@ export function AppointmentsPanel({ audience, load }: AppointmentsPanelProps) {
     // returning a rejected promise) still lands in `.catch` instead of escaping `runLoad`
     // with `busy` stuck at `true`.
     Promise.resolve()
-      .then(() => load(instants.from, instants.to))
+      // A request superseded - or a panel unmounted - before its microtask ran never calls load.
+      .then(() => (id === requestId.current ? load(instants.from, instants.to) : null))
       .then((answer) => {
-        if (id !== requestId.current) return
+        if (id !== requestId.current || answer === null) return
         setResult(answer)
         setError(null)
         setBusy(false)
@@ -158,8 +159,11 @@ export function AppointmentsPanel({ audience, load }: AppointmentsPanelProps) {
   useEffect(() => {
     // Loads the default range once on mount; every later load goes through `runLoad`
     // from the form submit or the retry button.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
     runLoad(range.from, range.to)
+    return () => {
+      // Unmounted: drop any answer still in flight and skip a load not yet started.
+      requestId.current += 1
+    }
   }, [])
 
   function handleSubmit(event: FormEvent<HTMLFormElement>) {

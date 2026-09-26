@@ -161,7 +161,11 @@ describe('ReviewCase', () => {
     renderCase()
 
     expect(await screen.findByRole('heading', { name: 'התורים של המטופל' })).toBeInTheDocument()
-    expect(api.listCaseAppointments).toHaveBeenCalledWith(CASE_ID, expect.any(Date), expect.any(Date))
+    // The panel calls load from its mount effect through a microtask, which can land after the
+    // heading renders - wait for the call instead of asserting it immediately.
+    await waitFor(() =>
+      expect(api.listCaseAppointments).toHaveBeenCalledWith(CASE_ID, expect.any(Date), expect.any(Date)),
+    )
   })
 
   it('does not reload the appointments list when the review context is refreshed', async () => {
@@ -169,7 +173,7 @@ describe('ReviewCase', () => {
     renderCase()
 
     await screen.findByRole('heading', { name: 'התורים של המטופל' })
-    expect(api.listCaseAppointments).toHaveBeenCalledTimes(1)
+    await waitFor(() => expect(api.listCaseAppointments).toHaveBeenCalledTimes(1))
 
     await userEvent.type(await screen.findByLabelText(/סיבת ההכרעה/), 'סגירה.')
     await userEvent.click(screen.getByRole('button', { name: 'סגירת הפנייה' }))
@@ -177,6 +181,8 @@ describe('ReviewCase', () => {
 
     await userEvent.click(screen.getByRole('button', { name: 'רענון הקשר' }))
     await waitFor(() => expect(api.getContext).toHaveBeenCalledTimes(2))
+    // Let any stray deferred load land before counting, so a reload would be caught here.
+    await new Promise((resolve) => setTimeout(resolve, 0))
 
     expect(api.listCaseAppointments).toHaveBeenCalledTimes(1)
   })
