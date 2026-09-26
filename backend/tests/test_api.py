@@ -75,6 +75,7 @@ PROTECTED = [
     ("GET", "/api/staff/cases", None),
     ("GET", "/api/staff/cases/CASE-1", None),
     ("GET", "/api/staff/cases/CASE-1/audit", None),
+    ("GET", "/api/staff/system-status", None),
     ("GET", "/api/staff/reviews", None),
     ("GET", "/api/staff/cases/CASE-1/context", None),
     ("POST", "/api/staff/cases/CASE-1/decision",

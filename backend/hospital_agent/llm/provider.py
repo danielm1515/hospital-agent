@@ -15,12 +15,14 @@ from __future__ import annotations
 
 import hashlib
 import json
+import time
 from collections.abc import Mapping, Sequence
 from functools import cache
 from pathlib import Path
 from typing import Any, Protocol
 
-from .schemas import Call, LLMUnusable, validate
+from . import telemetry
+from .schemas import Call, LLMUnusable, sanitize_code, validate
 
 MAX_ATTEMPTS = 3  # §14: three unusable answers in a row escalate
 PROMPTS_DIR = Path(__file__).with_name("prompts")
@@ -50,13 +52,25 @@ class LLMProvider(Protocol):
     def complete(self, call: Call, user_input: Mapping[str, Any], schema: dict[str, Any]) -> dict[str, Any]: ...
 
 
+def elapsed_ms(start: float) -> int:
+    return round((time.monotonic() - start) * 1000)
+
+
 def ask(provider: LLMProvider, call: Call, user_input: Mapping[str, Any], schema: dict[str, Any]) -> dict[str, Any]:
-    """One call, retried on an unusable answer; LLMFailed after MAX_ATTEMPTS in a row."""
+    """One call, retried on a retryable unusable answer; LLMFailed after MAX_ATTEMPTS in a
+    row, or at once on a failure no retry could fix (staff-fixes design Task 1, decision 2).
+    Every attempt is logged and its outcome kept in telemetry (decisions 1, 3)."""
     for _ in range(MAX_ATTEMPTS):
+        start = time.monotonic()
         try:
-            return provider.complete(call, user_input, schema)
-        except LLMUnusable:
+            result = provider.complete(call, user_input, schema)
+        except LLMUnusable as exc:
+            telemetry.record(call, provider.model, elapsed_ms(start), exc.reason)
+            if not exc.retryable:
+                raise LLMFailed(call.value) from None
             continue
+        telemetry.record(call, provider.model, elapsed_ms(start), "ok")
+        return result
     raise LLMFailed(call.value)
 
 
@@ -93,7 +107,15 @@ class OpenAIProvider:
             )
             data = json.loads(response.choices[0].message.content)
         except openai.OpenAIError as exc:
-            raise LLMUnusable(f"api:{type(exc).__name__}") from None
+            reason = f"api:{type(exc).__name__}"
+            body = getattr(exc, "body", None)
+            body_get = body.get if isinstance(body, Mapping) else lambda _key: None
+            # Fix round 1, M5: a 429 sometimes carries `code: null, type: "insufficient_quota"`
+            # (the live diagnosis's own example) - `.type`/`body["type"]` is the fallback, tried
+            # only once `.code`/`body["code"]` gave nothing, so a real code is never overridden.
+            code = (sanitize_code(getattr(exc, "code", None)) or sanitize_code(body_get("code"))
+                    or sanitize_code(getattr(exc, "type", None)) or sanitize_code(body_get("type")))
+            raise LLMUnusable(f"{reason}:{code}" if code else reason) from None
         except (json.JSONDecodeError, TypeError, IndexError, AttributeError):
             raise LLMUnusable("unparsable") from None
         return validate(schema, data)

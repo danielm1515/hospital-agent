@@ -1,11 +1,15 @@
-"""The Session Service's client for the document-service's upload (sub-project 13, design §5.3).
+"""The Session Service's client for the document-service's upload (sub-project 13, design §5.3;
+sub-project 17 task 2 decision 4 for PDF/JPEG/PNG and the `reason` field).
 
 The patient's own action, not a step of the plan: it is not proposed, allowed by policy or
 retried, so it is not a ToolGateway - the one recorded exception to "only the Tool Executor
-calls an external system". It forwards one PDF, as multipart `file`, and reads back the
-document-service's 201 answer. Anything that is not that answer - no answer at all, a 5xx, a
-refused key, any other status, or a body that is not the contract - is IntakeUnavailable, and
-the caller records nothing.
+calls an external system". It forwards one document (PDF, JPEG or PNG), as multipart `file`
+with its real `Content-Type` (sniffed by magic bytes, never trusted from the caller), and reads
+back the document-service's 201 answer. Anything that is not that answer - no answer at all, a
+5xx, a refused key, any other status, or a body that is not the contract - is IntakeUnavailable,
+and the caller records nothing. A `503 classifier_unavailable` body is reported as that finer
+code rather than the generic `status_503`, so the application log names the real cause (Task 2
+decision 1).
 
 Standard library only, over the shared transport in `execution.http` (no redirect, no proxy,
 a bounded body). The URL and the key never reach a repr, an exception or a log line.
@@ -34,8 +38,36 @@ TIMEOUT_SECONDS = 75.0
 Transport = Callable[[str, str, Mapping[str, str], bytes | None, float], HttpResponse]
 
 _ID = re.compile(r"^[A-Za-z0-9_-]{1,64}$")  # a document id or a catalog type, as the agent will store it
-_FALLBACK_FILENAME = "document.pdf"
 _MAX_FILENAME = 100
+
+# Magic-byte sniffing (Task 2 decision 4): the real Content-Type is never taken from the
+# caller or the file name - it is read from the bytes themselves, the same way the
+# document-service itself will re-check it. Anything that is none of the three is still sent
+# as `application/pdf` - the client does not decide what is acceptable, the document-service's
+# own signature check does (and answers `not_supported_format`).
+_JPEG_MAGIC = b"\xff\xd8\xff"
+_PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
+_KIND_CONTENT_TYPE = {"pdf": "application/pdf", "jpeg": "image/jpeg", "png": "image/png"}
+_KIND_EXTENSION = {"pdf": "pdf", "jpeg": "jpg", "png": "png"}
+
+# The document-service's closed set of refusal reason codes (design §4.2, Task 2 decision 2).
+# Anything else - including a code this version does not know - is ignored (kept `None`),
+# never guessed at or passed through unchecked.
+_REASONS = frozenset({
+    "not_supported_format", "too_large", "parse_error", "no_text_layer", "too_many_pages",
+    "too_much_text", "classifier_unparsable", "unknown_type", "future_date", "no_date", "too_old",
+})
+
+
+def sniff_kind(data: bytes) -> str:
+    """`"jpeg"` or `"png"` by magic bytes, else `"pdf"` (the previous, and still the most
+    common, case - and the safe default for anything unrecognised, since the document-service
+    re-checks the actual bytes regardless of what this header claims)."""
+    if data.startswith(_JPEG_MAGIC):
+        return "jpeg"
+    if data.startswith(_PNG_MAGIC):
+        return "png"
+    return "pdf"
 
 
 class IntakeUnavailable(Exception):
@@ -49,6 +81,10 @@ class IntakeAnswer:
     document_id: str | None
     document_type: str | None
     duplicate_of: str | None
+    # The document-service's fixed refusal code (Task 2 decision 2) - `None` for `ACCEPTED`,
+    # `DUPLICATE_DOCUMENT`, `NON_MEDICAL_DOCUMENT`, `PATIENT_MISMATCH`, an answer with no
+    # `reason` at all (an older document-service), or one this version does not recognise.
+    reason: str | None = None
 
 
 def _urllib_transport(method: str, url: str, headers: Mapping[str, str], body: bytes | None,
@@ -60,24 +96,25 @@ def _boundary() -> str:
     return uuid.uuid4().hex
 
 
-def _safe_filename(filename: str) -> str:
+def _safe_filename(filename: str, kind: str) -> str:
     """A name that cannot break the part header: printable ASCII only, without `"` or `\\`.
-    A name with nothing left of its stem (e.g. an all-Hebrew one) is sent as document.pdf -
-    the document-service judges the bytes, not the name."""
+    A name with nothing left of its stem (e.g. an all-Hebrew one) is sent as document.<ext>,
+    with the extension matching the sniffed kind - the document-service judges the bytes, not
+    the name."""
     kept = "".join(ch for ch in (filename or "") if " " <= ch <= "~" and ch not in '"\\').strip()
     kept = kept[:_MAX_FILENAME]
     if not kept or kept.startswith(".") or not any(ch.isalnum() for ch in kept.rsplit(".", 1)[0]):
-        return _FALLBACK_FILENAME
+        return f"document.{_KIND_EXTENSION[kind]}"
     return kept
 
 
-def _multipart(filename: str, data: bytes) -> tuple[str, bytes]:
+def _multipart(filename: str, data: bytes, kind: str) -> tuple[str, bytes]:
     boundary = _boundary()
     while boundary.encode() in data:  # a boundary must never occur inside the part
         boundary = _boundary()
     head = (f"--{boundary}\r\n"
-            f'Content-Disposition: form-data; name="file"; filename="{_safe_filename(filename)}"\r\n'
-            "Content-Type: application/pdf\r\n\r\n").encode("ascii")
+            f'Content-Disposition: form-data; name="file"; filename="{_safe_filename(filename, kind)}"\r\n'
+            f"Content-Type: {_KIND_CONTENT_TYPE[kind]}\r\n\r\n").encode("ascii")
     return boundary, head + data + f"\r\n--{boundary}--\r\n".encode("ascii")
 
 
@@ -88,9 +125,29 @@ def _optional_id(body: dict, key: str) -> tuple[bool, str | None]:
     return (isinstance(value, str) and bool(_ID.match(value))), value
 
 
+def _optional_reason(body: dict) -> str | None:
+    """The closed set only (Task 2 decision 2) - a code this version does not know is dropped,
+    never guessed at or passed through unchecked."""
+    value = body.get("reason")
+    return value if isinstance(value, str) and value in _REASONS else None
+
+
 def map_answer(response: HttpResponse) -> IntakeAnswer:
-    """The 201 answer of design §4.1, or IntakeUnavailable."""
+    """The 201 answer of design §4.1, or IntakeUnavailable.
+
+    A `503` whose body is the document-service's own `{"error": "classifier_unavailable"}` is
+    reported as that finer code - a provider failure, never a verdict on the file (Task 2
+    decision 1) - so the application log names the real cause instead of the generic
+    `status_503`. Any other non-`201` status stays `status_<n>`.
+    """
     if response.status != 201:
+        if response.status == 503:
+            try:
+                error_body = json.loads(response.body)
+            except (ValueError, UnicodeDecodeError):
+                error_body = None
+            if isinstance(error_body, dict) and error_body.get("error") == "classifier_unavailable":
+                raise IntakeUnavailable("classifier_unavailable")
         raise IntakeUnavailable(f"status_{response.status}")
     try:
         body = json.loads(response.body)
@@ -104,7 +161,7 @@ def map_answer(response: HttpResponse) -> IntakeAnswer:
     if not (isinstance(result, str) and result and isinstance(document_id, str) and _ID.match(document_id)
             and type_ok and duplicate_ok):
         raise IntakeUnavailable("invalid_response")
-    return IntakeAnswer(result, document_id, document_type, duplicate_of)
+    return IntakeAnswer(result, document_id, document_type, duplicate_of, _optional_reason(body))
 
 
 class DocumentIntakeClient:
@@ -120,7 +177,8 @@ class DocumentIntakeClient:
 
     def submit(self, patient_id: str, filename: str, data: bytes) -> IntakeAnswer:
         url = f"{self._base_url}/api/v1/patients/{urllib.parse.quote(patient_id, safe='')}/documents"
-        boundary, body = _multipart(filename, data)
+        kind = sniff_kind(data)
+        boundary, body = _multipart(filename, data, kind)
         headers = {"X-API-Key": self._api_key, "Accept": "application/json",
                    "Content-Type": f"multipart/form-data; boundary={boundary}"}
         try:

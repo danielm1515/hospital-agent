@@ -4,6 +4,7 @@ import * as api from '../../api/client'
 import type { Metrics as MetricsData } from '../../api/types'
 import { Alert } from '../../components/Alert'
 import { Button } from '../../components/Button'
+import { Loading } from '../../components/Loading'
 import { detailOf, escalationLabel, formatDateTime, stateLabel } from './labels'
 import {
   ERROR_TEXT,
@@ -132,11 +133,7 @@ export function Metrics() {
       )}
 
       {data === null ? (
-        !error && (
-          <p className="page-loading" role="status">
-            טוען…
-          </p>
-        )
+        !error && <Loading />
       ) : (
         <div className={loading ? 'metrics-body is-stale' : 'metrics-body'} aria-busy={loading}>
           <p className="metrics-window">

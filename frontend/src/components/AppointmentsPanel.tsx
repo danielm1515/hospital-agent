@@ -11,6 +11,7 @@ import { documentLabel } from '../pages/patient/helpers'
 import { detailOf } from '../pages/staff/labels'
 import { Alert } from './Alert'
 import { Button } from './Button'
+import { Loading } from './Loading'
 import { TextField } from './TextField'
 
 /** The appointment-service catalog (`app/catalog.py`), presentation only (design D11). */
@@ -139,9 +140,10 @@ export function AppointmentsPanel({ audience, load }: AppointmentsPanelProps) {
     // returning a rejected promise) still lands in `.catch` instead of escaping `runLoad`
     // with `busy` stuck at `true`.
     Promise.resolve()
-      .then(() => load(instants.from, instants.to))
+      // A request superseded - or a panel unmounted - before its microtask ran never calls load.
+      .then(() => (id === requestId.current ? load(instants.from, instants.to) : null))
       .then((answer) => {
-        if (id !== requestId.current) return
+        if (id !== requestId.current || answer === null) return
         setResult(answer)
         setError(null)
         setBusy(false)
@@ -157,8 +159,11 @@ export function AppointmentsPanel({ audience, load }: AppointmentsPanelProps) {
   useEffect(() => {
     // Loads the default range once on mount; every later load goes through `runLoad`
     // from the form submit or the retry button.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
     runLoad(range.from, range.to)
+    return () => {
+      // Unmounted: drop any answer still in flight and skip a load not yet started.
+      requestId.current += 1
+    }
   }, [])
 
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
@@ -223,6 +228,10 @@ export function AppointmentsPanel({ audience, load }: AppointmentsPanelProps) {
             </ul>
           )}
         </>
+      ) : busy ? (
+        // Fix round 1 (I2): the panel's first load has no previous result or error to show,
+        // so without this the whole panel rendered nothing at all while it was in flight.
+        <Loading size="inline" label="טוען תורים" />
       ) : null}
     </section>
   )

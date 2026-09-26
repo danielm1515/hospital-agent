@@ -10,7 +10,7 @@ import { ReviewCase } from './ReviewCase'
 vi.mock('../../api/client', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../api/client')>()),
   getContext: vi.fn(),
-  listReviews: vi.fn(),
+  getReviewItem: vi.fn(),
   decide: vi.fn(),
   tombstone: vi.fn(),
   getMessageTemplates: vi.fn(),
@@ -56,7 +56,7 @@ const MEDICAL_ITEM: ReviewItem = {
   reasons: ['medical_answer_attempt'],
   allowed_decisions: ['resolve', 'reject'],
   required_fields: [],
-  updated_at: '2026-09-19T22:12:39.693277Z',
+  entered_at: '2026-09-19T22:12:39.693277Z',
   human_engaged: false,
   returned_by: null,
 }
@@ -129,7 +129,7 @@ function renderCase(role: 'clinical_staff' | 'admin_staff' = 'clinical_staff') {
 
 beforeEach(() => {
   vi.mocked(api.getContext).mockResolvedValue(context())
-  vi.mocked(api.listReviews).mockResolvedValue([MEDICAL_ITEM])
+  vi.mocked(api.getReviewItem).mockResolvedValue(MEDICAL_ITEM)
   vi.mocked(api.decide).mockResolvedValue({ case_id: CASE_ID, state: 'Completed' })
   vi.mocked(api.tombstone).mockResolvedValue(undefined)
   vi.mocked(api.getMessageTemplates).mockResolvedValue([])
@@ -137,11 +137,35 @@ beforeEach(() => {
 })
 
 describe('ReviewCase', () => {
+  it('shows the shared loading status while the context is still loading', async () => {
+    vi.mocked(api.getContext).mockReturnValue(new Promise(() => {})) // never resolves
+    renderCase()
+    const status = await screen.findByText('טוען…')
+    expect(status).toHaveAttribute('role', 'status')
+    expect(status.closest('.loader')).toBeInTheDocument()
+  })
+
+  it('does not flash "not awaiting a decision" while the review item is still loading (M2)', async () => {
+    vi.mocked(api.getReviewItem).mockReturnValue(new Promise(() => {})) // never resolves
+    renderCase()
+
+    // The context itself loads fine and fast (its own mock resolves), so the page is past
+    // the whole-page loader by now - only the decision panel's own item fetch is pending.
+    await screen.findByRole('heading', { name: 'התורים של המטופל' })
+    expect(screen.queryByText('הפנייה אינה ממתינה להכרעה')).not.toBeInTheDocument()
+    const panelStatus = screen.getByText('טוען…')
+    expect(panelStatus.closest('.loader')).toHaveClass('loader-inline')
+  })
+
   it('shows the appointments panel for the patient, loaded with the case id', async () => {
     renderCase()
 
     expect(await screen.findByRole('heading', { name: 'התורים של המטופל' })).toBeInTheDocument()
-    expect(api.listCaseAppointments).toHaveBeenCalledWith(CASE_ID, expect.any(Date), expect.any(Date))
+    // The panel calls load from its mount effect through a microtask, which can land after the
+    // heading renders - wait for the call instead of asserting it immediately.
+    await waitFor(() =>
+      expect(api.listCaseAppointments).toHaveBeenCalledWith(CASE_ID, expect.any(Date), expect.any(Date)),
+    )
   })
 
   it('does not reload the appointments list when the review context is refreshed', async () => {
@@ -149,7 +173,7 @@ describe('ReviewCase', () => {
     renderCase()
 
     await screen.findByRole('heading', { name: 'התורים של המטופל' })
-    expect(api.listCaseAppointments).toHaveBeenCalledTimes(1)
+    await waitFor(() => expect(api.listCaseAppointments).toHaveBeenCalledTimes(1))
 
     await userEvent.type(await screen.findByLabelText(/סיבת ההכרעה/), 'סגירה.')
     await userEvent.click(screen.getByRole('button', { name: 'סגירת הפנייה' }))
@@ -157,6 +181,8 @@ describe('ReviewCase', () => {
 
     await userEvent.click(screen.getByRole('button', { name: 'רענון הקשר' }))
     await waitFor(() => expect(api.getContext).toHaveBeenCalledTimes(2))
+    // Let any stray deferred load land before counting, so a reload would be caught here.
+    await new Promise((resolve) => setTimeout(resolve, 0))
 
     expect(api.listCaseAppointments).toHaveBeenCalledTimes(1)
   })
@@ -239,7 +265,7 @@ describe('ReviewCase', () => {
   })
 
   it('does not mount the clinical answer block for a non-MedicalQuestion escalation', async () => {
-    vi.mocked(api.listReviews).mockResolvedValue([Z3_ITEM])
+    vi.mocked(api.getReviewItem).mockResolvedValue(Z3_ITEM)
     renderCase()
 
     await screen.findByRole('button', { name: 'אישור והמשך' })
@@ -255,7 +281,7 @@ describe('ReviewCase', () => {
   })
 
   it('renders the required field of a Z3Counterexample approval', async () => {
-    vi.mocked(api.listReviews).mockResolvedValue([Z3_ITEM])
+    vi.mocked(api.getReviewItem).mockResolvedValue(Z3_ITEM)
     renderCase()
 
     expect(await screen.findByRole('button', { name: 'אישור והמשך' })).toBeInTheDocument()
@@ -278,7 +304,7 @@ describe('ReviewCase', () => {
   })
 
   it('sends verified_identity_ref with an approval that requires it', async () => {
-    vi.mocked(api.listReviews).mockResolvedValue([IDENTITY_ITEM])
+    vi.mocked(api.getReviewItem).mockResolvedValue(IDENTITY_ITEM)
     vi.mocked(api.decide).mockResolvedValue({ case_id: CASE_ID, state: 'Classifying' })
     renderCase()
 
@@ -316,6 +342,64 @@ describe('ReviewCase', () => {
     await userEvent.click(screen.getByRole('button', { name: 'רענון הקשר' }))
 
     expect(api.getContext).toHaveBeenCalledTimes(2)
+  })
+
+  it('keeps the decision form mounted while a successful refresh is still pending (fix round 3)', async () => {
+    vi.mocked(api.decide).mockRejectedValue(new api.ApiError(409, 'context_changed'))
+    renderCase()
+
+    await userEvent.type(await screen.findByLabelText(/סיבת ההכרעה/), 'סגירה.')
+    await userEvent.click(screen.getByRole('button', { name: 'סגירת הפנייה' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent('ההקשר השתנה')
+
+    let resolveContext: (value: ReviewContext) => void = () => {}
+    vi.mocked(api.getContext).mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveContext = resolve
+      }),
+    )
+    await userEvent.click(screen.getByRole('button', { name: 'רענון הקשר' }))
+
+    // The refresh has not resolved yet - the form (and its buttons) must stay mounted, not
+    // be replaced by a loader.
+    expect(screen.getByRole('button', { name: 'סגירת הפנייה' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'דחייה' })).toBeInTheDocument()
+    expect(screen.getByLabelText(/סיבת ההכרעה/)).toBeInTheDocument()
+    expect(screen.queryByText('טוען…')).not.toBeInTheDocument()
+
+    resolveContext(context())
+    await waitFor(() => expect(screen.queryByText('ההקשר השתנה')).not.toBeInTheDocument())
+  })
+
+  it('keeps the decision form and the refresh button usable when the refresh itself fails (I1, fix round 2)', async () => {
+    vi.mocked(api.decide).mockRejectedValue(new api.ApiError(409, 'context_changed'))
+    renderCase()
+
+    await userEvent.type(await screen.findByLabelText(/סיבת ההכרעה/), 'סגירה.')
+    await userEvent.click(screen.getByRole('button', { name: 'סגירת הפנייה' }))
+    expect(await screen.findByText('ההקשר השתנה')).toBeInTheDocument()
+
+    vi.mocked(api.getContext).mockRejectedValueOnce(new api.ApiError(503, 'appointments_unavailable'))
+    await userEvent.click(screen.getByRole('button', { name: 'רענון הקשר' }))
+
+    // Not stuck on a loader forever, and not unmounted: "ההקשר השתנה" (and its "רענון
+    // הקשר" button - the refresh that just ran did not resolve it) is still up, right
+    // alongside the new "the refresh itself failed" alert; the decision buttons never left.
+    await waitFor(() => expect(api.getContext).toHaveBeenCalledTimes(2))
+    expect(await screen.findByText('רענון ההקשר נכשל')).toBeInTheDocument()
+    expect(screen.getByText('appointments_unavailable')).toBeInTheDocument()
+    expect(screen.getByText('ההקשר השתנה')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'רענון הקשר' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'סגירת הפנייה' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'דחייה' })).toBeInTheDocument()
+    expect(screen.queryByText('טוען…')).not.toBeInTheDocument()
+
+    // A second refresh, this time succeeding, resolves it through the same button.
+    await userEvent.click(screen.getByRole('button', { name: 'רענון הקשר' }))
+
+    await waitFor(() => expect(api.getContext).toHaveBeenCalledTimes(3))
+    expect(screen.queryByText('ההקשר השתנה')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'סגירת הפנייה' })).toBeInTheDocument()
   })
 
   it('shows the detail of any other 409', async () => {
@@ -374,7 +458,7 @@ describe('ReviewCase', () => {
   })
 
   it('says so when the case is not waiting for a decision', async () => {
-    vi.mocked(api.listReviews).mockResolvedValue([])
+    vi.mocked(api.getReviewItem).mockRejectedValue(new api.ApiError(404, 'not_in_review'))
     vi.mocked(api.getContext).mockResolvedValue(context({ state: 'Completed', escalation_kind: null, reasons: [] }))
     renderCase()
 
@@ -382,18 +466,26 @@ describe('ReviewCase', () => {
     expect(screen.queryByRole('button', { name: 'סגירת הפנייה' })).not.toBeInTheDocument()
   })
 
+  it('shows a first-load error, not "not awaiting a decision" or a refresh title, when getReviewItem itself fails (fix round 3)', async () => {
+    vi.mocked(api.getReviewItem).mockRejectedValue(new api.ApiError(500, 'boom'))
+    renderCase()
+
+    expect(await screen.findByText('טעינת הפנייה נכשלה')).toBeInTheDocument()
+    expect(screen.getByText('boom')).toBeInTheDocument()
+    expect(screen.queryByText('הפנייה אינה ממתינה להכרעה')).not.toBeInTheDocument()
+    expect(screen.queryByText('רענון ההקשר נכשל')).not.toBeInTheDocument()
+  })
+
   it('shows the patient-request panel and no approve button when human_engaged, even on a resumable kind', async () => {
     // RetryExhausted normally allows `approve` (it just opens a new retry cycle) - the
     // absent button here has to come from `allowed_decisions`, not from the escalation kind.
-    vi.mocked(api.listReviews).mockResolvedValue([
-      {
-        ...MEDICAL_ITEM,
-        escalation_kind: 'RetryExhausted',
-        escalated_from_state: 'RetrievingData',
-        human_engaged: true,
-        allowed_decisions: ['resolve', 'reject'],
-      },
-    ])
+    vi.mocked(api.getReviewItem).mockResolvedValue({
+      ...MEDICAL_ITEM,
+      escalation_kind: 'RetryExhausted',
+      escalated_from_state: 'RetrievingData',
+      human_engaged: true,
+      allowed_decisions: ['resolve', 'reject'],
+    })
     vi.mocked(api.getMessageTemplates).mockResolvedValue(TEMPLATES)
     renderCase()
 
@@ -402,7 +494,7 @@ describe('ReviewCase', () => {
   })
 
   it('sends a closing template with the resolve decision', async () => {
-    vi.mocked(api.listReviews).mockResolvedValue([Z3_ITEM])
+    vi.mocked(api.getReviewItem).mockResolvedValue(Z3_ITEM)
     vi.mocked(api.getMessageTemplates).mockResolvedValue(TEMPLATES)
     renderCase()
 
@@ -423,7 +515,7 @@ describe('ReviewCase', () => {
   it('never sends a message when approving, even if a closing message was chosen', async () => {
     // Z3_ITEM allows approve and requires patient_deadline; a closing message picked while
     // it was on screen must not leak into an approve body (a closing message is resolve/reject only).
-    vi.mocked(api.listReviews).mockResolvedValue([Z3_ITEM])
+    vi.mocked(api.getReviewItem).mockResolvedValue(Z3_ITEM)
     vi.mocked(api.getMessageTemplates).mockResolvedValue(TEMPLATES)
     renderCase()
 

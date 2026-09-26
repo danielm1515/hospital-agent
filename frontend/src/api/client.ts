@@ -13,9 +13,10 @@ import type {
   AppointmentList,
   AuditRecord,
   CaseDetail,
-  CaseSummary,
+  CaseListPage,
   DecisionBody,
   DecisionResult,
+  EscalationKind,
   LoginResponse,
   Me,
   Metrics,
@@ -26,7 +27,10 @@ import type {
   PdfUploadResponse,
   ReviewContext,
   ReviewItem,
+  ReviewQueuePage,
   State,
+  StateGroup,
+  SystemStatus,
   UploadDocumentBody,
 } from './types'
 
@@ -208,7 +212,7 @@ export function uploadDocument(caseId: string, body: UploadDocumentBody): Promis
 }
 
 /**
- * Sub-project 13 (`docs/api.md` §4): uploads a PDF as `multipart/form-data`, one part
+ * Sub-project 13 (`docs/api.md` §4): uploads a document (PDF, JPEG or PNG) as `multipart/form-data`, one part
  * named `file` carrying the filename. Offered only when `document_upload === 'file'`.
  */
 export function uploadDocumentFile(caseId: string, file: File): Promise<PdfUploadResponse> {
@@ -221,9 +225,23 @@ export function uploadDocumentFile(caseId: string, file: File): Promise<PdfUploa
 
 // ---- Staff ----------------------------------------------------------------
 
-export function listCases(state?: State): Promise<CaseSummary[]> {
-  const query = state ? `?state=${id(state)}` : ''
-  return request<CaseSummary[]>('GET', `/staff/cases${query}`)
+/**
+ * `GET /api/staff/cases` (staff-fixes design Task 3/4): one call, keyset-paginated,
+ * optionally filtered by an exact `state` or by one of the five `group`s (`group: 'staff'`
+ * also accepts `escalationKind`). `options.cursor` asks for the page after the previous
+ * response's `next_cursor`.
+ */
+export function listCases(
+  options: { state?: State; group?: StateGroup; escalationKind?: EscalationKind; cursor?: string; limit?: number } = {},
+): Promise<CaseListPage> {
+  const params = new URLSearchParams()
+  if (options.state) params.set('state', options.state)
+  if (options.group) params.set('group', options.group)
+  if (options.escalationKind) params.set('escalation_kind', options.escalationKind)
+  if (options.cursor) params.set('cursor', options.cursor)
+  if (options.limit) params.set('limit', String(options.limit))
+  const query = params.toString()
+  return request<CaseListPage>('GET', `/staff/cases${query ? `?${query}` : ''}`)
 }
 
 export function getCase(caseId: string): Promise<CaseDetail> {
@@ -234,8 +252,26 @@ export function getAudit(caseId: string): Promise<AuditRecord[]> {
   return request<AuditRecord[]>('GET', `/staff/cases/${id(caseId)}/audit`)
 }
 
-export function listReviews(): Promise<ReviewItem[]> {
-  return request<ReviewItem[]>('GET', '/staff/reviews')
+/**
+ * `GET /api/staff/reviews` (staff-fixes design Task 5): one call, keyset-paginated, newest
+ * entry into AwaitingHumanReview first. `options.cursor` asks for the page after the
+ * previous response's `next_cursor`.
+ */
+export function listReviews(options: { cursor?: string; limit?: number } = {}): Promise<ReviewQueuePage> {
+  const params = new URLSearchParams()
+  if (options.cursor) params.set('cursor', options.cursor)
+  if (options.limit) params.set('limit', String(options.limit))
+  const query = params.toString()
+  return request<ReviewQueuePage>('GET', `/staff/reviews${query ? `?${query}` : ''}`)
+}
+
+/**
+ * `GET /api/staff/reviews/{case_id}` (staff-fixes design Task 3): one queue item, so
+ * `ReviewCase` does not fetch the whole queue just to find its own row. `404
+ * not_in_review` when the case is not (or no longer) in `AwaitingHumanReview`.
+ */
+export function getReviewItem(caseId: string): Promise<ReviewItem> {
+  return request<ReviewItem>('GET', `/staff/reviews/${id(caseId)}`)
 }
 
 export function getContext(caseId: string): Promise<ReviewContext> {
@@ -322,4 +358,12 @@ export function listMyAppointments(from: Date, to: Date): Promise<AppointmentLis
 /** `GET /api/staff/cases/{case_id}/appointments` - the case's patient. */
 export function listCaseAppointments(caseId: string, from: Date, to: Date): Promise<AppointmentList> {
   return request<AppointmentList>('GET', `/staff/cases/${id(caseId)}/appointments?${windowQuery(from, to)}`)
+}
+
+// ---- System status (staff-fixes design Task 1) ------------------------------
+
+/** `GET /api/staff/system-status` - staff only: whether the Agent Orchestrator runs and the
+ * LLM's last outcome. */
+export function getSystemStatus(): Promise<SystemStatus> {
+  return request<SystemStatus>('GET', '/staff/system-status')
 }

@@ -80,6 +80,33 @@ function collectTopLevelSelectors(source: string): string[] {
  */
 const ALLOWED_DUPLICATE_SELECTORS: readonly string[] = []
 
+/**
+ * Concatenates the bodies of every top-level at-rule whose header contains `needle`
+ * (e.g. every `@media (prefers-reduced-motion: reduce) { ... }` block), so a test can
+ * assert on their combined content without caring how many separate blocks there are.
+ */
+function collectAtRuleBodies(source: string, needle: string): string {
+  let bodies = ''
+  let i = 0
+  while (i < source.length) {
+    const at = source.indexOf('@', i)
+    if (at === -1) break
+    const openBrace = source.indexOf('{', at)
+    if (openBrace === -1) break
+    const header = source.slice(at, openBrace)
+    let depth = 1
+    let j = openBrace + 1
+    while (j < source.length && depth > 0) {
+      if (source[j] === '{') depth++
+      if (source[j] === '}') depth--
+      j++
+    }
+    if (header.includes(needle)) bodies += source.slice(openBrace + 1, j - 1)
+    i = j
+  }
+  return bodies
+}
+
 describe('app.css structural integrity', () => {
   it('has balanced braces', () => {
     const stripped = stripComments(css)
@@ -123,5 +150,26 @@ describe('app.css structural integrity', () => {
       .map(([selector, count]) => `${selector} (${count}x)`)
 
     expect(duplicates).toEqual([])
+  })
+
+  it('stops the shared loader ring from rotating under prefers-reduced-motion', () => {
+    // Regression test for the Loading component (staff-fixes design Task 6): the ring
+    // must not spin for a user who asked for reduced motion, leaving only the visible
+    // status text.
+    const reducedMotion = collectAtRuleBodies(stripComments(css), 'prefers-reduced-motion: reduce')
+    expect(reducedMotion).toMatch(/\.loader-ring\s*{[^}]*animation:\s*none/)
+    // Fix round 1 (M5): stopping the animation still leaves a static ring on screen, which
+    // can read as a frozen/stuck spinner - the ring must be hidden outright too, leaving
+    // only the status text.
+    expect(reducedMotion).toMatch(/\.loader-ring\s*{[^}]*display:\s*none/)
+  })
+
+  it('gives the alert close button a tappable minimum size (M8)', () => {
+    const stripped = stripComments(css)
+    const match = stripped.match(/\.alert-close\s*{([^}]*)}/)
+    expect(match).not.toBeNull()
+    const body = match![1]
+    expect(body).toMatch(/min-inline-size:\s*24px/)
+    expect(body).toMatch(/min-block-size:\s*24px/)
   })
 })

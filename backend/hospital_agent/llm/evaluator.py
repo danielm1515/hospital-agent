@@ -14,10 +14,12 @@ created again - a tick still running then gets LLMFailed("evaluator_closed").
 from __future__ import annotations
 
 import multiprocessing
+import time
 from concurrent.futures import ProcessPoolExecutor
 from concurrent.futures.process import BrokenProcessPool
 
-from .provider import MAX_ATTEMPTS, LLMFailed, LLMProvider
+from . import telemetry
+from .provider import MAX_ATTEMPTS, LLMFailed, LLMProvider, elapsed_ms
 from .schemas import EVALUATION_SCHEMA, Call, LLMUnusable
 
 
@@ -40,15 +42,26 @@ class ResponseEvaluator:
         return self._pool
 
     def evaluate(self, message: str) -> bool:
-        """medical_content_flag for one outgoing message; LLMFailed after MAX_ATTEMPTS unusable answers."""
+        """medical_content_flag for one outgoing message; LLMFailed after MAX_ATTEMPTS unusable
+        answers, or at once on a failure no retry could fix. The call runs in a worker process
+        with no log configuration, so this parent-side loop times and records every attempt
+        (staff-fixes design Task 1, decisions 1-3)."""
         for _ in range(MAX_ATTEMPTS):
+            start = time.monotonic()
             try:
-                return self._process().submit(_evaluate_once, self.provider, message).result()
-            except LLMUnusable:
+                result = self._process().submit(_evaluate_once, self.provider, message).result()
+            except LLMUnusable as exc:
+                telemetry.record(Call.EVALUATOR, self.provider.model, elapsed_ms(start), exc.reason)
+                if not exc.retryable:
+                    raise LLMFailed(Call.EVALUATOR.value) from None
                 continue
             except BrokenProcessPool:  # the worker died: replace it on the next attempt
+                telemetry.record(Call.EVALUATOR, self.provider.model, elapsed_ms(start), "worker_died")
                 self._discard_pool()
                 continue
+            else:
+                telemetry.record(Call.EVALUATOR, self.provider.model, elapsed_ms(start), "ok")
+                return result
         raise LLMFailed(Call.EVALUATOR.value)
 
     def _discard_pool(self) -> None:

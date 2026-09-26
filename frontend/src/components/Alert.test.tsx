@@ -1,5 +1,6 @@
 import { render, screen } from '@testing-library/react'
-import { describe, expect, it } from 'vitest'
+import userEvent from '@testing-library/user-event'
+import { describe, expect, it, vi } from 'vitest'
 import { Alert } from './Alert'
 
 describe('Alert', () => {
@@ -38,5 +39,33 @@ describe('Alert', () => {
   it('renders without a body when there is only a title', () => {
     const { container } = render(<Alert title="אושר" />)
     expect(container.querySelector('.text')).toBeNull()
+  })
+
+  it('shows no close button by default', () => {
+    render(<Alert title="הודעה">תוכן</Alert>)
+    expect(screen.queryByRole('button', { name: 'סגירה' })).not.toBeInTheDocument()
+  })
+
+  it('shows a close button that calls onClose when one is given', async () => {
+    const onClose = vi.fn()
+    render(
+      <Alert variant="ok" title="ההכרעה נשמרה" onClose={onClose}>
+        תוכן
+      </Alert>,
+    )
+    await userEvent.click(screen.getByRole('button', { name: 'סגירה' }))
+    expect(onClose).toHaveBeenCalledTimes(1)
+  })
+
+  it('places the close button as a sibling of the status region, not inside it (M8)', () => {
+    render(
+      <Alert variant="ok" title="ההכרעה נשמרה" onClose={() => {}}>
+        תוכן
+      </Alert>,
+    )
+    const status = screen.getByRole('status')
+    const button = screen.getByRole('button', { name: 'סגירה' })
+    expect(status.contains(button)).toBe(false)
+    expect(button.parentElement).toBe(status.parentElement)
   })
 })

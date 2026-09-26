@@ -4,6 +4,7 @@
 """
 from __future__ import annotations
 
+import logging
 import os
 from pathlib import Path
 
@@ -13,6 +14,8 @@ from alembic.config import Config
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Engine
 
+from hospital_agent import logging_setup
+from hospital_agent.llm import telemetry
 from hospital_agent.state_manager import StateManager
 from hospital_agent.wiring import build_state_manager
 
@@ -42,6 +45,38 @@ def _no_real_appointment_service(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("APPOINTMENT_API_KEY", raising=False)
     monkeypatch.delenv("DOCUMENT_SERVICE_URL", raising=False)
     monkeypatch.delenv("DOCUMENT_API_KEY", raising=False)
+
+
+@pytest.fixture(autouse=True)
+def _fresh_llm_telemetry() -> None:
+    """`llm/telemetry.py` keeps the last outcome in a process-wide global (staff-fixes design
+    Task 1, decision 3) - reset it before every test so one test's LLM calls never leak into
+    another's `telemetry.status()` assertion."""
+    telemetry.reset()
+
+
+@pytest.fixture(autouse=True)
+def _clean_hospital_agent_logger():
+    """`logging_setup.configure()` (api/app.py's owned-app path) mutates the `hospital_agent`
+    logger's handlers/level/propagate/marker as a real, process-wide side effect - a few tests
+    (test_app_orchestrator.py) exercise a real owned `create_app()` and so call it for real.
+    Save this logger's state before every test and restore it after, so one test's real
+    startup never changes what a later test's `caplog` or configure()-marker check sees
+    (fix round 1, I1: without this, `configure()`'s `propagate=False` and extra handler used
+    to leak into every test that ran afterwards)."""
+    logger = logging.getLogger(logging_setup.LOGGER_NAME)
+    orig_handlers = list(logger.handlers)
+    orig_level = logger.level
+    orig_propagate = logger.propagate
+    orig_configured = getattr(logger, "_hospital_agent_configured", False)
+    yield
+    logger.handlers = orig_handlers
+    logger.setLevel(orig_level)
+    logger.propagate = orig_propagate
+    if orig_configured:
+        logger._hospital_agent_configured = True  # type: ignore[attr-defined]
+    elif hasattr(logger, "_hospital_agent_configured"):
+        del logger._hospital_agent_configured
 
 
 @pytest.fixture(scope="session")

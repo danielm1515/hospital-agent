@@ -1,14 +1,18 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import * as api from '../../api/client'
-import type { CaseDetail, CaseSummary, ReviewContext, State } from '../../api/types'
-import { STATES } from '../../api/types'
+import type { CaseDetail, CaseSummary, EscalationKind, ReviewContext, StateGroup } from '../../api/types'
 import { Alert } from '../../components/Alert'
+import { Button } from '../../components/Button'
+import { Loading } from '../../components/Loading'
 import { StatusPill } from '../../components/StatusPill'
 import { AuditTimeline } from './AuditTimeline'
 import { PatientThread } from './PatientThread'
 import {
   DOCUMENT_LABELS,
+  ESCALATION_LABELS,
+  STATE_GROUP_LABELS,
+  STATE_GROUP_ORDER,
   detailOf,
   escalationLabel,
   formatDateTime,
@@ -17,61 +21,112 @@ import {
   stateLabel,
 } from './labels'
 
+const ESCALATION_KIND_OPTIONS = Object.keys(ESCALATION_LABELS) as EscalationKind[]
+
 /**
  * The Case Monitor (§1), behind staff authentication: every case from
- * `GET /api/staff/cases`, filtered by State, with the case detail, the correspondence
- * and the Audit trace of a row that is expanded. The list route carries only id, State,
- * escalation kind and time, so patient, intent and safety come from
- * `GET /api/staff/cases/{id}` per row.
+ * `GET /api/staff/cases` (staff-fixes design Task 3), filtered by group (and escalation kind), with the case
+ * detail, the correspondence and the Audit trace of a row that is expanded. The list
+ * route now carries every column the table shows - id, patient, State, intent, safety
+ * level, escalation kind and time - so a row renders straight from the list with no
+ * per-row follow-up call; only expanding a row fetches its plan/document detail
+ * (`GET /api/staff/cases/{id}`) and its correspondence (`GET /api/staff/cases/{id}/context`).
+ * The list is keyset-paginated: "טעינת עוד" asks for the page after `next_cursor`.
  *
- * An expanded row reads `GET /api/staff/cases/{id}/context`, which answers for a case in
- * any State (`docs/api.md` §5) and carries the Data Log and the trace together. Nothing
- * here decides anything, so its `shown_context_ref` is not used - that binds a decision,
- * and decisions are made on the review screen.
+ * An expanded row's context answers for a case in any State (`docs/api.md` §5) and
+ * carries the Data Log and the trace together. Nothing here decides anything, so its
+ * `shown_context_ref` is not used - that binds a decision, and decisions are made on the
+ * review screen.
  */
 export function CaseMonitor() {
-  const [filter, setFilter] = useState<State | ''>('')
+  const [group, setGroup] = useState<StateGroup | ''>('')
+  const [escalationKind, setEscalationKind] = useState<EscalationKind | ''>('')
   const [rows, setRows] = useState<CaseSummary[] | null>(null)
-  const [details, setDetails] = useState<Record<string, CaseDetail>>({})
+  const [nextCursor, setNextCursor] = useState<string | null>(null)
+  const [loadingMore, setLoadingMore] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [loadMoreError, setLoadMoreError] = useState<string | null>(null)
 
+  const [details, setDetails] = useState<Record<string, CaseDetail>>({})
+  const [detailErrors, setDetailErrors] = useState<Record<string, string>>({})
   const [expanded, setExpanded] = useState<string | null>(null)
   const [contexts, setContexts] = useState<Record<string, ReviewContext>>({})
   const [contextErrors, setContextErrors] = useState<Record<string, string>>({})
 
+  // Fix round 1 (M6): a generation counter, bumped on every filter-driven reload, so a
+  // "load more" response that arrives after the filter has since changed is dropped
+  // instead of appending stale rows onto a list that no longer matches the filter shown.
+  const generationRef = useRef(0)
+
   useEffect(() => {
     let cancelled = false
+    const generation = ++generationRef.current
     async function load() {
       setRows(null)
+      setNextCursor(null)
       setError(null)
+      setLoadMoreError(null)
+      // A reload supersedes any "load more" in flight - its own result (if it ever arrives)
+      // is now guarded out below, so the button must not stay busy waiting for it (fix
+      // round 2, N1).
+      setLoadingMore(false)
+      setExpanded(null)
+      // A filter change makes every previously loaded detail/context stale (a different
+      // row set, possibly the same case id reused across filters is not a concern here,
+      // but a stale cache would still show yesterday's content on next expand).
+      setDetails({})
+      setDetailErrors({})
+      setContexts({})
+      setContextErrors({})
       try {
-        const list = await api.listCases(filter === '' ? undefined : filter)
-        if (cancelled) return
-        setRows(list)
-        const loaded = await Promise.all(
-          list.map(async (row) => {
-            try {
-              return await api.getCase(row.case_id)
-            } catch {
-              return null
-            }
-          }),
-        )
-        if (cancelled) return
-        const byId: Record<string, CaseDetail> = {}
-        for (const detail of loaded) {
-          if (detail) byId[detail.case_id] = detail
-        }
-        setDetails(byId)
+        const page = await api.listCases({
+          group: group === '' ? undefined : group,
+          escalationKind: escalationKind === '' ? undefined : escalationKind,
+        })
+        if (cancelled || generation !== generationRef.current) return
+        setRows(page.items)
+        setNextCursor(page.next_cursor)
       } catch (caught) {
-        if (!cancelled) setError(detailOf(caught))
+        if (!cancelled && generation === generationRef.current) setError(detailOf(caught))
       }
     }
     void load()
     return () => {
       cancelled = true
     }
-  }, [filter])
+  }, [group, escalationKind])
+
+  async function loadMore() {
+    if (nextCursor === null) return
+    const generation = generationRef.current
+    setLoadingMore(true)
+    setLoadMoreError(null)
+    try {
+      const page = await api.listCases({
+        group: group === '' ? undefined : group,
+        escalationKind: escalationKind === '' ? undefined : escalationKind,
+        cursor: nextCursor,
+      })
+      if (generation !== generationRef.current) return // the filter changed meanwhile
+      setRows((previous) => [...(previous ?? []), ...page.items])
+      setNextCursor(page.next_cursor)
+    } catch (caught) {
+      if (generation === generationRef.current) setLoadMoreError(detailOf(caught))
+    } finally {
+      // Unconditional (fix round 2, N1): a generation that has since moved on still means
+      // this request is over - only the data write above stays guarded, not the busy flag,
+      // or the button would stay busy forever after a race with a filter change.
+      setLoadingMore(false)
+    }
+  }
+
+  function selectGroup(value: StateGroup | '') {
+    setGroup(value)
+    // escalation_kind is only accepted with group=staff (docs/api.md §5); leaving it set
+    // while switching to another group would otherwise ask the API for an invalid_filter
+    // combination on the very next load.
+    if (value !== 'staff') setEscalationKind('')
+  }
 
   async function toggle(caseId: string) {
     if (expanded === caseId) {
@@ -79,12 +134,21 @@ export function CaseMonitor() {
       return
     }
     setExpanded(caseId)
-    if (contexts[caseId]) return
-    try {
-      const context = await api.getContext(caseId)
-      setContexts((previous) => ({ ...previous, [caseId]: context }))
-    } catch (caught) {
-      setContextErrors((previous) => ({ ...previous, [caseId]: detailOf(caught) }))
+    if (!details[caseId] && !detailErrors[caseId]) {
+      try {
+        const detail = await api.getCase(caseId)
+        setDetails((previous) => ({ ...previous, [caseId]: detail }))
+      } catch (caught) {
+        setDetailErrors((previous) => ({ ...previous, [caseId]: detailOf(caught) }))
+      }
+    }
+    if (!contexts[caseId] && !contextErrors[caseId]) {
+      try {
+        const context = await api.getContext(caseId)
+        setContexts((previous) => ({ ...previous, [caseId]: context }))
+      } catch (caught) {
+        setContextErrors((previous) => ({ ...previous, [caseId]: detailOf(caught) }))
+      }
     }
   }
 
@@ -98,25 +162,50 @@ export function CaseMonitor() {
         </p>
       </header>
 
-      <div className="field filter-field">
-        <label className="label" htmlFor="state-filter">
-          סינון לפי State
-        </label>
-        <div className="control">
-          <select
-            id="state-filter"
-            className="input"
-            value={filter}
-            onChange={(event) => setFilter(event.target.value as State | '')}
-          >
-            <option value="">כל המצבים</option>
-            {STATES.map((state) => (
-              <option key={state} value={state}>
-                {stateLabel(state)} ({state})
-              </option>
-            ))}
-          </select>
+      <div className="filter-row">
+        <div className="field filter-field">
+          <label className="label" htmlFor="group-filter">
+            סינון לפי קבוצה
+          </label>
+          <div className="control">
+            <select
+              id="group-filter"
+              className="input"
+              value={group}
+              onChange={(event) => selectGroup(event.target.value as StateGroup | '')}
+            >
+              <option value="">הכול</option>
+              {STATE_GROUP_ORDER.map((option) => (
+                <option key={option} value={option}>
+                  {STATE_GROUP_LABELS[option]}
+                </option>
+              ))}
+            </select>
+          </div>
         </div>
+
+        {group === 'staff' && (
+          <div className="field filter-field">
+            <label className="label" htmlFor="escalation-kind-filter">
+              סינון לפי סוג הסלמה (escalation_kind)
+            </label>
+            <div className="control">
+              <select
+                id="escalation-kind-filter"
+                className="input"
+                value={escalationKind}
+                onChange={(event) => setEscalationKind(event.target.value as EscalationKind | '')}
+              >
+                <option value="">הכול</option>
+                {ESCALATION_KIND_OPTIONS.map((kind) => (
+                  <option key={kind} value={kind}>
+                    {ESCALATION_LABELS[kind]} ({kind})
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+        )}
       </div>
 
       {error ? (
@@ -124,12 +213,10 @@ export function CaseMonitor() {
           <span className="mono">{error}</span>
         </Alert>
       ) : rows === null ? (
-        <p className="page-loading" role="status">
-          טוען…
-        </p>
+        <Loading label="טוען פניות" />
       ) : rows.length === 0 ? (
         <Alert variant="info" title="אין פניות להצגה">
-          לא נמצאו פניות במצב שנבחר.
+          אין פניות בקבוצה שנבחרה.
         </Alert>
       ) : (
         <div className="table-wrap card">
@@ -147,13 +234,13 @@ export function CaseMonitor() {
             </thead>
             <tbody>
               {rows.map((row) => {
-                const detail = details[row.case_id]
                 const open = expanded === row.case_id
                 return (
                   <ExpandableRow
                     key={row.case_id}
                     row={row}
-                    detail={detail}
+                    detail={details[row.case_id]}
+                    detailError={detailErrors[row.case_id]}
                     open={open}
                     context={contexts[row.case_id]}
                     contextError={contextErrors[row.case_id]}
@@ -163,6 +250,18 @@ export function CaseMonitor() {
               })}
             </tbody>
           </table>
+          {nextCursor !== null && (
+            <div className="table-footer">
+              <Button variant="secondary" busy={loadingMore} onClick={() => void loadMore()}>
+                טעינת עוד
+              </Button>
+              {loadMoreError && (
+                <Alert variant="error" title="טעינת פניות נוספות נכשלה">
+                  <span className="mono">{loadMoreError}</span>
+                </Alert>
+              )}
+            </div>
+          )}
         </div>
       )}
     </section>
@@ -172,13 +271,14 @@ export function CaseMonitor() {
 interface RowProps {
   row: CaseSummary
   detail?: CaseDetail
+  detailError?: string
   open: boolean
   context?: ReviewContext
   contextError?: string
   onToggle: () => void
 }
 
-function ExpandableRow({ row, detail, open, context, contextError, onToggle }: RowProps) {
+function ExpandableRow({ row, detail, detailError, open, context, contextError, onToggle }: RowProps) {
   return (
     <>
       <tr className="row-link" onClick={onToggle}>
@@ -195,16 +295,16 @@ function ExpandableRow({ row, detail, open, context, contextError, onToggle }: R
             {row.case_id}
           </button>
         </td>
-        <td className="mono">{detail?.patient_id ?? '—'}</td>
+        <td className="mono">{row.patient_id}</td>
         <td>
           <StatusPill state={row.state} />
           <span className="cell-sub">{stateLabel(row.state)}</span>
         </td>
         <td>
-          <Coded label={intentLabel(detail?.intent)} code={detail?.intent} />
+          <Coded label={intentLabel(row.intent)} code={row.intent} />
         </td>
         <td>
-          <Coded label={safetyLabel(detail?.safety_level)} code={detail?.safety_level} />
+          <Coded label={safetyLabel(row.safety_level)} code={row.safety_level} />
         </td>
         <td>
           <Coded label={escalationLabel(row.escalation_kind)} code={row.escalation_kind} />
@@ -215,7 +315,15 @@ function ExpandableRow({ row, detail, open, context, contextError, onToggle }: R
         <tr className="detail-row">
           <td colSpan={7}>
             <div className="case-detail">
-              {detail ? <CaseFacts detail={detail} /> : <p className="empty-note">פרטי הפנייה לא נטענו.</p>}
+              {detail ? (
+                <CaseFacts detail={detail} />
+              ) : detailError ? (
+                <Alert variant="error" title="טעינת פרטי הפנייה נכשלה">
+                  <span className="mono">{detailError}</span>
+                </Alert>
+              ) : (
+                <Loading size="inline" label="טוען פרטים" />
+              )}
 
               {detail?.ordered_steps && detail.ordered_steps.length > 0 && (
                 <section className="fact-group">
@@ -247,9 +355,7 @@ function ExpandableRow({ row, detail, open, context, contextError, onToggle }: R
                   <AuditTimeline rows={context.trace} label={`יומן הביקורת של ${row.case_id}`} />
                 </>
               ) : (
-                <p className="page-loading" role="status">
-                  טוען…
-                </p>
+                <Loading size="inline" label="טוען תכתובת" />
               )}
             </div>
           </td>

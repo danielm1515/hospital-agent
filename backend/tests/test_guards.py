@@ -129,6 +129,16 @@ def test_document_valid_checks_format_owner_and_expiry():
     assert not holds("DocumentValid", ctx(case, payload={"document": expired}, source=source))
 
 
+@pytest.mark.parametrize("fmt", ["pdf", "jpg", "png"])
+def test_document_valid_accepts_all_three_supported_formats(fmt):
+    """Sub-project 17 task 2 decision 4 (fix round 1, M3): the sniffed kind of an image upload
+    (`jpg`/`png`) is a real `format` value now, not just a theoretical one - all three must
+    hold, exactly like the pre-existing `pdf` case above."""
+    case = planned(state=State.AWAITING_PATIENT_INPUT)
+    doc = {"document_id": "blood_test", "format": fmt, "patient_id": "P-1"}
+    assert holds("DocumentValid", ctx(case, payload={"document": doc}, source=Component.SESSION_SERVICE))
+
+
 def test_document_valid_trusts_the_document_only_from_the_session_service():
     """F2: DOCUMENT_UPLOADED is external, so State Manager cannot trust an owner check (§13.2).
 

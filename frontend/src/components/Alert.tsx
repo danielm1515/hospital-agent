@@ -10,10 +10,12 @@ interface AlertProps {
   /** The `.text` part: text, a `.mono` fragment, a list or an action button. */
   children?: ReactNode
   className?: string
+  /** Shows a "סגירה" close button, e.g. for a transient notice (staff-fixes design Task 7). */
+  onClose?: () => void
 }
 
-export function Alert({ variant = 'info', title, children, className }: AlertProps) {
-  return (
+export function Alert({ variant = 'info', title, children, className, onClose }: AlertProps) {
+  const box = (
     <div
       className={['alert', variant, className].filter(Boolean).join(' ')}
       role={variant === 'error' ? 'alert' : 'status'}
@@ -26,6 +28,20 @@ export function Alert({ variant = 'info', title, children, className }: AlertPro
         {title !== undefined && <p className="title">{title}</p>}
         {children !== undefined && <div className="text">{children}</div>}
       </div>
+    </div>
+  )
+
+  if (!onClose) return box
+
+  // Fix round 1 (M8): the close button is a sibling of the `role="status"`/`role="alert"`
+  // element, not nested inside it - a screen reader announcing the live region would
+  // otherwise also announce "button, סגירה" as part of that region's own content.
+  return (
+    <div className="alert-shell">
+      {box}
+      <button type="button" className="alert-close" aria-label="סגירה" onClick={onClose}>
+        <span aria-hidden="true">✕</span>
+      </button>
     </div>
   )
 }

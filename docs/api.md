@@ -68,21 +68,23 @@ methods: `GET`, `POST`, `DELETE`, `OPTIONS`. Allowed headers: `Authorization`,
 | GET | `/api/patient/requests` | patient | My requests |
 | GET | `/api/patient/requests/{case_id}` | patient | One of my requests |
 | POST | `/api/patient/requests/{case_id}/documents` | patient | Upload a document |
-| POST | `/api/patient/requests/{case_id}/documents/file` | patient | Upload a PDF, forwarded to the document-service (sub-project 13) |
+| POST | `/api/patient/requests/{case_id}/documents/file` | patient | Upload a document (PDF, JPEG or PNG), forwarded to the document-service (sub-project 13) |
 | POST | `/api/patient/requests/{case_id}/reply` | patient | Answer a staff question (sub-project 15) |
-| POST | `/api/patient/requests/{case_id}/reply/file` | patient | Upload the PDF a staff member asked for (sub-project 15) |
+| POST | `/api/patient/requests/{case_id}/reply/file` | patient | Upload the document (PDF, JPEG or PNG) a staff member asked for (sub-project 15) |
 | GET | `/api/patient/appointments` | patient | My appointments (`?from=&to=`, sub-project 16) |
-| GET | `/api/staff/cases` | staff | All cases (`?state=`) |
-| GET | `/api/staff/cases/{case_id}` | staff | One case, in full |
+| GET | `/api/staff/cases` | staff | All cases, keyset-paginated (`?state=` or `?group=&escalation_kind=`, `&limit=&cursor=`; staff-fixes design Tasks 3-4) |
+| GET | `/api/staff/cases/{case_id}` | staff | One case, in full (plan, documents, counters) |
 | GET | `/api/staff/cases/{case_id}/audit` | staff | The case's audit trace |
 | GET | `/api/staff/cases/{case_id}/appointments` | staff | The case's patient's appointments (`?from=&to=`, sub-project 16) |
-| GET | `/api/staff/reviews` | staff | The human-review queue |
+| GET | `/api/staff/reviews` | staff | The human-review queue, keyset-paginated, newest entry first (staff-fixes design Task 5) |
+| GET | `/api/staff/reviews/{case_id}` | staff | One queue item (staff-fixes design Task 3) |
 | GET | `/api/staff/cases/{case_id}/context` | staff | What the reviewer is shown |
 | POST | `/api/staff/cases/{case_id}/decision` | staff | Approve / resolve / reject |
 | POST | `/api/staff/cases/{case_id}/answer` | staff | Answer a `MedicalQuestion` with an approved clinical message |
 | GET | `/api/staff/message-templates` | staff | The fixed staff messages (sub-project 15) |
 | POST | `/api/staff/cases/{case_id}/request` | staff | Ask the patient a question or for a document (sub-project 15) |
 | DELETE | `/api/staff/cases/{case_id}/data/{entry_id}` | staff | Delete one Data Log entry |
+| GET | `/api/staff/system-status` | staff | Whether the Agent Orchestrator runs and the LLM's last outcome (staff-fixes design Task 1) |
 | GET | `/api/admin/metrics` | admin_staff | System metrics over a window (sub-project 14) |
 
 Codes used everywhere: `401 not_authenticated` (no token, a malformed token, an expired or
@@ -100,7 +102,8 @@ in this document, so leaving them enabled is fine for the demo. A non-demo build
 ### GET /health
 
 ```json
-{"status": "ok", "database": "ok", "orchestrator": "running", "appointments": "mock", "documents": "mock"}
+{"status": "ok", "database": "ok", "orchestrator": "running", "llm": "ok",
+ "appointments": "mock", "documents": "mock"}
 ```
 
 `orchestrator` appears only on a real server: `"running"`, `"disabled: OPENAI_API_KEY is not set"`,
@@ -109,7 +112,11 @@ in this document, so leaving them enabled is fine for the demo. A non-demo build
 While it runs, `appointments` says where `CheckAppointment` goes: `"mock"`, or `"appointment-service"`
 when `APPOINTMENT_SERVICE_URL` is set (sub-project 10), and `documents` says where `CheckDocuments`
 goes: `"mock"`, or `"document-service"` when `DOCUMENT_SERVICE_URL` is set (sub-project 13) - the
-word only, never the URL. `503` with
+word only, never the URL. `llm` appears alongside `orchestrator` (staff-fixes design Task 1) as
+`"ok"` | `"error"` | `"unknown"` only - `"unknown"` until the first of the four LLM calls (Intent,
+Safety, Planner, Response Evaluator), `"error"` when the last one was unusable and no later one
+succeeded, `"ok"` otherwise. Being public, `/health` never carries the error code or a timestamp
+(fix round 1, M6) - that detail is staff-only, on `GET /api/staff/system-status` (§5). `503` with
 `{"status": "degraded", "database": "unavailable"}` when Postgres cannot be reached.
 
 ### POST /api/auth/login
@@ -153,7 +160,7 @@ case_not_found`, exactly like a case that does not exist.
 
 ### The patient view
 
-Every patient route answers with this object, and nothing else (the PDF upload wraps it, as
+Every patient route answers with this object, and nothing else (the document upload wraps it, as
 `request`, beside its outcome code):
 
 ```json
@@ -207,7 +214,7 @@ patient route already returned everything else shown here.
   no committed transition, which the patient routes never return.
 - `document_upload` says which upload the screen offers for `needs_document`: `"file"` when the
   server is configured with the document-service (`DOCUMENT_SERVICE_URL` and
-  `DOCUMENT_API_KEY`) - a PDF picker, sent to `POST .../documents/file` - or `"text"` without
+  `DOCUMENT_API_KEY`) - a document picker (PDF, JPEG or PNG), sent to `POST .../documents/file` - or `"text"` without
   it - the text box, sent to `POST .../documents`. It is the same for every case of a running
   server, and present in every state.
 
@@ -276,20 +283,26 @@ document-service this route behaves exactly as before.
 
 ### POST /api/patient/requests/{case_id}/documents/file
 
-Sub-project 13 (design §5.3). Offered only when the patient view says `"document_upload":
-"file"`. Request: `multipart/form-data` with one part named `file` carrying a filename - the
-PDF, at most 10 MB (10 485 760 bytes). The request must carry a `Content-Length`; a body over
-10 MB + 64 KiB (the file plus its multipart framing) is refused by that header alone, before
-it is read. Other parts are ignored.
+Sub-project 13 (design §5.3); sub-project 17 task 2: PDF, JPEG or PNG, not PDF only - a scanned
+PDF with no text layer and a photo of a document both go through the document-service's vision
+path. Offered only when the patient view says `"document_upload": "file"`. Request:
+`multipart/form-data` with one part named `file` carrying a filename - the document, at most
+10 MB (10 485 760 bytes). The request must carry a `Content-Length`; a body over 10 MB + 64 KiB
+(the file plus its multipart framing) is refused by that header alone, before it is read. Other
+parts are ignored.
 
 The server checks that the case is this patient's and is waiting for a document **before**
-anything is sent on, then forwards the file to the document-service, which reads it,
-classifies it and stores it only if it is accepted. The PDF is never stored here, and its
-content never enters the Data Log, the Audit or a log line: an accepted, required document
-records one reference line in the Data Log (`DOC-3F2A1B9C0D4E CBC ACCEPTED` - the
-document-service's id, the type, the result) and moves the case down the same
-`DOCUMENT_UPLOADED` path as the text upload. The document-service can take up to 70 s to
-answer; the server waits up to 75 s.
+anything is sent on, then forwards the file to the document-service - with its real
+`Content-Type` sniffed by magic bytes (`application/pdf`, `image/jpeg` or `image/png`), never
+trusted from the browser or the file name - which reads it, classifies it and stores it only if
+it is accepted. The file is never stored here, and its content never enters the Data Log, the
+Audit or a log line: an accepted, required document records one reference line in the Data Log
+(`DOC-3F2A1B9C0D4E CBC ACCEPTED` - the document-service's id, the type, the result) and moves
+the case down the same `DOCUMENT_UPLOADED` path as the text upload. The document-service can
+take up to 70 s to answer; the server waits up to 75 s. A `503 classifier_unavailable` from the
+document-service (a provider failure, never a verdict on the file) is not a rejection code at
+all - it surfaces as this route's own `503 document_service_unavailable` below, exactly like any
+other unavailable answer.
 
 `200`:
 
@@ -306,14 +319,23 @@ answer; the server waits up to 75 s.
 | `not_required` | Accepted by the document-service, but this appointment does not need that type | Unchanged |
 | `already_received` | Of a type the case already holds | Unchanged |
 | `not_medical` | Not a medical document | Unchanged |
-| `unreadable` | Could not be read or classified (also any answer this version does not know) | Unchanged |
-| `expired` | Past its validity | Unchanged |
+| `unrecognised_type` | A medical document, but not of a type the catalog knows (document-service `reason: unknown_type`) | Unchanged |
+| `unreadable_scan` | A scanned PDF with no text layer and no usable embedded image for vision either (document-service `reason: no_text_layer`) | Unchanged |
+| `bad_date` | The document's date is in the future (document-service `reason: future_date`) | Unchanged |
+| `no_date` | No date found on the document (document-service `reason: no_date`) | Unchanged |
+| `unsupported_format` | Not a PDF, JPEG or PNG by magic bytes (document-service `reason: not_supported_format`) | Unchanged |
+| `too_large` | An image over the document-service's pixel limit - both sides already cap the file at 10 MB (document-service `reason: too_large`) | Unchanged |
+| `unreadable` | Could not be read or classified for any other reason (a parse error, too many pages, too much text, an unparsable classifier answer, or any answer or reason this version does not know) | Unchanged |
+| `expired` | Past its validity (a document-service `DOCUMENT_EXPIRED` whose reason is `too_old`, or none at all) | Unchanged |
 | `not_yours` | Names another patient | Unchanged |
 
-`upload.document_type` is the catalog type (`CBC`, `COAGULATION_TESTS`, `ECG`, `URINALYSIS`,
-`PREOP_SUMMARY`) for `accepted`, `not_required` and `already_received`, and `null` for every
-other code. The document-service's own document id never comes back. `request` is the patient
-view after the upload - for every code but `accepted` it is exactly what it was before.
+The six rows `unrecognised_type` … `too_large` are sub-project 17 task 2: the document-service's optional `reason` (its own
+API, `DOCUMENT_UNREADABLE`/`DOCUMENT_EXPIRED` only) becomes a finer patient code exactly where
+listed above; every other reason, or no reason at all, falls back to the coarser `unreadable` or
+`expired`. `upload.document_type` is the catalog type (`CBC`, `COAGULATION_TESTS`, `ECG`,
+`URINALYSIS`, `PREOP_SUMMARY`) for `accepted`, `not_required` and `already_received`, and `null`
+for every other code. The document-service's own document id never comes back. `request` is the
+patient view after the upload - for every code but `accepted` it is exactly what it was before.
 
 - `404 file_upload_not_enabled` - the server has no document-service configured
   (`document_upload` is `"text"`); use `POST .../documents`.
@@ -327,12 +349,12 @@ view after the upload - for every code but `accepted` it is exactly what it was 
 - `422 invalid_body` - not a `multipart/form-data` body with a part named `file` (and a
   filename) among its first 64 parts, or a body that cannot be parsed at all.
 - `503 document_service_unavailable` - the document-service did not answer, answered an
-  error, or answered something that is not its contract. Nothing is recorded. Tell the
-  patient the document service could not take the file, to try again later or contact the
-  call centre - a retry is not promised to help (some of these answers are about the file
-  itself), though a re-sent copy of a document that was in fact accepted comes back
-  `accepted`. The application log records only the kind (`no_answer`, `status_<n>`,
-  `invalid_response`).
+  error (including `classifier_unavailable`), or answered something that is not its contract.
+  Nothing is recorded. Tell the patient the document service could not take the file, to try
+  again later or contact the call centre - a retry is not promised to help (some of these
+  answers are about the file itself), though a re-sent copy of a document that was in fact
+  accepted comes back `accepted`. The application log records only the kind (`no_answer`,
+  `status_<n>`, `classifier_unavailable`, `invalid_response`).
 - `401 not_authenticated`, `403 patients_only` - as everywhere.
 
 ## 5. Staff routes
@@ -342,26 +364,62 @@ Every route needs a `clinical_staff` or `admin_staff` token; a patient token get
 
 ### GET /api/staff/cases
 
-Optional `?state=<State>`; an unknown state is `422 invalid_body`. `200`:
+Staff-fixes design Task 3: one call, with every column the Case Monitor table shows, so
+the client makes no per-row follow-up call. Optional `?state=<State>`; an unknown state is
+`422 invalid_body`, and so is a non-integer `?limit=` (FastAPI's own query-parsing 422,
+turned into the same body every route uses for a malformed request). Keyset pagination:
+`?limit=` (default 50, at most 200; an integer outside that range is `422 invalid_limit`)
+and `?cursor=` (the previous response's `next_cursor`; malformed, of the other list, or
+naive is `422 invalid_cursor` - fix round 1 (M5): every cursor this endpoint's
+`next_cursor` carries starts `c|`, and a `GET /api/staff/reviews` cursor starts `r|`, so a
+cursor built for that list is caught by the prefix alone, and one whose timestamp carries
+no timezone offset is refused too. A well-formed, correctly-prefixed cursor built by hand is
+accepted by design - there is no HMAC or other signature over it, only the shape check).
+
+Staff-fixes design Task 4: `?group=<staff|patient|automatic|done|rejected>` filters by one
+of the fixed groups instead of one exact State (`hospital_agent.state_groups.STATE_GROUPS`,
+mirrored in the frontend's `labels.ts`); an unknown group is `422 invalid_filter`, and so is
+sending `?state=` and `?group=` together (fix round 1, I3) - they are alternative filters,
+never combined into a narrower one.
+`?escalation_kind=<EscalationKind>` narrows `group=staff` further to one escalation kind
+(an unknown kind is `422 invalid_filter`); with any other group, or with no `group` at all,
+`escalation_kind` is `422 invalid_filter`.
+`200`:
 
 ```json
-[
-  {
-    "case_id": "CASE-23FE645294B7",
-    "state": "Completed",
-    "escalation_kind": null,
-    "updated_at": "2026-09-19T22:12:48.986200Z"
-  }
-]
+{
+  "items": [
+    {
+      "case_id": "CASE-23FE645294B7",
+      "patient_id": "P-10041",
+      "state": "Completed",
+      "intent": "AppointmentPreparation",
+      "safety_level": "MediumRisk",
+      "escalation_kind": null,
+      "escalated_from_state": null,
+      "created_at": "2026-09-19T22:12:38.560531Z",
+      "updated_at": "2026-09-19T22:12:48.986200Z"
+    }
+  ],
+  "next_cursor": null
+}
 ```
+
+The items are ordered `updated_at` descending, `case_id` descending (a tie-break, since
+`updated_at` alone is not unique). `next_cursor` is an opaque string (a `c|` kind prefix
+over base64 of `updated_at|case_id`, fix round 1 M5); `null` means there is no next page.
+Ask for the next page with `?cursor=<next_cursor>&state=...` (repeat the same filter).
 
 States: `Received`, `Classifying`, `Classified`, `Planning`, `RetrievingData`,
 `Delivering`, `AssessingReadiness`, `AwaitingPatientInput`, `AwaitingHumanReview`, `Ready`,
-`Completed`, `Failed`, `AwaitingPatientReply` (sub-project 15, §8).
+`Completed`, `Failed`, `AwaitingPatientReply` (sub-project 15, §8). `intent` is
+`AppointmentPreparation`, `MedicalQuestion` or `Unsupported`; `safety_level` is `LowRisk`,
+`MediumRisk`, `HighRisk` or `CriticalRisk`.
 
 ### GET /api/staff/cases/{case_id}
 
-`200`:
+The expanded row's detail only (staff-fixes design Task 3): the plan, the documents and
+the counters the list above does not carry. `200`:
 
 ```json
 {
@@ -429,23 +487,35 @@ message or document text - only ids, decisions and hashes (§12.3). `404 case_no
 
 ### GET /api/staff/reviews
 
-The queue of cases in `AwaitingHumanReview`, oldest update first. `200`:
+The queue of cases in `AwaitingHumanReview`, **newest entry into that State first**
+(staff-fixes design Task 5) - a case that returns from a patient's reply or a request that
+ran out of time re-enters and jumps to the top, since it needs attention again. One
+statement (a LEFT LATERAL join to each case's latest entry row, fix round 1 M4 - a case
+somehow missing that row is never dropped from the queue, only shown with its
+`cases.updated_at` as a fallback `entered_at` and `reasons: []`), keyset-paginated the same
+way as `GET /api/staff/cases`: `?limit=` (default 50, at most 200; otherwise `422
+invalid_limit`) and `?cursor=` (opaque, an `r|` kind prefix over base64 of
+`entered_at|case_id` - distinct from `GET /api/staff/cases`'s `c|` prefix, so a cursor from
+one list is `422 invalid_cursor` on the other, fix round 1 M5). `200`:
 
 ```json
-[
-  {
-    "case_id": "CASE-6FFF40DFB8DA",
-    "patient_id": "P-10041",
-    "escalation_kind": "MedicalQuestion",
-    "escalated_from_state": "Classifying",
-    "reasons": [],
-    "allowed_decisions": ["resolve", "reject"],
-    "required_fields": [],
-    "updated_at": "2026-09-19T22:12:39.693277Z",
-    "human_engaged": false,
-    "returned_by": null
-  }
-]
+{
+  "items": [
+    {
+      "case_id": "CASE-6FFF40DFB8DA",
+      "patient_id": "P-10041",
+      "escalation_kind": "MedicalQuestion",
+      "escalated_from_state": "Classifying",
+      "reasons": [],
+      "allowed_decisions": ["resolve", "reject"],
+      "required_fields": [],
+      "entered_at": "2026-09-19T22:12:39.693277Z",
+      "human_engaged": false,
+      "returned_by": null
+    }
+  ],
+  "next_cursor": null
+}
 ```
 
 - `escalation_kind`: `PatientVerificationFailed`, `MedicalQuestion`, `SafetyEscalation`,
@@ -455,6 +525,9 @@ The queue of cases in `AwaitingHumanReview`, oldest update first. `200`:
 - `human_engaged` / `returned_by` (sub-project 15) - see §8 below.
 - `reasons`: the `policy_reasons` of the row that escalated the case (e.g.
   `["medical_answer_attempt"]`, `["hours_until:20"]`). May be empty.
+- `entered_at`: when the case entered `AwaitingHumanReview` - the queue's order key
+  (staff-fixes design Task 5), replacing the older `updated_at` (the two agreed on every
+  case that had never re-entered review, but meant the wrong thing for one that had).
 - `allowed_decisions`: **render exactly these buttons.** `approve` appears only for the
   five kinds a case can resume from (`PatientVerificationFailed`, `RetryExhausted`,
   `PolicyReview`, `Z3Counterexample`, `PatientSlaExpired`); `resolve` and `reject` always.
@@ -463,6 +536,13 @@ The queue of cases in `AwaitingHumanReview`, oldest update first. `200`:
   `PatientSlaExpired`); otherwise `[]`. Render them in the approve form; the server
   refuses an approve without them (`409 verified_identity_ref_required` /
   `409 patient_deadline_required`).
+
+### GET /api/staff/reviews/{case_id}
+
+Staff-fixes design Task 3: one queue item, in the same shape as a `GET /api/staff/reviews`
+item (above) - so `ReviewCase` reads its own row without fetching the whole queue. `200` is
+the single object (not wrapped in a page); `404 not_in_review` when the case is not (or no
+longer) in `AwaitingHumanReview`; `404 case_not_found` for an unknown case.
 
 ### GET /api/staff/cases/{case_id}/context
 
@@ -619,6 +699,29 @@ Errors - all of them leave the case exactly as it was:
 Take `entry_id` from the context's `data`. After a delete, re-fetch the context: the
 previous `shown_context_ref` is no longer valid.
 
+### GET /api/staff/system-status
+
+Staff-fixes design Task 1, decision 3: is the LLM (still) called at all, and does the Agent
+Orchestrator run. `200`:
+
+```json
+{"orchestrator": "running",
+ "llm": {"last_ok_at": "2026-09-26T10:00:03.512841+00:00", "last_error": null, "last_error_at": null}}
+```
+
+- `orchestrator` is exactly `/health`'s field: `null` on an injected (test) server, `"running"`,
+  or a `"disabled: ..."` reason.
+- `llm` carries the detail `/health`'s own `llm` field no longer does (fix round 1, M6 - `/health`
+  is public, this route is staff-only): the last success time and the last error code and time,
+  all `null` until the first LLM call, each timestamp `datetime.isoformat()` (a UTC offset,
+  `+00:00`, with microseconds). The error code is one of `unparsable`, `schema_violation`,
+  `worker_died` (the Response Evaluator's worker process died and was replaced), or
+  `api:<ExceptionType>[:<code>]` (e.g. `api:AuthenticationError`,
+  `api:RateLimitError:insufficient_quota`) - never request text, a prompt or an answer.
+
+The staff UI shows a banner while `orchestrator` is not `"running"`, or `last_error` is set and
+newer than `last_ok_at` - each with a Hebrew label beside the code.
+
 ## 6. Notes for the UI
 
 - **Two screens** (§1): the patient screen (login, submit, status, upload) and the staff
@@ -768,21 +871,23 @@ The patient's text answer to a staff question. Request:
 ### POST /api/patient/requests/{case_id}/reply/file
 
 Exactly like `POST /api/patient/requests/{case_id}/documents/file` (sub-project 13: same
-multipart contract, same size limits, same 411/413 body-size checks in front of the route) -
-offered only while `reply_request.kind` is `"document"`. `200`:
+multipart contract, same size limits, same 411/413 body-size checks in front of the route;
+sub-project 17 task 2: same PDF/JPEG/PNG acceptance and the same document-service `reason`
+mapping) - offered only while `reply_request.kind` is `"document"`. `200`:
 
 ```json
 {"upload": {"code": "accepted", "document_type": "URINALYSIS"}, "request": {"...": "the patient view"}}
 ```
 
-`upload.code` is one of §4's codes reachable here - `accepted`, `not_medical`, `unreadable`,
+`upload.code` is one of §4's codes reachable here - `accepted`, `not_medical`, `unrecognised_type`,
+`unreadable_scan`, `bad_date`, `no_date`, `unsupported_format`, `too_large`, `unreadable`,
 `expired`, `not_yours` - plus one more:
 
 | `upload.code` | Meaning | The case |
 |---|---|---|
 | `accepted` | A readable, valid document of the type requested (or a re-sent copy already accepted) | Leaves `needs_reply`, back to `in_review` |
 | `wrong_document_type` | Readable and valid, but not the catalog type the staff member asked for | Unchanged |
-| `not_medical`, `unreadable`, `expired`, `not_yours` | As in §4 | Unchanged |
+| `not_medical`, `unrecognised_type`, `unreadable_scan`, `bad_date`, `no_date`, `unsupported_format`, `too_large`, `unreadable`, `expired`, `not_yours` | As in §4 | Unchanged |
 
 `upload.document_type` is the catalog type the document-service classified the file as, for
 `accepted` and also for `wrong_document_type` (the type it actually was, not the one that was

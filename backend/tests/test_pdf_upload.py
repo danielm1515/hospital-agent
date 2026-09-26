@@ -11,11 +11,14 @@ from hospital_agent.api.app import UPLOAD_BODY_LIMIT, create_app
 from hospital_agent.auth import demo_password
 from hospital_agent.document_intake import IntakeAnswer, IntakeUnavailable
 from hospital_agent.naming import Event, State
-from hospital_agent.session import CaseNotFound, NotWaitingForDocument, SessionService, UploadOutcome
+from hospital_agent.session import (
+    _REJECTION_CODES, _UNREADABLE, CaseNotFound, NotWaitingForDocument, SessionService, UploadOutcome,
+)
 from tests.driver import Driver
 
 PATIENT, OTHER = "P-10041", "P-20000"
 PDF = b"%PDF-1.7\n1 0 obj << >> endobj\n%%EOF"
+JPEG = b"\xff\xd8\xff\xe0\x00\x10JFIF...binary..."
 FILENAME = "my-ecg-scan.pdf"
 
 
@@ -125,6 +128,101 @@ def test_a_rejection_is_its_code_and_no_event(sm, app_engine, answer, code):
     outcome = SessionService(sm, document_intake=FakeIntake(answer)).upload_pdf(PATIENT, d.case_id, PDF, FILENAME)
     assert outcome == UploadOutcome(code, None)
     unchanged(d, app_engine, version)
+
+
+# --- sub-project 17 task 2: a reason maps to a finer patient code, no event either way -------------
+
+@pytest.mark.parametrize("result, reason, code", [
+    ("DOCUMENT_UNREADABLE", "unknown_type", "unrecognised_type"),
+    ("DOCUMENT_UNREADABLE", "future_date", "bad_date"),
+    ("DOCUMENT_UNREADABLE", "no_text_layer", "unreadable_scan"),
+    ("DOCUMENT_UNREADABLE", "not_supported_format", "unsupported_format"),
+    ("DOCUMENT_UNREADABLE", "too_large", "too_large"),
+    ("DOCUMENT_UNREADABLE", "parse_error", "unreadable"),
+    ("DOCUMENT_UNREADABLE", "too_many_pages", "unreadable"),
+    ("DOCUMENT_UNREADABLE", "too_much_text", "unreadable"),
+    ("DOCUMENT_UNREADABLE", "classifier_unparsable", "unreadable"),
+    ("DOCUMENT_UNREADABLE", None, "unreadable"),
+    ("DOCUMENT_EXPIRED", "no_date", "no_date"),
+    ("DOCUMENT_EXPIRED", "too_old", "expired"),
+    ("DOCUMENT_EXPIRED", None, "expired"),
+])
+def test_a_reason_maps_to_a_finer_code_with_no_event(sm, app_engine, result, reason, code):
+    d = awaiting(sm, app_engine)
+    version = d.case.state_version
+    answer = IntakeAnswer(result, "DOC-1", None, None, reason)
+    outcome = SessionService(sm, document_intake=FakeIntake(answer)).upload_pdf(PATIENT, d.case_id, PDF, FILENAME)
+    assert outcome == UploadOutcome(code, None)
+    unchanged(d, app_engine, version)
+
+
+def test_the_log_line_carries_the_real_reason_and_no_content(sm, app_engine, caplog):
+    d = awaiting(sm, app_engine)
+    answer = IntakeAnswer("DOCUMENT_UNREADABLE", "DOC-SECRET00000001", None, None, "no_text_layer")
+    with caplog.at_level(logging.INFO, logger="hospital_agent.session"):
+        SessionService(sm, document_intake=FakeIntake(answer)).upload_pdf(PATIENT, d.case_id, PDF, FILENAME)
+    lines = [r.getMessage() for r in caplog.records if r.name == "hospital_agent.session"]
+    assert "pdf upload: unreadable_scan (no_text_layer)" in lines
+    for secret in (PATIENT, FILENAME, "DOC-SECRET00000001"):
+        assert secret not in caplog.text
+
+
+def test_no_reason_logs_only_the_code(sm, app_engine, caplog):
+    d = awaiting(sm, app_engine)
+    answer = IntakeAnswer("NON_MEDICAL_DOCUMENT", "DOC-1", None, None)
+    with caplog.at_level(logging.INFO, logger="hospital_agent.session"):
+        SessionService(sm, document_intake=FakeIntake(answer)).upload_pdf(PATIENT, d.case_id, PDF, FILENAME)
+    lines = [r.getMessage() for r in caplog.records if r.name == "hospital_agent.session"]
+    assert "pdf upload: not_medical" in lines
+    assert not any("(" in line for line in lines)
+
+
+# --- fix round 1, M2: a reason only applies to the result it is documented for -----------------
+
+@pytest.mark.parametrize("result, reason", [
+    ("PATIENT_MISMATCH", "too_old"),        # a DOCUMENT_EXPIRED reason on a different result
+    ("PATIENT_MISMATCH", "unknown_type"),   # a DOCUMENT_UNREADABLE reason on a different result
+    ("NON_MEDICAL_DOCUMENT", "no_date"),
+    ("DOCUMENT_UNREADABLE", "too_old"),     # an DOCUMENT_EXPIRED-only reason on DOCUMENT_UNREADABLE
+    ("DOCUMENT_EXPIRED", "unknown_type"),   # a DOCUMENT_UNREADABLE-only reason on DOCUMENT_EXPIRED
+])
+def test_a_reason_on_the_wrong_result_is_ignored(sm, app_engine, result, reason):
+    d = awaiting(sm, app_engine)
+    answer = IntakeAnswer(result, "DOC-1", "ECG", None, reason)
+    outcome = SessionService(sm, document_intake=FakeIntake(answer)).upload_pdf(PATIENT, d.case_id, PDF, FILENAME)
+    assert outcome.code == _REJECTION_CODES.get(result, _UNREADABLE)
+
+
+# --- fix round 1, M3: the DOCUMENT_UPLOADED payload's format matches the sniffed kind -----------
+
+def test_the_uploaded_format_matches_the_sniffed_kind(sm, app_engine, monkeypatch):
+    d = awaiting(sm, app_engine)
+    session = SessionService(sm, document_intake=FakeIntake(accepted("ECG")))
+    calls = []
+    original = session.upload_document
+
+    def spy(*args, **kwargs):
+        calls.append(kwargs.get("fmt"))
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(session, "upload_document", spy)
+    session.upload_pdf(PATIENT, d.case_id, JPEG, "scan.jpg")
+    assert calls == ["jpg"]
+
+
+def test_a_pdf_upload_still_records_the_pdf_format(sm, app_engine, monkeypatch):
+    d = awaiting(sm, app_engine)
+    session = SessionService(sm, document_intake=FakeIntake(accepted("ECG")))
+    calls = []
+    original = session.upload_document
+
+    def spy(*args, **kwargs):
+        calls.append(kwargs.get("fmt"))
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(session, "upload_document", spy)
+    session.upload_pdf(PATIENT, d.case_id, PDF, FILENAME)
+    assert calls == ["pdf"]
 
 
 # --- rules 1 and 3: checked first; an unavailable service records nothing ---------------------------
@@ -263,6 +361,16 @@ def test_another_patients_case_is_404_and_a_case_not_waiting_is_409(app_engine):
 
 def test_an_unavailable_document_service_is_503(app_engine):
     with api(app_engine, FakeIntake(raises=IntakeUnavailable("status_503"))) as client:
+        d = api_awaiting(client, app_engine)
+        response = post_pdf(client, d.case_id)
+        assert response.status_code == 503 and response.json() == {"detail": "document_service_unavailable"}
+
+
+def test_a_classifier_unavailable_provider_failure_is_also_503(app_engine):
+    """Sub-project 17 task 2 decision 1: a provider failure is 503 classifier_unavailable from
+    the document-service, and the patient sees the same 503 document_service_unavailable as any
+    other unavailable answer - never a verdict on the file."""
+    with api(app_engine, FakeIntake(raises=IntakeUnavailable("classifier_unavailable"))) as client:
         d = api_awaiting(client, app_engine)
         response = post_pdf(client, d.case_id)
         assert response.status_code == 503 and response.json() == {"detail": "document_service_unavailable"}

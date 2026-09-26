@@ -109,9 +109,10 @@ def upload_document(case_id: str, body: DocumentUpload, principal: Principal = D
 @router.post("/requests/{case_id}/documents/file", response_model=PdfUploadResponse)
 async def upload_pdf(case_id: str, request: Request, principal: Principal = Depends(require_patient),
                      session: SessionService = Depends(get_session)) -> PdfUploadResponse:
-    """Sub-project 13 (design §5.3): the patient's PDF (multipart, one part named `file`),
-    forwarded to the document-service and never stored here. 200 with the outcome code and the
-    case as it now stands - also for a rejected or not-required document, which moves nothing.
+    """Sub-project 13 (design §5.3; sub-project 17 task 2: PDF, JPEG or PNG, not PDF only): the
+    patient's document (multipart, one part named `file`), forwarded to the document-service
+    and never stored here. 200 with the outcome code and the case as it now stands - also for a
+    rejected or not-required document, which moves nothing.
 
     The multipart body is parsed with the standard library (`_file_part`), not FastAPI's
     `UploadFile`, which needs python-multipart - a runtime dependency this project does not
@@ -184,12 +185,13 @@ async def reply_pdf(case_id: str, request: Request, principal: Principal = Depen
 
 
 async def _read_pdf_part(request: Request) -> tuple[str, bytes]:
-    """The multipart PDF read shared by the sub-project 13 upload route and the sub-project 15
-    reply route: stream the body (capped at UPLOAD_BODY_LIMIT - the UploadSizeLimit middleware
-    has already refused a larger one by its Content-Length, but the read is capped the same way
-    regardless), parse its one `file` part off the event loop, and cap the file itself at
-    MAX_PDF_BYTES. Raises exactly the HTTPExceptions the two routes raised inline before this
-    was extracted (413 too_large, 422 invalid_body) - never a 500."""
+    """The multipart document read shared by the sub-project 13 upload route and the
+    sub-project 15 reply route (PDF, JPEG or PNG - not PDF only, sub-project 17 task 2): stream
+    the body (capped at UPLOAD_BODY_LIMIT - the UploadSizeLimit middleware has already refused
+    a larger one by its Content-Length, but the read is capped the same way regardless), parse
+    its one `file` part off the event loop, and cap the file itself at MAX_PDF_BYTES. Raises
+    exactly the HTTPExceptions the two routes raised inline before this was extracted (413
+    too_large, 422 invalid_body) - never a 500."""
     body = bytearray()
     async for chunk in request.stream():
         body += chunk

@@ -44,7 +44,9 @@ class Api:
         return self.client.get(f"/api/patient/requests/{case_id}", headers=self.headers(user_id)).json()
 
     def queue(self):
-        return self.client.get("/api/staff/reviews", headers=self.headers(NURSE)).json()
+        # Staff-fixes design Task 5: `{"items": [...], "next_cursor": ...}` - the items only,
+        # since nothing here exercises pagination.
+        return self.client.get("/api/staff/reviews", headers=self.headers(NURSE)).json()["items"]
 
     def decide(self, case_id, decision, **fields):
         staff = self.headers(NURSE)

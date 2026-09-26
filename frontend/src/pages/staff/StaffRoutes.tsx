@@ -1,6 +1,7 @@
 import { Navigate, Route, Routes } from 'react-router-dom'
 import { useAuth } from '../../auth/AuthContext'
 import { AppShell } from '../../components/AppShell'
+import { SystemStatusBanner } from '../../components/SystemStatusBanner'
 import { CaseMonitor } from './CaseMonitor'
 import { Metrics } from './Metrics'
 import { ReviewCase } from './ReviewCase'
@@ -22,6 +23,7 @@ export function StaffRoutes() {
         ...(isAdmin ? [{ to: '/staff/metrics', label: 'מדדי מערכת' }] : []),
       ]}
     >
+      <SystemStatusBanner />
       <Routes>
         <Route index element={<ReviewQueue />} />
         <Route path="cases/:caseId" element={<ReviewCase />} />

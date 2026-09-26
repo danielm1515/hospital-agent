@@ -115,6 +115,14 @@ describe('MyRequests', () => {
     expect(screen.queryByText(/MedicalQuestion|AwaitingHumanReview/)).not.toBeInTheDocument()
   })
 
+  it('shows the shared loading status while the list is still loading', async () => {
+    listRequests.mockReturnValue(new Promise(() => {})) // never resolves
+    renderList()
+    const status = await screen.findByText('טוען פניות')
+    expect(status).toHaveAttribute('role', 'status')
+    expect(status.closest('.loader')).toBeInTheDocument()
+  })
+
   it('shows an empty state when there are no requests', async () => {
     listRequests.mockResolvedValue([])
     renderList()

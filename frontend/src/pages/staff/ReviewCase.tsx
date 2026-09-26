@@ -5,6 +5,7 @@ import type { DataLogEntry, Decision, DecisionBody, MessageTemplate, ReviewConte
 import { Alert } from '../../components/Alert'
 import { AppointmentsPanel } from '../../components/AppointmentsPanel'
 import { Button } from '../../components/Button'
+import { Loading } from '../../components/Loading'
 import { StatusPill } from '../../components/StatusPill'
 import { TextField } from '../../components/TextField'
 import { useAuth } from '../../auth/AuthContext'
@@ -43,6 +44,14 @@ export function ReviewCase() {
 
   const [context, setContext] = useState<ReviewContext | null>(null)
   const [item, setItem] = useState<ReviewItem | null>(null)
+  // Fix round 1 (M2): `item` alone can't tell "not fetched yet" from "fetched, no decision
+  // waits here" - both leave `item` at its initial `null`. Without this, the decision panel
+  // briefly showed "not awaiting a decision" while `getReviewItem` was still in flight.
+  const [itemLoaded, setItemLoaded] = useState(false)
+  // Fix round 3: kept separate from `loadError` (which is `getContext`'s alone) so a
+  // `getReviewItem` failure never renders under the "רענון ההקשר נכשל" title - that title
+  // is specifically about the context, and a first load never refreshed anything yet.
+  const [itemError, setItemError] = useState<string | null>(null)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [templates, setTemplates] = useState<MessageTemplate[]>([])
 
@@ -59,14 +68,46 @@ export function ReviewCase() {
   const [pendingDelete, setPendingDelete] = useState<DataLogEntry | null>(null)
   const [deleting, setDeleting] = useState(false)
 
-  const load = useCallback(async () => {
+  // Fix round 2 (I1, a regression from M2): `itemLoaded` is never reset back to `false`
+  // here - it is only ever false before the very first load completes. A refresh
+  // (`refreshContext`, or the tombstone flow) calls `load()` again, and if its own
+  // `getContext` fails, the decision panel must keep showing whatever it already had
+  // (the form, or "not awaiting a decision"), not fall back to a loader forever. The
+  // whole body is wrapped in one try/finally so `itemLoaded` becomes (or stays) `true`
+  // no matter which of the two calls below fails, and `load()` reports whether it
+  // actually succeeded so `refreshContext` knows whether to consider itself resolved.
+  const load = useCallback(async (): Promise<boolean> => {
+    let ok = true
     try {
-      const [fresh, queue] = await Promise.all([api.getContext(caseId), api.listReviews()])
-      setContext(fresh)
-      setItem(queue.find((entry) => entry.case_id === caseId) ?? null)
-      setLoadError(null)
-    } catch (caught) {
-      setLoadError(detailOf(caught))
+      try {
+        const fresh = await api.getContext(caseId)
+        setContext(fresh)
+        setLoadError(null)
+      } catch (caught) {
+        setLoadError(detailOf(caught))
+        return false
+      }
+      // A case not (or no longer) in AwaitingHumanReview is 404 not_in_review - not a load
+      // failure, just no decision to offer (staff-fixes design Task 3: one queue item,
+      // instead of fetching the whole queue just to find this case's row).
+      try {
+        setItem(await api.getReviewItem(caseId))
+        setItemError(null)
+      } catch (caught) {
+        if (caught instanceof api.ApiError && caught.status === 404) {
+          setItem(null)
+          setItemError(null)
+        } else {
+          // Fix round 3: `itemError`, not `loadError` - this is `getReviewItem`'s own
+          // failure, so it must never render under the context-refresh title, and it
+          // must not be confused with a confirmed 404 (no decision here, a fine outcome).
+          setItemError(detailOf(caught))
+          ok = false
+        }
+      }
+      return ok
+    } finally {
+      setItemLoaded(true)
     }
   }, [caseId])
 
@@ -79,9 +120,11 @@ export function ReviewCase() {
   }, [])
 
   const refreshContext = useCallback(async () => {
-    setContextChanged(false)
     setDecisionError(null)
-    await load()
+    // Fix round 2 (I1): `contextChanged` (and its "רענון הקשר" button) stays up until the
+    // refresh actually succeeds - a refresh that itself fails must not silently drop the
+    // only affordance to try again.
+    if (await load()) setContextChanged(false)
   }, [load])
 
   // Memoised on the route's case id alone (not on `context`, which is a fresh object on
@@ -141,7 +184,10 @@ export function ReviewCase() {
       const result = await api.decide(caseId, body)
       navigate('/staff', {
         replace: true,
-        state: { notice: `הפנייה ${result.case_id} עברה למצב ${stateLabel(result.state)} (${result.state}).` },
+        state: {
+          title: 'ההכרעה נשמרה',
+          notice: `הפנייה ${result.case_id} עברה למצב ${stateLabel(result.state)} (${result.state}).`,
+        },
       })
     } catch (caught) {
       const detail = detailOf(caught)
@@ -176,9 +222,7 @@ export function ReviewCase() {
             <span className="mono">{loadError}</span>
           </Alert>
         ) : (
-          <p className="page-loading" role="status">
-            טוען…
-          </p>
+          <Loading />
         )}
       </section>
     )
@@ -281,7 +325,10 @@ export function ReviewCase() {
               onAnswered={() =>
                 navigate('/staff', {
                   replace: true,
-                  state: { notice: `נשלחה תשובה למטופל בפנייה ${caseId}, והפנייה נסגרה.` },
+                  state: {
+                    title: 'התשובה נשלחה',
+                    notice: `נשלחה תשובה למטופל בפנייה ${caseId}, והפנייה נסגרה.`,
+                  },
                 })
               }
               onContextChanged={() => void refreshContext()}
@@ -297,13 +344,22 @@ export function ReviewCase() {
               onSent={() =>
                 navigate('/staff', {
                   replace: true,
-                  state: { notice: `נשלחה בקשה למטופל בפנייה ${caseId}.` },
+                  state: { title: 'הבקשה נשלחה', notice: `נשלחה בקשה למטופל בפנייה ${caseId}.` },
                 })
               }
               onContextChanged={() => void refreshContext()}
             />
           )}
-          {allowed.length === 0 ? (
+          {!itemLoaded ? (
+            <Loading size="inline" />
+          ) : itemError && item === null ? (
+            // Fix round 3: the item fetch itself failed and there is no reliable value to
+            // fall back on (never a confirmed 404) - "not awaiting a decision" would be a
+            // guess dressed as a fact, and a first load never refreshed anything to blame.
+            <Alert variant="error" title="טעינת הפנייה נכשלה">
+              <span className="mono">{itemError}</span>
+            </Alert>
+          ) : allowed.length === 0 ? (
             <Alert variant="info" title="הפנייה אינה ממתינה להכרעה">
               המסך מציג את ההקשר בלבד. פניות להכרעה מופיעות בתור ההסלמות.
             </Alert>

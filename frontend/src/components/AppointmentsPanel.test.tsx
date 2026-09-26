@@ -1,4 +1,5 @@
 import '@testing-library/jest-dom/vitest'
+import { StrictMode } from 'react'
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -39,6 +40,43 @@ afterEach(() => {
 })
 
 describe('AppointmentsPanel', () => {
+  it('shows the shared loading status on the first load, before any result or error (I2)', async () => {
+    const load = vi.fn().mockReturnValue(new Promise(() => {})) // never resolves
+    render(<AppointmentsPanel audience="patient" load={load} />)
+
+    const status = await screen.findByText('טוען תורים')
+    expect(status).toHaveAttribute('role', 'status')
+    expect(status.closest('.loader')).toHaveClass('loader-inline')
+  })
+
+  it('never calls load if unmounted before its own microtask runs (465bfdc guard)', async () => {
+    const load = vi.fn().mockResolvedValue(appointmentList())
+    const { unmount } = render(<AppointmentsPanel audience="patient" load={load} />)
+
+    // The mount effect only schedules a microtask (Promise.resolve().then(...)); unmounting
+    // synchronously, before that microtask ever runs, must cancel it outright.
+    unmount()
+    await Promise.resolve()
+    await Promise.resolve()
+
+    expect(load).not.toHaveBeenCalled()
+  })
+
+  it('calls load exactly once under StrictMode\'s double-invoked effects (465bfdc guard)', async () => {
+    const load = vi.fn().mockResolvedValue(appointmentList())
+    render(
+      <StrictMode>
+        <AppointmentsPanel audience="patient" load={load} />
+      </StrictMode>,
+    )
+
+    await waitFor(() => expect(load).toHaveBeenCalledTimes(1))
+    // Give a stray second call (from the mount/unmount/remount dance) a chance to appear.
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(load).toHaveBeenCalledTimes(1)
+  })
+
   it('loads the default 30-day range on mount and shows it in the two date inputs', async () => {
     const load = vi.fn().mockResolvedValue(appointmentList())
     render(<AppointmentsPanel audience="patient" load={load} />)

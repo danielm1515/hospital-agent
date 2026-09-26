@@ -49,7 +49,8 @@ def test_a_question_round_trip(client, sm, app_engine):
     assert view["status"] == "needs_reply" and view["reply_request"]["kind"] == "question"
     replied = client.post(f"/api/patient/requests/{d.case_id}/reply", headers=patient, json={"text": "תור לאורתופדיה"})
     assert replied.status_code == 200 and replied.json()["status"] == "in_review"
-    item = next(i for i in client.get("/api/staff/reviews", headers=staff).json() if i["case_id"] == d.case_id)
+    queue = client.get("/api/staff/reviews", headers=staff).json()["items"]
+    item = next(i for i in queue if i["case_id"] == d.case_id)
     assert item["returned_by"] == "patient_reply" and "approve" not in item["allowed_decisions"]
 
 

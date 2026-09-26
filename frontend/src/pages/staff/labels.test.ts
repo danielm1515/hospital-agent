@@ -1,8 +1,12 @@
 import { describe, expect, it } from 'vitest'
+import { STATES } from '../../api/types'
 import {
   DATA_KIND_LABELS,
   REQUEST_ERROR_LABELS,
   RETURNED_BY_LABELS,
+  STATE_GROUPS,
+  STATE_GROUP_LABELS,
+  STATE_GROUP_ORDER,
   STATE_LABELS,
   dataKindLabel,
   requestErrorLabel,
@@ -28,6 +32,30 @@ describe('sub-project 15 labels', () => {
     expect(returnedByLabel('something_new')).toBe('something_new')
     expect(returnedByLabel(null)).toBe('—')
     expect(returnedByLabel(undefined)).toBe('—')
+  })
+
+  it('partitions every State into exactly one Case Monitor group (staff-fixes design Task 4)', () => {
+    expect(STATE_GROUP_ORDER).toHaveLength(5)
+    expect(new Set(STATE_GROUP_ORDER)).toEqual(new Set(Object.keys(STATE_GROUPS)))
+
+    const covering = new Map<string, string>()
+    for (const group of STATE_GROUP_ORDER) {
+      for (const state of STATE_GROUPS[group]) {
+        expect(covering.has(state)).toBe(false) // a state belongs to only one group
+        covering.set(state, group)
+      }
+    }
+    for (const state of STATES) {
+      expect(covering.has(state)).toBe(true) // every State (including the extension) is covered
+    }
+    expect(covering.size).toBe(STATES.length)
+  })
+
+  it('gives every group a Hebrew label', () => {
+    for (const group of STATE_GROUP_ORDER) {
+      expect(STATE_GROUP_LABELS[group]).toBeTypeOf('string')
+      expect(STATE_GROUP_LABELS[group].length).toBeGreaterThan(0)
+    }
   })
 
   it('labels the request/decision-message error codes from api.md §5/§8, and falls back to the code', () => {

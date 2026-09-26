@@ -40,6 +40,14 @@ export type EscalationKind =
 
 export type SafetyLevel = 'LowRisk' | 'MediumRisk' | 'HighRisk' | 'CriticalRisk'
 
+/**
+ * The Case Monitor's five groups (staff-fixes design Task 4, `docs/api.md` §5): the
+ * `?group=` value `GET /api/staff/cases` takes, mirroring the backend's
+ * `hospital_agent.state_groups.STATE_GROUPS`. `group: 'staff'` alone also accepts
+ * `?escalation_kind=`.
+ */
+export type StateGroup = 'staff' | 'patient' | 'automatic' | 'done' | 'rejected'
+
 /** ISO 8601 datetime string, as FastAPI serializes `datetime`. */
 export type IsoDateTime = string
 
@@ -107,7 +115,7 @@ export interface PatientView {
   history: StatusChange[]
   /**
    * Which upload the `needs_document` screen offers (sub-project 13, `docs/api.md` §4):
-   * `'file'` for a PDF picker sent to `POST .../documents/file` when the server is
+   * `'file'` for a document picker (PDF, JPEG or PNG) sent to `POST .../documents/file` when the server is
    * configured with the document-service, `'text'` for the text form sent to
    * `POST .../documents` otherwise. The same for every case of a running server.
    */
@@ -153,6 +161,12 @@ export type UploadCode =
   | 'expired'
   | 'not_yours'
   | 'wrong_document_type'
+  | 'unrecognised_type'
+  | 'unreadable_scan'
+  | 'bad_date'
+  | 'no_date'
+  | 'unsupported_format'
+  | 'too_large'
 
 export interface UploadResult {
   code: UploadCode
@@ -173,12 +187,26 @@ export interface PdfUploadResponse {
 
 // ---- Staff: Case Monitor --------------------------------------------------
 
-/** `GET /api/staff/cases` item. */
+/**
+ * `GET /api/staff/cases` item (staff-fixes design Task 3): every column the Case Monitor
+ * table shows, so the client renders each row straight from the list.
+ */
 export interface CaseSummary {
   case_id: string
+  patient_id: string
   state: State
+  intent: string | null
+  safety_level: SafetyLevel | null
   escalation_kind: EscalationKind | null
+  escalated_from_state: State | null
+  created_at: IsoDateTime
   updated_at: IsoDateTime
+}
+
+/** `GET /api/staff/cases` → 200 (staff-fixes design Task 3): keyset-paginated. */
+export interface CaseListPage {
+  items: CaseSummary[]
+  next_cursor: string | null
 }
 
 /** One step of the plan, as `ordered_steps` carries it (`docs/api.md` §5). */
@@ -240,11 +268,22 @@ export interface ReviewItem {
   reasons: string[]
   allowed_decisions: Decision[]
   required_fields: RequiredField[]
-  updated_at: IsoDateTime
+  /**
+   * When the case entered AwaitingHumanReview (staff-fixes design Task 5) - the queue's
+   * order key, newest first. Replaces `updated_at`, which agreed with it on every case
+   * that had never re-entered review, but meant the wrong thing for one that had.
+   */
+  entered_at: IsoDateTime
   /** Sub-project 15: a person has written to the patient - `approve` is never offered again. */
   human_engaged: boolean
   /** How the case last came back to review. */
   returned_by: 'patient_reply' | 'reply_timeout' | null
+}
+
+/** `GET /api/staff/reviews` → 200 (staff-fixes design Task 5): keyset-paginated. */
+export interface ReviewQueuePage {
+  items: ReviewItem[]
+  next_cursor: string | null
 }
 
 /** A non-tombstoned Data Log entry in the review context. */
@@ -459,4 +498,17 @@ export interface AppointmentList {
   to: IsoDateTime
   appointments: Appointment[]
   truncated: boolean
+}
+
+// ---- System status (staff-fixes design Task 1, docs/api.md §5) -------------
+
+export interface LlmStatus {
+  last_ok_at: IsoDateTime | null
+  last_error: string | null
+  last_error_at: IsoDateTime | null
+}
+
+export interface SystemStatus {
+  orchestrator: string | null
+  llm: LlmStatus
 }

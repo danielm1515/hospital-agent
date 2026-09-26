@@ -156,21 +156,50 @@ export function describeDocumentType(type: DocumentType | null): string {
   return label ?? `${FSI}${type}${PDI}`
 }
 
-/** The client-side refusal of a non-PDF file, and of a PDF over the 10 MB limit. */
-export const NOT_PDF_MESSAGE = 'יש לבחור קובץ PDF.'
-export const FILE_TOO_LARGE_MESSAGE = 'הקובץ גדול מדי. אפשר להעלות קובץ עד 10MB.'
+/**
+ * The client-side refusal of a file that is not PDF, JPEG or PNG, and of one over the 10 MB
+ * limit (sub-project 17 task 2: the picker now also takes a photo of a document, not only a
+ * PDF).
+ */
+export const UNSUPPORTED_FILE_MESSAGE = 'אפשר להעלות רק PDF או תמונה (JPG/PNG).'
+export const FILE_TOO_LARGE_MESSAGE = 'הקובץ גדול מ־10MB. העלו קובץ קטן יותר.'
 
-/** `POST .../documents/file` accepts a PDF of at most 10 MB (`docs/api.md` §4). */
+/** `POST .../documents/file` accepts a document of at most 10 MB (`docs/api.md` §4). */
 export const MAX_UPLOAD_BYTES = 10 * 1024 * 1024
 
-/** A file whose name and (when the browser reports one) type both say PDF. */
-export function isPdfFile(file: File): boolean {
-  const nameIsPdf = /\.pdf$/i.test(file.name)
-  const typeIsPdf = file.type === '' || file.type === 'application/pdf'
-  return nameIsPdf && typeIsPdf
+const EXTENSION_KIND: Record<string, 'pdf' | 'jpeg' | 'png'> = {
+  pdf: 'pdf',
+  jpg: 'jpeg',
+  jpeg: 'jpeg',
+  png: 'png',
 }
 
-/** The outcome of a PDF upload, shown next to the request regardless of its status. */
+const MIME_KIND: Record<string, 'pdf' | 'jpeg' | 'png'> = {
+  'application/pdf': 'pdf',
+  'image/jpeg': 'jpeg',
+  'image/png': 'png',
+}
+
+/**
+ * A file whose extension says PDF, JPEG or PNG, and whose type (when the browser reports one)
+ * agrees with that same kind - a photo taken on a phone often has no reported type at all, so
+ * an empty one is accepted by extension alone, exactly like the previous PDF-only check did. A
+ * file with no extension this client recognises is judged by its reported type alone. Either
+ * way the document-service sniffs the bytes and refuses anything else.
+ */
+export function isAcceptedDocumentFile(file: File): boolean {
+  const extension = file.name.split('.').pop()?.toLowerCase() ?? ''
+  const kind = Object.hasOwn(EXTENSION_KIND, extension) ? EXTENSION_KIND[extension] : undefined
+  if (!kind) {
+    // No extension this client recognises (or none at all, e.g. a camera app's own naming):
+    // fall back to the reported MIME type alone, when the browser gave one.
+    return Object.hasOwn(MIME_KIND, file.type)
+  }
+  if (file.type === '') return true
+  return MIME_KIND[file.type] === kind
+}
+
+/** The outcome of a document upload, shown next to the request regardless of its status. */
 export interface UploadNotice {
   variant: AlertVariant
   text: string
@@ -202,7 +231,25 @@ export function uploadResultMessage(upload: UploadResult): UploadNotice {
     case 'not_medical':
       return { variant: 'error', text: 'הקובץ אינו מסמך רפואי, ולכן לא נקלט.' }
     case 'unreadable':
-      return { variant: 'error', text: 'לא הצלחנו לקרוא את המסמך. ודאו שזה קובץ PDF ברור ונסו שוב.' }
+      // Softened (sub-project 17 task 2): the previous text ("ודאו שזה קובץ PDF ברור") claimed
+      // the file was unclear even when the real cause was unknown (e.g. a temporary provider
+      // failure that was, until this fix, mis-reported as the file's fault).
+      return { variant: 'error', text: 'לא הצלחנו לקרוא את המסמך. העלו קובץ PDF או תמונה ברורה של המסמך.' }
+    case 'unrecognised_type':
+      return { variant: 'error', text: 'לא זיהינו את סוג המסמך. ודאו שהעליתם את המסמך שהתבקש.' }
+    case 'unreadable_scan':
+      return {
+        variant: 'error',
+        text: 'לא הצלחנו לקרוא את הסריקה. צלמו את המסמך באור טוב ובחדות, או העלו את קובץ ה־PDF המקורי.',
+      }
+    case 'bad_date':
+      return { variant: 'error', text: 'תאריך המסמך עתידי. ודאו שהעליתם את המסמך הנכון.' }
+    case 'no_date':
+      return { variant: 'error', text: 'לא מצאנו תאריך על המסמך. העלו מסמך שמופיע עליו תאריך הבדיקה.' }
+    case 'unsupported_format':
+      return { variant: 'error', text: 'סוג הקובץ אינו נתמך. העלו PDF או תמונה (JPG/PNG).' }
+    case 'too_large':
+      return { variant: 'error', text: 'התמונה גדולה מדי ברזולוציה. העלו תמונה קטנה יותר או קובץ PDF.' }
     case 'expired':
       // `document_type` is `null` for `expired` in the common case (`docs/api.md` §4) - an
       // empty `label` must not leave a double space where it would have gone.

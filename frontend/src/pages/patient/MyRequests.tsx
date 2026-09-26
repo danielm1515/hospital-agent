@@ -5,6 +5,7 @@ import type { PatientView } from '../../api/types'
 import { Alert } from '../../components/Alert'
 import { AppointmentsPanel } from '../../components/AppointmentsPanel'
 import { Button } from '../../components/Button'
+import { Loading } from '../../components/Loading'
 import { StatusPill } from '../../components/StatusPill'
 import { NEW_REQUEST, requestPath } from './paths'
 import { errorMessage, formatDateTime, isMoving, statusText, truncate, usePolling } from './helpers'
@@ -62,11 +63,7 @@ export function MyRequests() {
         )}
 
         {requests === null ? (
-          !error && (
-            <p className="page-loading" role="status">
-              טוען…
-            </p>
-          )
+          !error && <Loading label="טוען פניות" />
         ) : requests.length === 0 ? (
           <p className="empty">עדיין אין פניות. אפשר לפתוח פנייה חדשה בכל שעה.</p>
         ) : (

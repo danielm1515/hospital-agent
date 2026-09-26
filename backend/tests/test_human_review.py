@@ -107,8 +107,10 @@ def test_the_queue_lists_escalations_with_their_allowed_decisions(review, sm, ap
     z3 = z3_counterexample(sm, app_engine)
     Driver(sm, app_engine).to_classified()  # not in review
 
-    items = {item.case_id: item for item in review.queue()}
-    assert list(items) == [medical.case_id, retry.case_id, z3.case_id]  # oldest update first
+    queue_items, has_more = review.queue()
+    items = {item.case_id: item for item in queue_items}
+    assert list(items) == [z3.case_id, retry.case_id, medical.case_id]  # newest entry first
+    assert has_more is False
 
     assert items[medical.case_id].escalation_kind == "MedicalQuestion"
     assert items[medical.case_id].escalated_from_state == "Classifying"
@@ -122,6 +124,45 @@ def test_the_queue_lists_escalations_with_their_allowed_decisions(review, sm, ap
     assert items[z3.case_id].allowed_decisions == ["approve", "resolve", "reject"]
     assert items[z3.case_id].required_fields == ["patient_deadline"]
     assert items[z3.case_id].reasons == ["hours_until:20"]
+
+
+def test_queue_orders_by_entry_time_not_created_at(review, sm, app_engine):
+    """A case created first but escalated later must still come first (staff-fixes design
+    Task 5): the order key is the entry into AwaitingHumanReview, not the case's created_at
+    (nor, before this fix, the Python sort's updated_at)."""
+    created_early = Driver(sm, app_engine)
+    created_early.to_classified()
+    created_early.plan()
+    created_early.propose()
+    created_early.allow()  # not escalated yet - the case row exists, older created_at
+
+    created_late = medical_question(sm, app_engine)  # created after, escalates at once
+
+    created_early.retry_exhausted()  # now enters review, after created_late already did
+    assert created_early.case.escalation_kind is EscalationKind.RETRY_EXHAUSTED
+
+    items, has_more = review.queue()
+    assert [item.case_id for item in items] == [created_early.case_id, created_late.case_id]
+    assert has_more is False
+
+
+def test_queue_item_agrees_with_queue_for_a_case_missing_its_entry_row(review, sm, app_engine):
+    """Fix round 1 (M4): queue_item() (GET /api/staff/reviews/{case_id}, one case's own
+    trace) and queue() (the SQL LATERAL, outer-joined) must fall back the same way for a
+    case with no Transition row into AwaitingHumanReview - forced here by moving
+    `cases.state` directly, bypassing the FSM."""
+    from sqlalchemy import text
+
+    d = Driver(sm, app_engine, patient_id="P-53000")
+    d.submit()
+    with app_engine.begin() as conn:
+        conn.execute(text("UPDATE cases SET state = 'AwaitingHumanReview' WHERE case_id = :c"),
+                    {"c": d.case_id})
+
+    item = review.queue_item(d.case_id)
+    assert item.entered_at == d.case.updated_at
+    assert item.reasons == []
+    assert item.returned_by is None
 
 
 # --- context -------------------------------------------------------------------------------

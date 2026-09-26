@@ -5,7 +5,7 @@
  * ever shown *next to* the code it translates, never instead of it, and an
  * unknown code falls back to itself.
  */
-import type { Decision, EscalationKind, RequiredField, SafetyLevel, State } from '../../api/types'
+import type { Decision, EscalationKind, RequiredField, SafetyLevel, State, StateGroup } from '../../api/types'
 
 export const ESCALATION_LABELS: Record<EscalationKind, string> = {
   PatientVerificationFailed: 'זיהוי המטופל נכשל',
@@ -54,6 +54,40 @@ export const STATE_LABELS: Record<State, string> = {
 export function stateLabel(state: string | null | undefined): string {
   if (!state) return '—'
   return STATE_LABELS[state as State] ?? state
+}
+
+/**
+ * The Case Monitor's five groups (staff-fixes design Task 4), mirroring the backend's
+ * `hospital_agent/state_groups.STATE_GROUPS` - every State belongs to exactly one, checked
+ * by `labels.test.ts` the way `stateLabel` covers every `State`. `AwaitingPatientReply`
+ * sits in `patient` beside `AwaitingPatientInput`: without it a case waiting for the
+ * patient's reply to a staff request (sub-project 15) would belong to no group.
+ */
+export const STATE_GROUPS: Record<StateGroup, State[]> = {
+  staff: ['AwaitingHumanReview'],
+  patient: ['AwaitingPatientInput', 'AwaitingPatientReply'],
+  automatic: [
+    'Received',
+    'Classifying',
+    'Classified',
+    'Planning',
+    'RetrievingData',
+    'AssessingReadiness',
+    'Ready',
+    'Delivering',
+  ],
+  done: ['Completed'],
+  rejected: ['Failed'],
+}
+
+export const STATE_GROUP_ORDER: readonly StateGroup[] = ['staff', 'patient', 'automatic', 'done', 'rejected']
+
+export const STATE_GROUP_LABELS: Record<StateGroup, string> = {
+  staff: 'ממתינות לצוות',
+  patient: 'ממתינות למטופל',
+  automatic: 'בטיפול אוטומטי',
+  done: 'הסתיימו',
+  rejected: 'נדחו',
 }
 
 /** The three intents the Classifier may return (`docs/api.md` §5). */

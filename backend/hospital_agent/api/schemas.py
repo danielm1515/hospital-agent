@@ -14,15 +14,37 @@ from ..naming import EscalationKind, SafetyLevel, State
 
 
 class CaseSummary(BaseModel):
+    """One `GET /api/staff/cases` item (staff-fixes design Task 3): every column the Case
+    Monitor table shows, so the client renders each row straight from the list and makes
+    no per-row follow-up call."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    case_id: str
+    patient_id: str
+    state: State
+    intent: str | None
+    safety_level: SafetyLevel | None
+    escalation_kind: EscalationKind | None
+    escalated_from_state: State | None
+    created_at: datetime
+    updated_at: datetime
+
+
+class CaseListPage(BaseModel):
+    """`GET /api/staff/cases` (staff-fixes design Task 3): keyset-paginated."""
+
+    items: list[CaseSummary]
+    next_cursor: str | None
+
+
+class CaseDetail(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     case_id: str
     state: State
     escalation_kind: EscalationKind | None
     updated_at: datetime
-
-
-class CaseDetail(CaseSummary):
     patient_id: str
     state_version: int
     intent: str | None
@@ -139,12 +161,14 @@ class PatientCaseView(BaseModel):
 
 
 class UploadResult(BaseModel):
-    """The outcome of one PDF (sub-project 13, design §5.3): an abstract code only."""
+    """The outcome of one document upload (sub-project 13, design §5.3; sub-project 17 task 2
+    for the image and per-reason codes): an abstract code only."""
 
     model_config = ConfigDict(from_attributes=True)
 
     code: Literal["accepted", "not_required", "already_received", "not_medical", "unreadable", "expired",
-                  "not_yours", "wrong_document_type"]
+                  "not_yours", "wrong_document_type", "unrecognised_type", "unreadable_scan", "bad_date",
+                  "no_date", "unsupported_format", "too_large"]
     document_type: str | None
 
 
@@ -165,9 +189,19 @@ class ReviewItem(BaseModel):
     reasons: list[str]
     allowed_decisions: list[str]
     required_fields: list[str]
-    updated_at: datetime
+    # Staff-fixes design Task 5: when the case entered AwaitingHumanReview - the queue's
+    # order key (newest first), replacing `updated_at`.
+    entered_at: datetime
     human_engaged: bool
     returned_by: Literal["patient_reply", "reply_timeout"] | None
+
+
+class ReviewQueuePage(BaseModel):
+    """`GET /api/staff/reviews` (staff-fixes design Task 5): keyset-paginated, the same
+    shape as `CaseListPage`."""
+
+    items: list[ReviewItem]
+    next_cursor: str | None
 
 
 class ReviewContext(BaseModel):
@@ -353,3 +387,17 @@ class AppointmentsView(BaseModel):
     window_to: datetime = Field(alias="to")
     appointments: list[AppointmentView]
     truncated: bool
+
+
+# --- staff-fixes design Task 1: is the LLM (still) called at all? --------------------------
+
+
+class LlmStatusView(BaseModel):
+    last_ok_at: str | None
+    last_error: str | None
+    last_error_at: str | None
+
+
+class SystemStatusView(BaseModel):
+    orchestrator: str | None
+    llm: LlmStatusView

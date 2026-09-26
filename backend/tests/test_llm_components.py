@@ -7,6 +7,7 @@ from datetime import UTC, datetime
 import pytest
 
 from hospital_agent.case import CaseRecord
+from hospital_agent.llm import evaluator as evaluator_module
 from hospital_agent.llm.classifier import Classification, Classifier, verdict
 from hospital_agent.llm.evaluator import ResponseEvaluator
 from hospital_agent.llm.message import status_message
@@ -159,6 +160,52 @@ def test_the_evaluator_never_starts_a_process_after_close():
     with pytest.raises(LLMFailed, match="evaluator_closed"):
         evaluator.evaluate("message")
     assert evaluator._pool is None
+
+
+# --- staff-fixes design Task 1: the Evaluator's parent-side timing and telemetry -------------
+# The worker process has no log configuration, so ResponseEvaluator.evaluate() - which runs in
+# the parent - times and records every attempt itself (design decisions 1-3).
+
+def test_the_evaluator_records_a_successful_attempt(monkeypatch):
+    recorded = []
+    monkeypatch.setattr(evaluator_module.telemetry, "record", lambda call, model, ms, outcome:
+                        recorded.append((call, model, ms, outcome)))
+    evaluator = ResponseEvaluator(FakeProvider())
+    try:
+        assert evaluator.evaluate("Your appointment is on Monday.") is False
+    finally:
+        evaluator.close()
+    assert recorded == [(Call.EVALUATOR, "fake", recorded[0][2], "ok")]
+    assert isinstance(recorded[0][2], int)
+
+
+def test_the_evaluator_stops_at_once_on_a_non_retryable_answer(monkeypatch):
+    recorded = []
+    monkeypatch.setattr(evaluator_module.telemetry, "record", lambda call, model, ms, outcome:
+                        recorded.append((call, model, ms, outcome)))
+    provider = FakeProvider({Call.EVALUATOR: [LLMUnusable("api:AuthenticationError")]})
+    evaluator = ResponseEvaluator(provider)
+    try:
+        with pytest.raises(LLMFailed, match="evaluator"):
+            evaluator.evaluate("message")
+    finally:
+        evaluator.close()
+    # Exactly one attempt, not MAX_ATTEMPTS: the pointless retries are saved.
+    assert recorded == [(Call.EVALUATOR, "fake", recorded[0][2], "api:AuthenticationError")]
+
+
+def test_the_evaluator_records_a_dead_worker_as_worker_died(monkeypatch):
+    recorded = []
+    monkeypatch.setattr(evaluator_module.telemetry, "record", lambda call, model, ms, outcome:
+                        recorded.append((call, model, ms, outcome)))
+    evaluator = ResponseEvaluator(FakeProvider())
+    try:
+        with pytest.raises(BrokenProcessPool):
+            evaluator._process().submit(os._exit, 1).result()
+        assert evaluator.evaluate("You should stop taking your medication") is True
+    finally:
+        evaluator.close()
+    assert [outcome for *_, outcome in recorded] == ["worker_died", "ok"]
 
 
 # --- the status template ------------------------------------------------------------------------

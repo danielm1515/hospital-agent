@@ -5,6 +5,7 @@ import { DOCUMENT_FORMATS } from '../../api/types'
 import type { DocumentFormat, PatientView, StatusChange } from '../../api/types'
 import { Alert } from '../../components/Alert'
 import { Button } from '../../components/Button'
+import { Loading } from '../../components/Loading'
 import { StatusPill } from '../../components/StatusPill'
 import { TextField } from '../../components/TextField'
 import { Conversation, ReplyToRequest } from './ReplyToRequest'
@@ -17,12 +18,12 @@ import {
   formatClock,
   formatDate,
   formatDateTime,
+  isAcceptedDocumentFile,
   isMoving,
-  isPdfFile,
   MAX_UPLOAD_BYTES,
-  NOT_PDF_MESSAGE,
   sameDay,
   statusText,
+  UNSUPPORTED_FILE_MESSAGE,
   uploadResultMessage,
   usePolling,
 } from './helpers'
@@ -86,11 +87,7 @@ export function RequestDetail() {
       )}
 
       {view === null ? (
-        !error && (
-          <p className="page-loading" role="status">
-            טוען…
-          </p>
-        )
+        !error && <Loading />
       ) : (
         <>
           <div className="req-head">
@@ -264,10 +261,10 @@ function MissingDocuments({
 // ---- File upload (sub-project 13) ------------------------------------------
 
 /**
- * The sub-project 13 PDF picker (design §5.3): one file, checked in the browser for
- * a PDF name/type and the 10 MB limit before it is sent, then `uploadDocumentFile`.
- * The response always replaces the view (`request`), and `upload.code` says what
- * happened to the file itself.
+ * The sub-project 13 file picker (design §5.3; sub-project 17 task 2: PDF, JPEG or PNG, not
+ * PDF only): one file, checked in the browser for an accepted name/type and the 10 MB limit
+ * before it is sent, then `uploadDocumentFile`. The response always replaces the view
+ * (`request`), and `upload.code` says what happened to the file itself.
  */
 function FileUploadForm({
   caseId,
@@ -292,8 +289,8 @@ function FileUploadForm({
   async function submit(event: React.FormEvent) {
     event.preventDefault()
     const file = inputRef.current?.files?.[0]
-    if (!file || !isPdfFile(file)) {
-      setError(NOT_PDF_MESSAGE)
+    if (!file || !isAcceptedDocumentFile(file)) {
+      setError(UNSUPPORTED_FILE_MESSAGE)
       return
     }
     if (file.size > MAX_UPLOAD_BYTES) {
@@ -320,8 +317,8 @@ function FileUploadForm({
   }
 
   return (
-    <section className="upload" aria-label="העלאת מסמך PDF">
-      <h2 className="section-h">העלאת מסמך PDF</h2>
+    <section className="upload" aria-label="העלאת מסמך (PDF או תמונה)">
+      <h2 className="section-h">העלאת מסמך (PDF או תמונה)</h2>
 
       <form className="form" onSubmit={submit}>
         <div className="field">
@@ -333,13 +330,13 @@ function FileUploadForm({
             ref={inputRef}
             className="file-input"
             type="file"
-            accept="application/pdf,.pdf"
+            accept="application/pdf,.pdf,image/jpeg,.jpg,.jpeg,image/png,.png"
             onChange={chooseFile}
           />
           <p className="hint">
             {fileName
               ? `נבחר הקובץ ${fileName}.`
-              : 'המערכת מזהה את סוג המסמך אוטומטית. אפשר להעלות קובץ PDF אחד, עד 10MB.'}
+              : 'המערכת מזהה את סוג המסמך אוטומטית. אפשר להעלות קובץ PDF או תמונה (JPG/PNG) אחד, עד 10MB.'}
           </p>
         </div>
 
