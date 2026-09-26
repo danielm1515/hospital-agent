@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 import time
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 
 from fastapi import HTTPException
@@ -22,7 +23,13 @@ def _instant(value: str) -> datetime:
         raise HTTPException(status_code=422, detail="invalid_range") from None
     if parsed.tzinfo is None:
         raise HTTPException(status_code=422, detail="invalid_range")
-    return parsed.astimezone(UTC)  # a fixed instant either way; UTC is what the answer echoes back
+    try:
+        return parsed.astimezone(UTC)  # a fixed instant either way; UTC is what the answer echoes back
+    except OverflowError:
+        # A year at the edge of datetime's range (e.g. 9999) can convert to an offset that no
+        # longer fits (`astimezone` shifts by the offset before it can be rejected as
+        # out-of-range) - fails closed as the same 422, not a 500.
+        raise HTTPException(status_code=422, detail="invalid_range") from None
 
 
 def window(start: str | None, end: str | None, now: datetime) -> tuple[datetime, datetime]:
@@ -31,28 +38,41 @@ def window(start: str | None, end: str | None, now: datetime) -> tuple[datetime,
     high = _instant(end) if end is not None else None
     if low is None and high is None:
         low = now
-    if high is None:
-        high = low + DEFAULT_SPAN
-    if low is None:
-        low = high - DEFAULT_SPAN
+    try:
+        if high is None:
+            high = low + DEFAULT_SPAN
+        if low is None:
+            low = high - DEFAULT_SPAN
+    except OverflowError:
+        # The default 30-day span pushed past datetime's range from a bound already at its
+        # edge (e.g. `from=9999-12-31...` alone) - the same 422, never a 500.
+        raise HTTPException(status_code=422, detail="invalid_range") from None
     if not low < high or high - low > MAX_SPAN:
         raise HTTPException(status_code=422, detail="invalid_range")
     return low, high
 
 
+def _log(level: int, code: str, started: float) -> None:
+    """One format for every outcome (§12.3): the code only - `ok`, `patient_not_found`, an
+    AppointmentsUnavailable code, or `client_error` - never the patient or an appointment."""
+    logger.log(level, "appointment list: %s in %d ms", code, round((time.perf_counter() - started) * 1000))
+
+
 def read(client: AppointmentListClient | None, patient_id: str, start: str | None,
         end: str | None) -> AppointmentsView:
-    low, high = window(start, end, datetime.now(UTC))
+    # Checked before the window: an unconfigured server answers 404 regardless of what the
+    # query looks like - there is no window to be wrong about if nothing can answer it anyway.
     if client is None:
         raise HTTPException(status_code=404, detail="appointments_not_enabled")
+    low, high = window(start, end, datetime.now(UTC))
     started = time.perf_counter()
     try:
         result = client.list(patient_id, low, high)
     except PatientNotFound:
-        logger.info("appointment list: patient_not_found")
+        _log(logging.INFO, "patient_not_found", started)
         raise HTTPException(status_code=404, detail="patient_not_found") from None
     except AppointmentsUnavailable as failure:
-        logger.warning("appointment list unavailable: %s", failure.code)
+        _log(logging.WARNING, failure.code, started)
         raise HTTPException(status_code=503, detail="appointments_unavailable") from None
     except ValueError:
         # AppointmentListClient.list() raises this for a naive start/end or a patient_id that
@@ -60,9 +80,11 @@ def read(client: AppointmentListClient | None, patient_id: str, start: str | Non
         # resolve patient_id from the token or the case, and window() always returns aware
         # datetimes), never the client's fault. Fail closed exactly like AppointmentsUnavailable
         # rather than a 500, and never name the patient_id in the log (§12.3).
-        logger.warning("appointment list unavailable: invalid_patient_id")
+        _log(logging.WARNING, "client_error", started)
         raise HTTPException(status_code=503, detail="appointments_unavailable") from None
-    logger.info("appointment list: %d rows in %d ms", len(result.appointments),
-                round((time.perf_counter() - started) * 1000))
-    return AppointmentsView(window_from=low, window_to=high, truncated=result.truncated,
-                            appointments=[AppointmentView.model_validate(a) for a in result.appointments])
+    _log(logging.INFO, "ok", started)
+    appointments = [
+        AppointmentView.model_validate(replace(a, appointment_at=a.appointment_at.astimezone(UTC)))
+        for a in result.appointments
+    ]
+    return AppointmentsView(window_from=low, window_to=high, truncated=result.truncated, appointments=appointments)

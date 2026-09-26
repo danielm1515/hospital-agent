@@ -1,6 +1,7 @@
 """Sub-project 16 (design D5, D6, D9): the patient's and the staff's appointment routes."""
 import logging
 from datetime import UTC, datetime, timedelta
+from zoneinfo import ZoneInfo
 
 import pytest
 from fastapi.testclient import TestClient
@@ -92,6 +93,63 @@ def test_a_bad_window_is_422_before_any_call(app_engine, params):
     assert fake.calls == []
 
 
+@pytest.mark.parametrize("params", [
+    {"from": "9999-12-31T00:00:00Z"},                                          # from alone overflows +30d
+    {"to": "0001-01-02T00:00:00Z"},                                            # to alone underflows -30d
+    {"from": "0001-01-01T00:00:00+03:00", "to": "0001-01-02T00:00:00+03:00"},  # from underflows converting to UTC
+    {"from": "9999-12-30T00:00:00-03:00", "to": "9999-12-31T23:00:00-03:00"},  # to overflows converting to UTC
+])
+def test_an_edge_year_window_is_422_not_500(app_engine, params):
+    """Fix round 1, item 1: astimezone()/the default-span arithmetic can raise OverflowError
+    at the edge of datetime's range - it must fail closed as 422 invalid_range, never a 500,
+    and never reach the appointment-service."""
+    fake = FakeList()
+    with make(app_engine, fake) as client:
+        response = client.get("/api/patient/appointments", headers=auth(client, PATIENT), params=params)
+    assert (response.status_code, response.json()["detail"]) == (422, "invalid_range")
+    assert fake.calls == []
+
+
+def test_from_equal_to_is_422(app_engine):
+    fake = FakeList()
+    with make(app_engine, fake) as client:
+        response = client.get("/api/patient/appointments", headers=auth(client, PATIENT),
+                              params={"from": "2026-10-01T00:00:00+00:00", "to": "2026-10-01T00:00:00+00:00"})
+    assert (response.status_code, response.json()["detail"]) == (422, "invalid_range")
+    assert fake.calls == []
+
+
+def test_exactly_366_days_is_ok_366_days_plus_a_second_is_not(app_engine):
+    fake = FakeList()
+    with make(app_engine, fake) as client:
+        ok = client.get("/api/patient/appointments", headers=auth(client, PATIENT),
+                        params={"from": "2026-01-01T00:00:00+00:00", "to": "2027-01-02T00:00:00+00:00"})
+        too_long = client.get("/api/patient/appointments", headers=auth(client, PATIENT),
+                              params={"from": "2026-01-01T00:00:00+00:00", "to": "2027-01-02T00:00:01+00:00"})
+    assert ok.status_code == 200
+    assert (too_long.status_code, too_long.json()["detail"]) == (422, "invalid_range")
+
+
+def test_not_configured_wins_over_a_bad_window(app_engine):
+    """Fix round 1, item 6: `client is None` is checked before the window, so an unconfigured
+    server answers the same 404 regardless of what the query looks like."""
+    with make(app_engine, None) as client:
+        response = client.get("/api/patient/appointments", headers=auth(client, PATIENT),
+                              params={"from": "2026-11-01T00:00:00+03:00", "to": "2026-10-01T00:00:00+03:00"})
+    assert (response.status_code, response.json()["detail"]) == (404, "appointments_not_enabled")
+
+
+def test_appointment_at_goes_out_in_utc_whatever_zone_the_service_used(app_engine):
+    """Fix round 1, item 2: the appointment-service's own `appointment_at` is normalised to
+    UTC before the answer goes out, exactly like the window bounds."""
+    local = Appointment("APT-1", datetime(2026, 10, 3, 10, 30, tzinfo=ZoneInfo("Asia/Jerusalem")),
+                        "Neurology", "Dr. Cohen", "Building B", "Scheduled", ())
+    fake = FakeList(result=AppointmentList((local,), False))
+    with make(app_engine, fake) as client:
+        response = client.get("/api/patient/appointments", headers=auth(client, PATIENT))
+    assert response.json()["appointments"][0]["appointment_at"] == "2026-10-03T07:30:00Z"
+
+
 def test_one_end_alone_spans_30_days_from_it(app_engine):
     fake = FakeList()
     with make(app_engine, fake) as client:
@@ -148,6 +206,30 @@ def test_staff_read_the_cases_patient(app_engine, staff):
     assert fake.calls[0][0] == OTHER
 
 
+def test_staff_route_passes_the_window_through(app_engine):
+    fake = FakeList()
+    with make(app_engine, fake) as client:
+        case_id = open_case(client, OTHER)
+        client.get(f"/api/staff/cases/{case_id}/appointments", headers=auth(client, NURSE),
+                   params={"from": "2026-10-01T00:00:00+00:00", "to": "2026-10-05T00:00:00+00:00"})
+    assert fake.calls[0] == (OTHER, datetime(2026, 10, 1, tzinfo=UTC), datetime(2026, 10, 5, tzinfo=UTC))
+
+
+def test_staff_route_bad_window_is_422(app_engine):
+    with make(app_engine, FakeList()) as client:
+        case_id = open_case(client)
+        response = client.get(f"/api/staff/cases/{case_id}/appointments", headers=auth(client, NURSE),
+                              params={"from": "2026-11-01T00:00:00+03:00", "to": "2026-10-01T00:00:00+03:00"})
+    assert (response.status_code, response.json()["detail"]) == (422, "invalid_range")
+
+
+def test_staff_route_not_configured_is_404_not_enabled(app_engine):
+    with make(app_engine, None) as client:
+        case_id = open_case(client)
+        response = client.get(f"/api/staff/cases/{case_id}/appointments", headers=auth(client, NURSE))
+    assert (response.status_code, response.json()["detail"]) == (404, "appointments_not_enabled")
+
+
 def test_the_staff_route_is_staff_only_and_knows_the_case(app_engine):
     with make(app_engine, FakeList()) as client:
         case_id = open_case(client)
@@ -171,5 +253,21 @@ def test_the_log_never_names_the_patient(app_engine, caplog):
     with caplog.at_level(logging.DEBUG, logger="hospital_agent.api.appointments"):
         with make(app_engine, FakeList(raises=AppointmentsUnavailable("no_answer"))) as client:
             client.get("/api/patient/appointments", headers=auth(client, PATIENT))
-    assert "appointment list unavailable" in caplog.text or "no_answer" in caplog.text
+    assert "appointment list: no_answer in" in caplog.text
+    assert PATIENT not in caplog.text and "APT-" not in caplog.text
+
+
+def test_the_log_never_names_the_patient_on_success(app_engine, caplog):
+    with caplog.at_level(logging.DEBUG, logger="hospital_agent.api.appointments"):
+        with make(app_engine, FakeList()) as client:
+            client.get("/api/patient/appointments", headers=auth(client, PATIENT))
+    assert "appointment list: ok in" in caplog.text
+    assert PATIENT not in caplog.text and "APT-" not in caplog.text
+
+
+def test_the_log_never_names_the_patient_on_patient_not_found(app_engine, caplog):
+    with caplog.at_level(logging.DEBUG, logger="hospital_agent.api.appointments"):
+        with make(app_engine, FakeList(raises=PatientNotFound())) as client:
+            client.get("/api/patient/appointments", headers=auth(client, PATIENT))
+    assert "appointment list: patient_not_found in" in caplog.text
     assert PATIENT not in caplog.text and "APT-" not in caplog.text

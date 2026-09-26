@@ -928,13 +928,25 @@ or `admin_staff` token. It is deliberately a separate route from `GET
 to, so reading it never changes `shown_context_ref`.
 
 **The window.** `from` is inclusive, `to` is exclusive; both are ISO 8601 and must carry a
-time zone offset (a value with no offset is rejected, not assumed to be UTC or local time).
-Neither given: `from` is now, `to` is 30 days after it. One given: the other is 30 days from
-it (before `to`, or after `from`). The window in the answer is always the one actually used
-(now + a fixed span, not "whatever `now` was" restated) - both bounds are echoed back
-converted to UTC, whatever offset the query used. A reversed window (`to` at or before
-`from`), or one longer than 366 days, is `422 invalid_range` - checked before the
-appointment-service is asked at all.
+time zone offset (a value with no offset is rejected, not assumed to be UTC or local time;
+`Z` is accepted for UTC). Neither given: `from` is now, `to` is 30 days after it. One given:
+the other is 30 days from it (before `to`, or after `from`). Both bounds in the answer are
+the exact instants the read actually used - a default `from` fixed once for that request, not
+recomputed - converted to UTC regardless of what offset the query sent. A reversed window
+(`to` at or before `from`), one longer than 366 days, or one whose bound - or whose default
+30-day span from a bound near the very edge of the representable date range (year 1 or 9999)
+- cannot be represented at all, is `422 invalid_range`.
+
+A literal `+` in an offset (e.g. `+03:00`) must be percent-encoded as `%2B` in the query
+string: an unencoded `+` is decoded as a space by ordinary URL decoding, and the resulting
+value fails to parse - also `422 invalid_range`, not a silently wrong offset.
+
+**Check order.** The staff route resolves the case first (`404 case_not_found` before
+anything else). Both routes then check whether an appointment-service is configured at all
+(`404 appointments_not_enabled`) *before* parsing the window - an unconfigured server answers
+404 even for a query that would otherwise be `422`. Only once a client exists is the window
+itself validated (`422 invalid_range`); only once that holds is the appointment-service
+actually asked (`404 patient_not_found` / `503 appointments_unavailable`).
 
 `200`:
 
@@ -959,22 +971,29 @@ appointment-service is asked at all.
 
 `status` is `Scheduled` or `Cancelled`. `truncated` is `true` when the appointment-service's
 own answer was cut off at its cap (100 rows) rather than the full window's worth - the UI
-should say the list may be incomplete and suggest narrowing the range.
+should say the list may be incomplete and suggest narrowing the range. `appointment_at` is
+always normalised to UTC before it goes out, exactly like the window bounds - whatever offset
+or zone the appointment-service itself answered with.
 
 - `401 not_authenticated` - as everywhere.
 - `403 patients_only` (the patient route, a staff token) / `403 staff_only` (the staff
   route, a patient token).
+- `404 case_not_found` - the staff route, an unknown case; checked before everything below.
 - `404 appointments_not_enabled` - the server has no appointment-service configured
   (`APPOINTMENT_SERVICE_URL` + `APPOINTMENT_API_KEY`); there is no mock for this route
-  (design decision: unlike `CheckAppointment`'s own gateway, sub-project 10).
-- `404 case_not_found` - the staff route, an unknown case.
-- `404 patient_not_found` - the appointment-service's registry does not know the patient.
+  (design decision: unlike `CheckAppointment`'s own gateway, sub-project 10). Checked before
+  the window, so a bad window on an unconfigured server is still this code, not `422`.
 - `422 invalid_range` - `from` or `to` does not parse as ISO 8601, either carries no time
-  zone offset, `to` is at or before `from`, or the span is over 366 days. Neither bound is
+  zone offset, `to` is at or before `from`, the span is over 366 days, or a bound (or the
+  default span from one) does not fit in the representable date range. Neither bound is
   echoed in the error.
+- `404 patient_not_found` - the appointment-service's registry does not know the patient.
 - `503 appointments_unavailable` - the appointment-service did not answer, answered
   something other than its documented 200/404 shape, or answered any other status. The
-  application log records only the outcome (`no_answer`, `status_<n>`, `invalid_response`,
-  or `invalid_patient_id` for a defensive check that never rejects a token- or
-  case-resolved patient in practice) - never the patient_id and never an appointment
-  (§12.3, design D9).
+  application log records one line, `appointment list: <code> in <n> ms`, for every outcome
+  - success included - where `<code>` is `ok`, `patient_not_found`, one of the codes above
+  (`no_answer`, `status_<n>`, `invalid_response`), or `client_error` (the appointment-list
+  client's own defensive check on a naive datetime or a malformed `patient_id`, neither
+  reachable through this route in practice, since the routes always resolve a token- or
+  case-bound `patient_id` and the window is always built as aware datetimes) - never the
+  patient_id and never an appointment (§12.3, design D9).
