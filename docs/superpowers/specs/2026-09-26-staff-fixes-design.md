@@ -79,8 +79,10 @@ layer) and every image are refused.
    model refuses images, the answer is `classifier_unavailable`/`unreadable` - fail closed; `OPENAI_MODEL`
    can point at a vision model.
 4. hospital-agent: the picker and the intake client accept PDF, JPEG and PNG (real `Content-Type` by magic
-   bytes); the optional `reason` becomes finer patient codes (`unrecognised_type`, `unreadable_scan`,
-   `bad_date`, `too_old`, `no_date`) with a Hebrew sentence each that says what happened and what to do; the
+   bytes); the optional `reason` - read only for the result it belongs to (`DOCUMENT_UNREADABLE` or
+   `DOCUMENT_EXPIRED`) - becomes finer patient codes (`unrecognised_type`, `unreadable_scan`, `bad_date`,
+   `unsupported_format`, `too_large`, `no_date`; `too_old` stays `expired`), and the `DOCUMENT_UPLOADED`
+   payload carries the sniffed format (`pdf` / `jpg` / `png`), with a Hebrew sentence each that says what happened and what to do; the
    client's own refusals say it too ("הקובץ גדול מ־10MB. העלו קובץ קטן יותר."). The real reason is logged
    as a code (the logging of Task 1 now reaches stderr). A document that then raises the safety level and
    escalates (T10) is correct behaviour, not part of this fix.
