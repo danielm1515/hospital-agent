@@ -21,8 +21,9 @@ from functools import cache
 from pathlib import Path
 from typing import Any, Protocol
 
-from . import telemetry
+from . import telemetry, usage
 from .schemas import Call, LLMUnusable, sanitize_code, validate
+from .usage import LLMUsage, usage_from_response
 
 MAX_ATTEMPTS = 3  # §14: three unusable answers in a row escalate
 PROMPTS_DIR = Path(__file__).with_name("prompts")
@@ -56,20 +57,33 @@ def elapsed_ms(start: float) -> int:
     return round((time.monotonic() - start) * 1000)
 
 
+def complete_once(provider: LLMProvider, call: Call, user_input: Mapping[str, Any],
+                  schema: dict[str, Any]) -> tuple[dict[str, Any], LLMUsage | None]:
+    """One attempt and its billed usage: through `complete_with_usage` when the provider
+    reports usage (OpenAIProvider), otherwise `complete` with no usage (every fake)."""
+    with_usage = getattr(provider, "complete_with_usage", None)
+    if with_usage is not None:
+        return with_usage(call, user_input, schema)
+    return provider.complete(call, user_input, schema), None
+
+
 def ask(provider: LLMProvider, call: Call, user_input: Mapping[str, Any], schema: dict[str, Any]) -> dict[str, Any]:
     """One call, retried on a retryable unusable answer; LLMFailed after MAX_ATTEMPTS in a
     row, or at once on a failure no retry could fix (staff-fixes design Task 1, decision 2).
-    Every attempt is logged and its outcome kept in telemetry (decisions 1, 3)."""
+    Every attempt is logged and its outcome kept in telemetry (decisions 1, 3), and reported
+    with its usage to the case's usage scope, if any (sub-project 19, design D2)."""
     for _ in range(MAX_ATTEMPTS):
         start = time.monotonic()
         try:
-            result = provider.complete(call, user_input, schema)
+            result, billed = complete_once(provider, call, user_input, schema)
         except LLMUnusable as exc:
             telemetry.record(call, provider.model, elapsed_ms(start), exc.reason)
+            usage.report(call, provider.model, exc.reason, exc.usage)
             if not exc.retryable:
                 raise LLMFailed(call.value) from None
             continue
         telemetry.record(call, provider.model, elapsed_ms(start), "ok")
+        usage.report(call, provider.model, "ok", billed)
         return result
     raise LLMFailed(call.value)
 
@@ -94,8 +108,16 @@ class OpenAIProvider:
         return self._client
 
     def complete(self, call: Call, user_input: Mapping[str, Any], schema: dict[str, Any]) -> dict[str, Any]:
+        return self.complete_with_usage(call, user_input, schema)[0]
+
+    def complete_with_usage(self, call: Call, user_input: Mapping[str, Any],
+                            schema: dict[str, Any]) -> tuple[dict[str, Any], LLMUsage | None]:
+        """The checked answer and the usage the response reported (sub-project 19, D1). An
+        answer that arrived but is rejected (unparsable, schema-invalid) raises LLMUnusable
+        carrying that usage - those tokens were billed; an API error carries none."""
         import openai
 
+        billed: LLMUsage | None = None
         try:
             response = self._openai().chat.completions.create(
                 model=self.model,
@@ -105,6 +127,7 @@ class OpenAIProvider:
                 response_format={"type": "json_schema",
                                  "json_schema": {"name": call.value, "strict": True, "schema": schema}},
             )
+            billed = usage_from_response(response)
             data = json.loads(response.choices[0].message.content)
         except openai.OpenAIError as exc:
             reason = f"api:{type(exc).__name__}"
@@ -117,8 +140,12 @@ class OpenAIProvider:
                     or sanitize_code(getattr(exc, "type", None)) or sanitize_code(body_get("type")))
             raise LLMUnusable(f"{reason}:{code}" if code else reason) from None
         except (json.JSONDecodeError, TypeError, IndexError, AttributeError):
-            raise LLMUnusable("unparsable") from None
-        return validate(schema, data)
+            raise LLMUnusable("unparsable", usage=billed) from None
+        try:
+            return validate(schema, data), billed
+        except LLMUnusable as exc:
+            exc.usage = billed
+            raise
 
 
 # --- FakeProvider: deterministic demo answers --------------------------------------------

@@ -8,6 +8,8 @@ import threading
 from collections.abc import Sequence
 
 from hospital_agent.guards import GuardPorts
+from hospital_agent.llm.provider import FakeProvider
+from hospital_agent.llm.usage import LLMUsage
 from hospital_agent.repository import AuditEntry
 
 
@@ -46,3 +48,27 @@ class BarrierMonitor:
         if candidate.event == self.event:
             self.barrier.wait()
         return None
+
+
+class UsageFakeProvider(FakeProvider):
+    """FakeProvider that reports `usage` for every answer, the way OpenAIProvider does
+    (sub-project 19). Module-level, so the Response Evaluator's spawned process can unpickle it."""
+
+    def __init__(self, usage: LLMUsage, script=None) -> None:
+        super().__init__(script)
+        self.usage = usage
+
+    def complete_with_usage(self, call, user_input, schema):
+        return self.complete(call, user_input, schema), self.usage
+
+
+class SpyRecorder:
+    """Keeps every usage row it is asked to record, in memory (thread-safe)."""
+
+    def __init__(self) -> None:
+        self.rows: list[tuple] = []
+        self._lock = threading.Lock()
+
+    def record(self, case_id, source, call, model, outcome, usage) -> None:
+        with self._lock:
+            self.rows.append((case_id, source, call, model, outcome, usage))

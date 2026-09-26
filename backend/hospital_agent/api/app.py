@@ -39,6 +39,7 @@ from ..instruction_client import InstructionClient, build_instruction_client
 from ..llm import telemetry
 from ..llm.model_selector import llm_version, select_provider
 from ..llm.orchestrator import Orchestrator, orchestrator_interval_seconds
+from ..llm_costs import UsageRecorder
 from ..session import DocumentIntake, SessionService
 from ..wiring import build_state_manager
 from . import routes_admin, routes_auth, routes_patient, routes_staff
@@ -149,7 +150,9 @@ def create_app(engine: Engine | None = None, orchestrator: Orchestrator | None =
                 else:
                     app.state.appointments_source = source
                     app.state.documents_source = documents_source
-                    started = app.state.orchestrator = Orchestrator(sm, provider, gateway)
+                    # Sub-project 19: every LLM attempt is recorded against its case, on the same engine.
+                    started = app.state.orchestrator = Orchestrator(sm, provider, gateway,
+                                                                    recorder=UsageRecorder(app.state.engine))
                     stops.append(started.run_in_background(orchestrator_interval_seconds()))
                     app.state.orchestrator_status = "running"
         yield

@@ -11,11 +11,14 @@ from __future__ import annotations
 
 import re
 from enum import StrEnum
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import jsonschema
 
 from ..naming import AUTOMATIC_ACTIONS, Action, SafetyLevel
+
+if TYPE_CHECKING:
+    from .usage import LLMUsage
 
 
 class Intent(StrEnum):
@@ -88,12 +91,17 @@ class LLMUnusable(Exception):
     schema violation (LLM design §3). The message is a code, never the model's output.
 
     `retryable` defaults to `is_retryable(reason)` - true for `unparsable`/`schema_violation`
-    and for an API error no retry could fix; an explicit value overrides it (e.g. a test)."""
+    and for an API error no retry could fix; an explicit value overrides it (e.g. a test).
 
-    def __init__(self, reason: str, *, retryable: bool | None = None) -> None:
+    `usage` is the billed usage of an answer that arrived but was rejected (unparsable,
+    schema-invalid) - sub-project 19, design D1; None for an API error, which bills nothing
+    to report. It rides along when the exception is pickled back from the Evaluator's process."""
+
+    def __init__(self, reason: str, *, retryable: bool | None = None, usage: LLMUsage | None = None) -> None:
         super().__init__(reason)
         self.reason = reason
         self.retryable = is_retryable(reason) if retryable is None else retryable
+        self.usage = usage
 
 
 def validate(schema: dict[str, Any], data: object) -> dict[str, Any]:

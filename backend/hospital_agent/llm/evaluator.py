@@ -18,14 +18,18 @@ import time
 from concurrent.futures import ProcessPoolExecutor
 from concurrent.futures.process import BrokenProcessPool
 
-from . import telemetry
-from .provider import MAX_ATTEMPTS, LLMFailed, LLMProvider, elapsed_ms
+from . import telemetry, usage
+from .provider import MAX_ATTEMPTS, LLMFailed, LLMProvider, complete_once, elapsed_ms
 from .schemas import EVALUATION_SCHEMA, Call, LLMUnusable
+from .usage import LLMUsage
 
 
-def _evaluate_once(provider: LLMProvider, message: str) -> bool:
-    """Runs in the evaluator process: one call, the message text only."""
-    return provider.complete(Call.EVALUATOR, {"message": message}, EVALUATION_SCHEMA)["medical_content_flag"]
+def _evaluate_once(provider: LLMProvider, message: str) -> tuple[bool, LLMUsage | None]:
+    """Runs in the evaluator process: one call, the message text only. Returns the flag and
+    the attempt's usage, which the parent reports (sub-project 19, design D2) - a rejected
+    answer's usage rides back on the pickled LLMUnusable instead."""
+    answer, billed = complete_once(provider, Call.EVALUATOR, {"message": message}, EVALUATION_SCHEMA)
+    return answer["medical_content_flag"], billed
 
 
 class ResponseEvaluator:
@@ -45,22 +49,29 @@ class ResponseEvaluator:
         """medical_content_flag for one outgoing message; LLMFailed after MAX_ATTEMPTS unusable
         answers, or at once on a failure no retry could fix. The call runs in a worker process
         with no log configuration, so this parent-side loop times and records every attempt
-        (staff-fixes design Task 1, decisions 1-3)."""
+        (staff-fixes design Task 1, decisions 1-3), and reports it with its usage to the
+        case's usage scope (sub-project 19, design D2) - one row per telemetry line. A dead
+        worker's attempt is reported with no usage: whether it reached the provider is
+        unknown, and nothing billed came back."""
+        model = self.provider.model
         for _ in range(MAX_ATTEMPTS):
             start = time.monotonic()
             try:
-                result = self._process().submit(_evaluate_once, self.provider, message).result()
+                result, billed = self._process().submit(_evaluate_once, self.provider, message).result()
             except LLMUnusable as exc:
-                telemetry.record(Call.EVALUATOR, self.provider.model, elapsed_ms(start), exc.reason)
+                telemetry.record(Call.EVALUATOR, model, elapsed_ms(start), exc.reason)
+                usage.report(Call.EVALUATOR, model, exc.reason, exc.usage)
                 if not exc.retryable:
                     raise LLMFailed(Call.EVALUATOR.value) from None
                 continue
             except BrokenProcessPool:  # the worker died: replace it on the next attempt
-                telemetry.record(Call.EVALUATOR, self.provider.model, elapsed_ms(start), "worker_died")
+                telemetry.record(Call.EVALUATOR, model, elapsed_ms(start), "worker_died")
+                usage.report(Call.EVALUATOR, model, "worker_died", None)
                 self._discard_pool()
                 continue
             else:
-                telemetry.record(Call.EVALUATOR, self.provider.model, elapsed_ms(start), "ok")
+                telemetry.record(Call.EVALUATOR, model, elapsed_ms(start), "ok")
+                usage.report(Call.EVALUATOR, model, "ok", billed)
                 return result
         raise LLMFailed(Call.EVALUATOR.value)
 

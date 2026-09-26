@@ -33,6 +33,9 @@ services:
       # LLM design §3: from .env (git-ignored). Without a key the Agent Orchestrator does not start.
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OPENAI_MODEL: ${OPENAI_MODEL:-gpt-5.6-luna}
+      # Sub-project 19 (design D3): USD per 1M tokens for OPENAI_MODEL; empty keeps llm/pricing.py's table.
+      LLM_PRICE_INPUT_PER_MTOK: ${LLM_PRICE_INPUT_PER_MTOK:-}
+      LLM_PRICE_OUTPUT_PER_MTOK: ${LLM_PRICE_OUTPUT_PER_MTOK:-}
       # §18.3 demo IdP: both have a development default, so the demo runs without them.
       AUTH_SECRET: ${AUTH_SECRET:-}
       DEMO_PASSWORD: ${DEMO_PASSWORD:-demo}

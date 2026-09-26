@@ -13,6 +13,7 @@ safety() is the same Safety call on retrieved content (ยง3: "Safety Classifier ื
 """
 from __future__ import annotations
 
+import contextvars
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 
@@ -43,11 +44,17 @@ class Classifier:
         self.provider = provider
 
     def classify(self, request_text: str, documents: list[str]) -> Classification:
-        """Both calls, in parallel; LLMFailed if either gives MAX_ATTEMPTS unusable answers."""
+        """Both calls, in parallel; LLMFailed if either gives MAX_ATTEMPTS unusable answers.
+
+        Each call runs in its own copy of the caller's context, so the case's usage scope
+        (sub-project 19, design D2) reaches both threads - a pool thread does not inherit it.
+        One copy each: a single Context cannot be entered by two threads at once."""
         user_input = {"request_text": request_text, "documents": documents}
         with ThreadPoolExecutor(max_workers=2) as pool:
-            intent = pool.submit(ask, self.provider, Call.INTENT, user_input, INTENT_SCHEMA)
-            safety = pool.submit(ask, self.provider, Call.SAFETY, user_input, SAFETY_SCHEMA)
+            intent = pool.submit(contextvars.copy_context().run, ask, self.provider, Call.INTENT, user_input,
+                                 INTENT_SCHEMA)
+            safety = pool.submit(contextvars.copy_context().run, ask, self.provider, Call.SAFETY, user_input,
+                                 SAFETY_SCHEMA)
             return Classification(Intent(intent.result()["intent"]), SafetyLevel(safety.result()["safety_level"]))
 
     def safety(self, content: str) -> SafetyLevel:
