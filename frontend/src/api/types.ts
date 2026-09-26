@@ -460,3 +460,16 @@ export interface AppointmentList {
   appointments: Appointment[]
   truncated: boolean
 }
+
+// ---- System status (staff-fixes design Task 1, docs/api.md §5) -------------
+
+export interface LlmStatus {
+  last_ok_at: IsoDateTime | null
+  last_error: string | null
+  last_error_at: IsoDateTime | null
+}
+
+export interface SystemStatus {
+  orchestrator: string | null
+  llm: LlmStatus
+}

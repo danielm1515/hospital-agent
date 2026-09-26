@@ -27,6 +27,7 @@ import type {
   ReviewContext,
   ReviewItem,
   State,
+  SystemStatus,
   UploadDocumentBody,
 } from './types'
 
@@ -322,4 +323,12 @@ export function listMyAppointments(from: Date, to: Date): Promise<AppointmentLis
 /** `GET /api/staff/cases/{case_id}/appointments` - the case's patient. */
 export function listCaseAppointments(caseId: string, from: Date, to: Date): Promise<AppointmentList> {
   return request<AppointmentList>('GET', `/staff/cases/${id(caseId)}/appointments?${windowQuery(from, to)}`)
+}
+
+// ---- System status (staff-fixes design Task 1) ------------------------------
+
+/** `GET /api/staff/system-status` - staff only: whether the Agent Orchestrator runs and the
+ * LLM's last outcome. */
+export function getSystemStatus(): Promise<SystemStatus> {
+  return request<SystemStatus>('GET', '/staff/system-status')
 }
