@@ -1183,12 +1183,12 @@ The full text behind one appointment's `instruction` summary above (title only t
 live from the appointment-service on every call, never cached and never stored - the same
 recorded exception as the appointment list itself (`docs/spec_corrections.md` row 89, extended
 by this row to cover this read too). The patient route answers for any `source_id`/`version`
-the registry currently approves, not only ones on the patient's own appointments - exactly like
-the patient route never being told which appointments exist beyond its own list, this route
-does not itself check ownership, since the source_id came from the patient's own appointment
-list in the first place. The staff route is identical and needs no case id - it is not bound
-to any one case's `shown_context_ref` (design D13's appointment/instruction fields on
-`CaseDetail`/`ReviewContext` already carry the source for staff viewing).
+the registry currently approves, not only ones on the patient's own appointments: the
+instruction texts are generic catalog content (one per exam type, not per patient) with nothing
+patient-specific in them, so the route needs no ownership check. The staff route is identical
+and needs no case id - it is not bound to any one case's `shown_context_ref` (design D13's
+appointment/instruction fields on `CaseDetail`/`ReviewContext` already carry the source for
+staff viewing).
 
 Both `source_id` and `version` must match the same id shape used everywhere else in this API
 (`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`, e.g. `NewRequest.appointment_id`) - `version` is a
@@ -1202,13 +1202,15 @@ query looks like. Only once a client exists are `source_id`/`version` validated
 (`404 instruction_not_approved`); only once the registry approves is the appointment-service
 actually asked (`503 instructions_unavailable`).
 
-**The registry, never the service, approves.** `policy/data/approved_instruction_sources.json`
-- the same JSON file OPA loads out of its policy bundle - is read directly (never through OPA,
-and never trusting the appointment-service's own answer): the requested `source_id` must be
-listed with `approved: true`, the exact same `version`, and the current time inside
-`[valid_from, valid_until)`. Anything else - unlisted, the wrong version, not yet valid, or
-expired - is `404 instruction_not_approved`, and the appointment-service is never called for
-it.
+**The registry, never the service, approves.** The requested `source_id`/`version` is put to
+the real OPA binary - the same `policy.rego` rule (`instruction_source_approved`) the Policy
+Service's own `decision` reads, over the same policy bundle
+(`policy/data/approved_instruction_sources.json`) - never a second, Python reimplementation of
+its time parsing, and never trusting the appointment-service's own answer. OPA approves only
+when `source_id` is listed with `approved: true`, the exact same `version`, and the current
+time (OPA's own clock) inside `[valid_from, valid_until)`. Anything else - unlisted, the wrong
+version, not yet valid, expired, or OPA itself unavailable - is `404 instruction_not_approved`,
+and the appointment-service is never called for it.
 
 `200`:
 
@@ -1237,8 +1239,13 @@ The answer is exactly the requested `source_id` + `version`, with a non-empty `t
   appointment-service is never asked in this case.
 - `503 instructions_unavailable` - the appointment-service did not answer, answered something
   other than its documented 200 shape, answered for a different source or version than asked,
-  or itself answered `404 instruction_not_found` (the registry and the service disagree - never
-  delivered as though approved). The application log records one line,
-  `instruction read: <code> in <n> ms`, for every outcome (success included), where `<code>` is
-  `ok`, `not_found`, or one of the client's own codes (`no_answer`, `status_<n>`,
-  `invalid_response`) - never the source_id, the title or the text (§12.3).
+  itself answered `404 instruction_not_found` (the registry and the service disagree - never
+  delivered as though approved), or the client itself was misconfigured (e.g. an invalid API
+  key header the transport rejects before a request is even sent - an operator's mistake, never
+  the caller's). The application log records one line, `instruction read: <code> in <n> ms`,
+  for every *service-call* outcome (success included) - never for the checks above it
+  (not-configured, a bad id/version, or the registry's own denial, which are a fixed verdict on
+  the request itself, not a call to the appointment-service) - where `<code>` is `ok`,
+  `not_found`, one of the client's own codes (`no_answer`, `status_<n>`, `invalid_response`), or
+  `client_error` (the client's defensive `ValueError`) - never the source_id, the title or the
+  text (§12.3).

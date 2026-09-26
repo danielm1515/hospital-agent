@@ -97,7 +97,10 @@ def _optional_text(value: object) -> bool:
 
 
 def _bounded_label(value: object) -> bool:
-    return isinstance(value, str) and bool(value) and len(value) <= MAX_LABEL_LENGTH
+    # Fix round 1 (M6): stripped before checking for empty, so a whitespace-only string (e.g.
+    # "   ") is refused exactly like "" - the bound itself is still checked against the
+    # original, unstripped length.
+    return isinstance(value, str) and bool(value.strip()) and len(value) <= MAX_LABEL_LENGTH
 
 
 def _id_shaped(value: object) -> bool:
@@ -105,9 +108,9 @@ def _id_shaped(value: object) -> bool:
 
 
 def _exam_type(value: object) -> ExamType | None:
-    """Sub-project 18 (design D3): absent means None; a present value must be exactly
-    {code, label}, each a non-empty string capped at MAX_LABEL_LENGTH - anything else is
-    invalid_response, fail closed."""
+    """Sub-project 18 (design D3): absent means None; a present value must carry {code, label}
+    (extra keys are ignored), each a non-empty string capped at MAX_LABEL_LENGTH - anything
+    else is invalid_response, fail closed."""
     if value is None:
         return None
     if not isinstance(value, dict) or not _bounded_label(value.get("code")) \
@@ -117,9 +120,9 @@ def _exam_type(value: object) -> ExamType | None:
 
 
 def _instruction(value: object) -> InstructionSummary | None:
-    """Sub-project 18 (design D3): absent means None; a present value must be exactly
-    {source_id, version, title} - source_id/version the id shape, title a bounded non-empty
-    string - anything else is invalid_response, fail closed."""
+    """Sub-project 18 (design D3): absent means None; a present value must carry {source_id,
+    version, title} (extra keys are ignored) - source_id/version the id shape, title a bounded
+    non-empty string - anything else is invalid_response, fail closed."""
     if value is None:
         return None
     if not isinstance(value, dict) or not _id_shaped(value.get("source_id")) \

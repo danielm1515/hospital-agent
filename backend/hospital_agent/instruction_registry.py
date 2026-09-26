@@ -1,50 +1,23 @@
-"""Sub-project 18 (design D12, D14; docs/spec_corrections.md rows 89-90): whether the Approved
-Source Registry - the same JSON file OPA reads out of its policy bundle
-(`policy/data/approved_instruction_sources.json`, `data.hospital_agent.approved_instruction_sources`)
-- approves one `source_id` + `version` right now.
+"""Sub-project 18 (design D12, D14; docs/spec_corrections.md row 89): whether the Approved
+Source Registry approves one `source_id` + `version` right now.
 
-Read directly from disk, not through OPA: the instruction routes this backs
-(`api/instructions.py`) are outside the FSM and never build an OPA input, but they must apply
-exactly OPA's own rule (`instruction_source_approved`, `policy.rego`) - `approved == true`, the
-same `version`, and now inside `[valid_from, valid_until)` - never trusting the
-appointment-service's own answer to approve itself. `opa_runner.DATA_DIR` is the same directory
-OPA is pointed at (`opa eval --data <DATA_DIR> ...`), so a change to the bundle is picked up by
-both readers together.
+Fix round 1 (I1): this asks the real OPA (`opa_runner.instruction_source_approved`) for
+`policy.rego`'s own `instruction_source_approved` rule - the same bundle `PolicyService.decide`
+reads (`policy/data/approved_instruction_sources.json`) - rather than re-parsing the registry's
+dates in Python. There is one implementation of "is this source approved right now", and OPA is
+it; a Python reimplementation could read a timestamp OPA's own `time.parse_rfc3339_ns` would
+reject as though it were valid (or vice versa), which is exactly the bug this replaces.
+`policy.rego` reads its own clock (`time.now_ns()`) - `now` is never part of the OPA input, so
+this function takes none either.
 """
 from __future__ import annotations
 
-import json
-from datetime import datetime
-
-from .policy.opa_runner import DATA_DIR
-
-REGISTRY_FILE = DATA_DIR / "approved_instruction_sources.json"
+from .policy import opa_runner
 
 
-def is_approved(source_id: str, version: str, *, now: datetime) -> bool:
-    """Mirrors `policy.rego`'s `instruction_source_approved` rule exactly: `approved == true`,
-    the same `version`, and `valid_from <= now < valid_until`. Any read or shape failure is
-    "not approved", never an exception - a missing or corrupt registry file must fail closed,
-    not turn into a 500."""
-    try:
-        raw = json.loads(REGISTRY_FILE.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return False
-    if not isinstance(raw, dict):
-        return False
-    package = raw.get("hospital_agent")
-    entries = package.get("approved_instruction_sources") if isinstance(package, dict) else None
-    entry = entries.get(source_id) if isinstance(entries, dict) else None
-    if not isinstance(entry, dict) or entry.get("approved") is not True or entry.get("version") != version:
-        return False
-    valid_from, valid_until = entry.get("valid_from"), entry.get("valid_until")
-    if not isinstance(valid_from, str) or not isinstance(valid_until, str):
-        return False
-    try:
-        parsed_from = datetime.fromisoformat(valid_from)
-        parsed_until = datetime.fromisoformat(valid_until)
-    except ValueError:
-        return False
-    if parsed_from.tzinfo is None or parsed_until.tzinfo is None:
-        return False
-    return parsed_from <= now < parsed_until
+def is_approved(source_id: str, version: str) -> bool:
+    """Delegates to the real OPA binary. Fails closed (False) whenever OPA does: unavailable,
+    non-zero exit, a timeout, or an unreadable answer - never an exception, so a missing or
+    misbehaving policy engine must never turn into a 500 for the instruction routes
+    (`api/instructions.py`)."""
+    return opa_runner.instruction_source_approved(source_id, version)

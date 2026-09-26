@@ -53,11 +53,13 @@ def test_exam_type_and_instruction_are_parsed_when_present():
     ("exam_type", "x"),                                         # not a dict
     ("exam_type", {"code": "NEURO_VISIT"}),                     # missing label
     ("exam_type", {"code": "", "label": "x"}),                  # empty code
+    ("exam_type", {"code": "   ", "label": "x"}),               # fix round 1 M6: whitespace-only code
     ("exam_type", {"code": "x" * 201, "label": "x"}),           # over the label bound
     ("exam_type", {"code": 7, "label": "x"}),                   # not a string
     ("instruction", "x"),                                        # not a dict
     ("instruction", {"source_id": "INSTR-1", "version": "1"}),  # missing title
     ("instruction", {"source_id": "INSTR-1", "version": "1", "title": ""}),
+    ("instruction", {"source_id": "INSTR-1", "version": "1", "title": "   "}),  # whitespace-only
     ("instruction", {"source_id": "INSTR-1", "version": "1", "title": "x" * 201}),
     ("instruction", {"source_id": "bad id!", "version": "1", "title": "x"}),  # not the id shape
     ("instruction", {"source_id": "INSTR-1", "version": "", "title": "x"}),   # empty version

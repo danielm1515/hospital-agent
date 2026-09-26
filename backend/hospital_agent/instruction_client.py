@@ -4,9 +4,9 @@ instruction-read routes (`api/instructions.py`) - `GET /api/v1/instructions/{sou
 Not the same client Task 4's `LoadInstructions` gateway uses
 (`execution/appointment_service.py`'s `AppointmentServiceGateway._load_instructions`, wired
 into the FSM's Tool Executor): this one backs a plain read for the UI, outside the FSM, exactly
-like `appointment_list.py` beside it (docs/spec_corrections.md row 89, extended by row 90/D14 to
-cover this read too) - nothing here is proposed, policy-checked, retried, turned into an event
-or stored. Same transport rules: standard library only, over the shared transport in
+like `appointment_list.py` beside it (docs/spec_corrections.md row 89, extended by that same row
+to cover this read too) - nothing here is proposed, policy-checked, retried, turned into an
+event or stored. Same transport rules: standard library only, over the shared transport in
 `execution.http` (no redirect, no proxy, a bounded body, a 5 s timeout). The URL and the key
 never reach a repr, an exception or a log line.
 """

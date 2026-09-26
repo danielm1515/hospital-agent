@@ -6,7 +6,12 @@ from fastapi.testclient import TestClient
 
 from hospital_agent.api.app import create_app
 from hospital_agent.auth import demo_password
-from hospital_agent.instruction_client import Instruction, InstructionNotFound, InstructionUnavailable
+from hospital_agent.instruction_client import (
+    Instruction,
+    InstructionClient,
+    InstructionNotFound,
+    InstructionUnavailable,
+)
 
 PATIENT, NURSE, ADMIN = "P-10041", "coordinator_nurse", "admin_coordinator"
 # Real, always-current entries in policy/data/approved_instruction_sources.json (valid
@@ -152,6 +157,22 @@ def test_a_mismatched_answer_is_unavailable_not_the_wrong_text(app_engine):
         response = client.get(f"/api/patient/instructions/{APPROVED_SOURCE}",
                               params={"version": APPROVED_VERSION}, headers=auth(client, PATIENT))
     assert (response.status_code, response.json()["detail"]) == (503, "instructions_unavailable")
+
+
+def test_a_key_with_an_inner_newline_is_503_not_500(app_engine, caplog):
+    """Fix round 1 (I2), copying test_api_appointments.py's own test_a_bad_patient_id_is_503_not_500:
+    a *real* InstructionClient (not a Fake) whose API key carries an embedded newline - the
+    transport's own header validation raises a plain ValueError, which InstructionClient.get()
+    does not catch (test_instruction_client.py). instructions.read() must catch it, never
+    surface as a 500, and log the outcome (`client_error`) without the key or the source_id."""
+    real_client = InstructionClient("http://127.0.0.1:1", "bad\nkey")
+    with caplog.at_level(logging.DEBUG, logger="hospital_agent.api.instructions"):
+        with make(app_engine, real_client) as client:
+            response = client.get(f"/api/patient/instructions/{APPROVED_SOURCE}",
+                                  params={"version": APPROVED_VERSION}, headers=auth(client, PATIENT))
+    assert (response.status_code, response.json()["detail"]) == (503, "instructions_unavailable")
+    assert "instruction read: client_error in" in caplog.text
+    assert "bad\nkey" not in caplog.text and APPROVED_SOURCE not in caplog.text
 
 
 def test_the_patient_route_is_patients_only(app_engine):

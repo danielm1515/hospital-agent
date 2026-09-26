@@ -73,6 +73,22 @@ def test_an_oversized_or_non_json_body_is_invalid():
         assert caught.value.code == "invalid_response"
 
 
+def test_size_bound_is_exact():
+    """Fix round 1 (M2): a *valid* JSON body, not just a garbage one, must still be refused once
+    it reaches exactly MAX_BODY_BYTES - the same exact-bound discipline as
+    test_appointment_list.py's own test_size_bound_is_exact."""
+    small_body = json.dumps(GOOD).encode()
+    accepted = small_body + b" " * (MAX_BODY_BYTES - 1 - len(small_body))
+    assert len(accepted) == MAX_BODY_BYTES - 1
+    assert map_answer(HttpResponse(200, accepted), source_id=SOURCE_ID, version=VERSION).title == GOOD["title"]
+
+    rejected = small_body + b" " * (MAX_BODY_BYTES - len(small_body))
+    assert len(rejected) == MAX_BODY_BYTES
+    with pytest.raises(InstructionUnavailable) as caught:
+        map_answer(HttpResponse(200, rejected), source_id=SOURCE_ID, version=VERSION)
+    assert caught.value.code == "invalid_response"
+
+
 def test_deeply_nested_json_is_invalid():
     nested = b"[" * 20000 + b"]" * 20000
     with pytest.raises(InstructionUnavailable) as caught:
@@ -114,6 +130,34 @@ def test_a_transport_http_exception_is_also_no_answer():
     with pytest.raises(InstructionUnavailable) as caught:
         InstructionClient("http://svc:8080", "k", transport=transport).get(SOURCE_ID, VERSION)
     assert caught.value.code == "no_answer"
+
+
+def test_an_id_needing_quoting_is_encoded():
+    """Fix round 1 (M2): source_id/version reach the client already validated by the route's own
+    id pattern in practice, but the client itself makes no such assumption - a value needing
+    URL-quoting must still be encoded correctly, called directly rather than through the route."""
+    seen = {}
+
+    weird_id, weird_version = "INSTR/WEIRD ID", "v 1"
+
+    def transport(method, url, headers, body, timeout):
+        seen["url"] = url
+        return answer({**GOOD, "source_id": weird_id, "version": weird_version})
+
+    client = InstructionClient("http://svc:8080", "k", transport=transport)
+    client.get(weird_id, weird_version)
+    assert seen["url"] == "http://svc:8080/api/v1/instructions/INSTR%2FWEIRD%20ID?version=v+1"
+
+
+def test_a_key_with_an_inner_newline_raises_value_error_uncaught():
+    """Fix round 1 (I2): the real transport's own header validation rejects an API key
+    carrying an embedded newline with a plain ValueError - InstructionClient.get() only catches
+    (OSError, http.client.HTTPException) around the transport call, so this must propagate
+    uncaught here; api/instructions.py::read() is what turns it into 503 client_error
+    (test_api_instructions.py)."""
+    client = InstructionClient("http://127.0.0.1:1", "bad\nkey")
+    with pytest.raises(ValueError):
+        client.get(SOURCE_ID, VERSION)
 
 
 @pytest.mark.parametrize("env, built", [
