@@ -120,7 +120,7 @@ describe('patient helpers', () => {
     expect(uploadResultMessage({ code: 'unsupported_format', document_type: null }).text)
       .toBe('סוג הקובץ אינו נתמך. העלו PDF או תמונה (JPG/PNG).')
     expect(uploadResultMessage({ code: 'too_large', document_type: null }).text)
-      .toBe('הקובץ גדול מ־10MB. העלו קובץ קטן יותר.')
+      .toBe('התמונה גדולה מדי ברזולוציה. העלו תמונה קטנה יותר או קובץ PDF.')
     // Softened: no longer claims the file was unclear when the cause is unknown.
     expect(uploadResultMessage({ code: 'unreadable', document_type: null }).text)
       .toBe('לא הצלחנו לקרוא את המסמך. העלו קובץ PDF או תמונה ברורה של המסמך.')

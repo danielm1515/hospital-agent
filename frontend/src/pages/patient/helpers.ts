@@ -249,7 +249,7 @@ export function uploadResultMessage(upload: UploadResult): UploadNotice {
     case 'unsupported_format':
       return { variant: 'error', text: 'סוג הקובץ אינו נתמך. העלו PDF או תמונה (JPG/PNG).' }
     case 'too_large':
-      return { variant: 'error', text: FILE_TOO_LARGE_MESSAGE }
+      return { variant: 'error', text: 'התמונה גדולה מדי ברזולוציה. העלו תמונה קטנה יותר או קובץ PDF.' }
     case 'expired':
       // `document_type` is `null` for `expired` in the common case (`docs/api.md` §4) - an
       // empty `label` must not leave a double space where it would have gone.

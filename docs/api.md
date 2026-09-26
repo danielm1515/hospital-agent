@@ -324,12 +324,12 @@ other unavailable answer.
 | `bad_date` | The document's date is in the future (document-service `reason: future_date`) | Unchanged |
 | `no_date` | No date found on the document (document-service `reason: no_date`) | Unchanged |
 | `unsupported_format` | Not a PDF, JPEG or PNG by magic bytes (document-service `reason: not_supported_format`) | Unchanged |
-| `too_large` | Over the document-service's own size limit (document-service `reason: too_large`) | Unchanged |
+| `too_large` | An image over the document-service's pixel limit - both sides already cap the file at 10 MB (document-service `reason: too_large`) | Unchanged |
 | `unreadable` | Could not be read or classified for any other reason (a parse error, too many pages, too much text, an unparsable classifier answer, or any answer or reason this version does not know) | Unchanged |
 | `expired` | Past its validity (a document-service `DOCUMENT_EXPIRED` whose reason is `too_old`, or none at all) | Unchanged |
 | `not_yours` | Names another patient | Unchanged |
 
-The last six rows are sub-project 17 task 2: the document-service's optional `reason` (its own
+The six rows `unrecognised_type` … `too_large` are sub-project 17 task 2: the document-service's optional `reason` (its own
 API, `DOCUMENT_UNREADABLE`/`DOCUMENT_EXPIRED` only) becomes a finer patient code exactly where
 listed above; every other reason, or no reason at all, falls back to the coarser `unreadable` or
 `expired`. `upload.document_type` is the catalog type (`CBC`, `COAGULATION_TESTS`, `ECG`,

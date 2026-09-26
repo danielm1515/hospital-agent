@@ -25,7 +25,7 @@ const ESCALATION_KIND_OPTIONS = Object.keys(ESCALATION_LABELS) as EscalationKind
 
 /**
  * The Case Monitor (§1), behind staff authentication: every case from
- * `GET /api/staff/cases` (staff-fixes design Task 3), filtered by State, with the case
+ * `GET /api/staff/cases` (staff-fixes design Task 3), filtered by group (and escalation kind), with the case
  * detail, the correspondence and the Audit trace of a row that is expanded. The list
  * route now carries every column the table shows - id, patient, State, intent, safety
  * level, escalation kind and time - so a row renders straight from the list with no
