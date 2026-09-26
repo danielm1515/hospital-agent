@@ -28,6 +28,7 @@ SECRET = "very private patient text"
 @pytest.mark.parametrize("counts", [
     (-1, 0, 0), (1, 0, -1), (True, 0, 0), (1.0, 0, 0), ("1", 0, 0), (None, 0, 0),
     (10, 11, 0),  # cached above input
+    (10**9 + 1, 0, 0), (10, 0, 10**9 + 1),  # above the cap
 ])
 def test_usage_refuses_anything_but_consistent_non_negative_ints(counts):
     with pytest.raises(ValueError):
@@ -37,6 +38,7 @@ def test_usage_refuses_anything_but_consistent_non_negative_ints(counts):
 def test_usage_accepts_zeros_and_cached_equal_to_input():
     assert LLMUsage(0, 0, 0) == LLMUsage(0, 0, 0)
     assert LLMUsage(5, 5, 1).cached_input_tokens == 5
+    assert LLMUsage(10**9, 10**9, 10**9).output_tokens == 10**9  # the cap itself is allowed
 
 
 def _response(**usage_fields):
@@ -78,6 +80,7 @@ class _Exploding:
               prompt_tokens_details=SimpleNamespace(cached_tokens="x")),
     _response(prompt_tokens=10, completion_tokens=3,
               prompt_tokens_details=SimpleNamespace(cached_tokens=11)),    # cached above input
+    _response(prompt_tokens=10**9 + 1, completion_tokens=3),               # above the cap: NULL, not a DataError
     SimpleNamespace(usage=_Exploding()),                                   # a getattr that raises
     None,
 ])
@@ -303,12 +306,19 @@ def test_an_unknown_configured_model_with_one_override_stays_unpriced():
     assert "gpt-other" not in pricing.price_table({"OPENAI_MODEL": "gpt-other", "LLM_PRICE_INPUT_PER_MTOK": "1"})
 
 
-@pytest.mark.parametrize("bad", ["abc", "-0.1", "NaN", "Infinity", "1,5", "sk-" + SECRET])
+@pytest.mark.parametrize("bad", ["abc", "-0.1", "NaN", "Infinity", "1,5", "sk-" + SECRET, "1E+100", "1000.01"])
 def test_a_bad_override_is_refused_and_logged_by_code_only(bad, caplog):
     with caplog.at_level(logging.WARNING, logger="hospital_agent.llm.pricing"):
         table = pricing.price_table({**LUNA, "LLM_PRICE_INPUT_PER_MTOK": bad})
     assert table["gpt-5.6-luna"] == (Decimal("0.20"), Decimal("1.20"))
     assert [record.message for record in caplog.records] == ["llm_price_override_invalid name=LLM_PRICE_INPUT_PER_MTOK"]
+
+
+def test_an_override_of_1000_is_accepted(caplog):
+    with caplog.at_level(logging.WARNING, logger="hospital_agent.llm.pricing"):
+        table = pricing.price_table({**LUNA, "LLM_PRICE_OUTPUT_PER_MTOK": "1000"})
+    assert table["gpt-5.6-luna"] == (Decimal("0.20"), Decimal("1000"))
+    assert caplog.records == []
 
 
 def test_an_empty_override_is_no_override(caplog):

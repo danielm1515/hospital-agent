@@ -3,7 +3,7 @@
 Prices are USD per 1M tokens, as Decimal - money never goes through a float. The table
 holds the owner's figures; `LLM_PRICE_INPUT_PER_MTOK` / `LLM_PRICE_OUTPUT_PER_MTOK`
 override the price of the configured model (`OPENAI_MODEL`, default gpt-5.6-luna). A bad
-override (not a finite decimal, or negative) is refused and logged by code, and the table's
+override (not a finite decimal, negative, or above 1000 per 1M tokens) is refused and logged by code, and the table's
 price stays. A model the table does not know has no price and its cost is None - never a
 guess. Cached input tokens are billed at the full input price (the owner gave two prices;
 this is the upper bound) and stored separately.
@@ -31,6 +31,7 @@ PRICES: dict[str, Price] = {
 }
 INPUT_OVERRIDE = "LLM_PRICE_INPUT_PER_MTOK"
 OUTPUT_OVERRIDE = "LLM_PRICE_OUTPUT_PER_MTOK"
+MAX_PRICE_PER_MTOK = Decimal(1000)  # an override above this is a typo, not a price
 MTOK = Decimal(1_000_000)
 QUANTUM = Decimal("0.00000001")
 
@@ -43,7 +44,7 @@ def _override(env: Mapping[str, str], name: str) -> Decimal | None:
         value = Decimal(raw)
     except InvalidOperation:
         value = None
-    if value is None or not value.is_finite() or value < 0:
+    if value is None or not value.is_finite() or value < 0 or value > MAX_PRICE_PER_MTOK:
         logger.warning("llm_price_override_invalid name=%s", name)
         return None
     return value

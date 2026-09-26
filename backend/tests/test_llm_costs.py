@@ -165,6 +165,7 @@ def test_a_fakeprovider_run_records_every_call_against_its_case_with_no_cost(age
     # one row per attempt: two classifications (the upload re-classifies, T10), each Intent + Safety
     assert sum(row["call"] == "Intent" for row in rows) == 2
     assert sum(row["call"] == "Evaluator" for row in rows) == 1
+    assert len(patient.trace()) == 35  # golden scenario 1's count: usage rows add no audit row
 
 
 def test_failed_attempts_are_recorded_with_their_usage(agent, app_engine):

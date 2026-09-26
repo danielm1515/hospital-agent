@@ -37,9 +37,12 @@ CALL_CODES: dict[Call, str] = {
 }
 
 
+MAX_TOKENS = 10**9  # far above any real call; keeps every count inside the Integer column
+
+
 @dataclass(frozen=True)
 class LLMUsage:
-    """Billed tokens of one attempt: non-negative ints, cached input never above input."""
+    """Billed tokens of one attempt: ints in 0..MAX_TOKENS, cached input never above input."""
 
     input_tokens: int
     cached_input_tokens: int
@@ -47,7 +50,7 @@ class LLMUsage:
 
     def __post_init__(self) -> None:
         counts = (self.input_tokens, self.cached_input_tokens, self.output_tokens)
-        if not all(type(count) is int and count >= 0 for count in counts):
+        if not all(type(count) is int and 0 <= count <= MAX_TOKENS for count in counts):
             raise ValueError("usage_counts_invalid")
         if self.cached_input_tokens > self.input_tokens:
             raise ValueError("usage_cached_above_input")
