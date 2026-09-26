@@ -11,11 +11,12 @@ import { authValue, PATIENT_USER, TestAuthProvider } from '../../test/helpers'
 
 vi.mock('../../api/client', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../api/client')>()
-  return { ...actual, listRequests: vi.fn(), listMyAppointments: vi.fn() }
+  return { ...actual, listRequests: vi.fn(), listMyAppointments: vi.fn(), getPatientInstruction: vi.fn() }
 })
 
 const listRequests = vi.mocked(api.listRequests)
 const listMyAppointments = vi.mocked(api.listMyAppointments)
+const getPatientInstruction = vi.mocked(api.getPatientInstruction)
 
 function appointment(overrides: Partial<Appointment> = {}): Appointment {
   return {
@@ -71,6 +72,32 @@ describe('MyRequests', () => {
       appointmentsHeading.compareDocumentPosition(requestsHeading) & Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy()
     expect(screen.getByText('קרדיולוגיה')).toBeInTheDocument()
+  })
+
+  it('reads an appointment’s preparation text through the patient route (sub-project 18, D12)', async () => {
+    listRequests.mockResolvedValue([])
+    listMyAppointments.mockResolvedValue(
+      appointmentList({
+        appointments: [
+          appointment({
+            exam_type: { code: 'CARD_ECHO', label: 'אקו לב' },
+            instruction: { source_id: 'INSTR-CARD-ECHO', version: '1', title: 'לפני אקו לב' },
+          }),
+        ],
+      }),
+    )
+    getPatientInstruction.mockResolvedValue({
+      source_id: 'INSTR-CARD-ECHO',
+      version: '1',
+      title: 'לפני אקו לב',
+      text: 'אין צורך בהכנה מיוחדת.',
+    })
+    renderList()
+
+    await userEvent.click(await screen.findByRole('button', { name: 'הצגת הוראות ההכנה' }))
+    expect(await screen.findByText('אין צורך בהכנה מיוחדת.')).toBeInTheDocument()
+    expect(getPatientInstruction).toHaveBeenCalledWith('INSTR-CARD-ECHO', '1')
+    expect(document.body).not.toHaveTextContent(/INSTR-|CARD_ECHO/)
   })
 
   it('does not hide the requests list when the appointments load fails', async () => {

@@ -1,9 +1,11 @@
 """The Tool Executor end to end on Postgres, plus the execution D-tests of §16 (Execution design §8)."""
+from datetime import timedelta
+
 import pytest
 
 from hospital_agent import repository
 from hospital_agent.db import executions
-from hospital_agent.execution.gateway import OK, MockGateway, ToolResult
+from hospital_agent.execution.gateway import OK, TRANSIENT_FAILURE, MockGateway, ToolResult
 from hospital_agent.execution.verify import REVERIFICATION_FAILED
 from hospital_agent.naming import EscalationKind, Event, State
 from tests.driver import Driver
@@ -114,6 +116,60 @@ def test_a_result_field_outside_the_action_is_dropped(sm, app_engine):
     d.run_step()  # LoadInstructions -> AssessingReadiness (the leaked held_documents is ignored)
     d.assess()
     assert d.state is State.AWAITING_PATIENT_INPUT
+
+
+def test_a_mismatched_loaded_instruction_id_is_invalid_response(sm, app_engine):
+    """Fix round 1, m1: finish() re-derives the instruction_ids the case's own
+    instruction_source_id/version demand and refuses an OK answer that names a different one -
+    defense in depth beyond the gateway's own check, for a gateway that answered OK anyway."""
+    class MismatchedGateway(MockGateway):
+        def call(self, action, parameters, idempotency_key):
+            result = super().call(action, parameters, idempotency_key)
+            if action == "LoadInstructions":
+                return ToolResult(result.kind, {**result.data, "instruction_ids": ["INSTR-OTHER:9"]})
+            return result
+
+    d = Driver(sm, app_engine, gateway=MismatchedGateway())
+    d.to_classified()
+    d.plan()
+    d.run_step()  # CheckAppointment: case.instruction_source_id/version = INSTR-PREP-COLONOSCOPY/3
+    d.advance()
+    d.run_step()  # CheckDocuments
+    d.advance()
+    assert d.case.instruction_source_id == "INSTR-PREP-COLONOSCOPY"
+    d.run_step()  # LoadInstructions: the gateway answers OK, but for a different instruction id
+    assert (d.state, d.case.escalation_kind) == (State.AWAITING_HUMAN_REVIEW, EscalationKind.NON_IDEMPOTENT_FAILURE)
+    assert "tool:error:invalid_response" in [reason for row in d.trace() for reason in (row.policy_reasons or [])]
+
+
+def test_a_retried_check_appointment_never_substitutes_the_services_answered_id(sm, app_engine):
+    """Sub-project 18 fix round 1 (I2): appointment_id is the patient's own write-once choice
+    from REQUEST_SUBMITTED - a retried CheckAppointment (still the same plan step, no
+    STEP_ADVANCED between attempts) must keep sending exactly that id, never one echoed back
+    by a previous answer (answered_appointment_id), even after that answer has already been
+    stored on the case."""
+    class SpoofingGateway(MockGateway):
+        def call(self, action, parameters, idempotency_key):
+            if action != "CheckAppointment":
+                return super().call(action, parameters, idempotency_key)
+            self.calls.append((action, dict(parameters), idempotency_key))
+            if self.failures.get(action, 0) > 0:
+                self.failures[action] -= 1
+                return ToolResult(TRANSIENT_FAILURE, {"error": "timeout"})
+            return ToolResult(OK, {"appointment_at": self.clock() + timedelta(hours=96),
+                                   "required_documents": [], "answered_appointment_id": "SERVICE-ANSWERED-ID"})
+
+    gw = SpoofingGateway(failures={"CheckAppointment": 1})
+    d = Driver(sm, app_engine, gateway=gw)
+    d.to_classified(appointment_id="APT-8391")
+    d.plan()
+    d.run_step()  # transient failure, no advance - still step 1
+    d.run_step()  # succeeds, stores answered_appointment_id
+    assert d.case.appointment_id == "APT-8391"
+    assert d.case.answered_appointment_id == "SERVICE-ANSWERED-ID"
+    check_calls = [call for call in gw.calls if call[0] == "CheckAppointment"]
+    assert len(check_calls) == 2
+    assert all(call[1].get("appointment_id") == "APT-8391" for call in check_calls)
 
 
 def test_a_call_that_raises_escalates_without_retry(sm, app_engine):

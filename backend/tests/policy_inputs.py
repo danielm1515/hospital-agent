@@ -143,6 +143,19 @@ EDGE_CASES: list[tuple[str, dict[str, Any]]] = [
              proposed_action={"action": "LoadInstructions", "from_step": 3, "target_system": "instruction_system",
                               "parameters": {"patient_fields": []}},
              instruction_source={"source_id": "INSTR-DRAFT-2090", "version": "1"})),
+    # Fix round 1, m3: a case with no source at all (D7 - the Orchestrator passes None, never a
+    # substitute) must deny unapproved_instruction_source exactly like an unknown one.
+    ("LoadInstructions with no source at all",
+     variant(plan={"current_step": 3, "plan_hash": PLAN_HASH, "ordered_steps": PLAN},
+             proposed_action={"action": "LoadInstructions", "from_step": 3, "target_system": "instruction_system",
+                              "parameters": {"patient_fields": []}},
+             instruction_source=None)),
+    # Fix round 1, m3: an Allow using one of the 13 catalog sources the registry gained in Task 4.
+    ("LoadInstructions from a catalog source",
+     variant(plan={"current_step": 3, "plan_hash": PLAN_HASH, "ordered_steps": PLAN},
+             proposed_action={"action": "LoadInstructions", "from_step": 3, "target_system": "instruction_system",
+                              "parameters": {"patient_fields": []}},
+             instruction_source={"source_id": "INSTR-CARD-STRESS", "version": "1"})),
     ("override for another step", variant(safety_level="HighRisk", intent="AppointmentPreparation",
                                            policy_review_override=policy_review_override(current_step=3))),
     ("override on a medical question", variant(safety_level="HighRisk", intent="MedicalQuestion",

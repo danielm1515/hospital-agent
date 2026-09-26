@@ -72,10 +72,12 @@ methods: `GET`, `POST`, `DELETE`, `OPTIONS`. Allowed headers: `Authorization`,
 | POST | `/api/patient/requests/{case_id}/reply` | patient | Answer a staff question (sub-project 15) |
 | POST | `/api/patient/requests/{case_id}/reply/file` | patient | Upload the document (PDF, JPEG or PNG) a staff member asked for (sub-project 15) |
 | GET | `/api/patient/appointments` | patient | My appointments (`?from=&to=`, sub-project 16) |
+| GET | `/api/patient/instructions/{source_id}` | patient | The text behind one approved preparation instruction (`?version=`, sub-project 18) |
 | GET | `/api/staff/cases` | staff | All cases, keyset-paginated (`?state=` or `?group=&escalation_kind=`, `&limit=&cursor=`; staff-fixes design Tasks 3-4) |
 | GET | `/api/staff/cases/{case_id}` | staff | One case, in full (plan, documents, counters) |
 | GET | `/api/staff/cases/{case_id}/audit` | staff | The case's audit trace |
 | GET | `/api/staff/cases/{case_id}/appointments` | staff | The case's patient's appointments (`?from=&to=`, sub-project 16) |
+| GET | `/api/staff/instructions/{source_id}` | staff | The same instruction text as the patient's route, for any approved source (`?version=`, sub-project 18) |
 | GET | `/api/staff/reviews` | staff | The human-review queue, keyset-paginated, newest entry first (staff-fixes design Task 5) |
 | GET | `/api/staff/reviews/{case_id}` | staff | One queue item (staff-fixes design Task 3) |
 | GET | `/api/staff/cases/{case_id}/context` | staff | What the reviewer is shown |
@@ -180,12 +182,14 @@ Every patient route answers with this object, and nothing else (the document upl
   ],
   "document_upload": "text",
   "reply_request": null,
-  "conversation": []
+  "conversation": [],
+  "instructions": null
 }
 ```
 
-`reply_request` and `conversation` are sub-project 15 (§8 below documents them); every other
-patient route already returned everything else shown here.
+`reply_request` and `conversation` are sub-project 15 (§8 below documents them); `instructions`
+is sub-project 18 (documented below); every other patient route already returned everything
+else shown here.
 
 | `status` | Meaning | What the UI shows |
 |---|---|---|
@@ -194,7 +198,7 @@ patient route already returned everything else shown here.
 | `needs_document` | A document is missing | The upload form for `missing_document_ids` |
 | `in_review` | A human is handling it | "A staff member is reviewing your request" - **no** reason, no kind |
 | `needs_reply` | Sub-project 15: a staff member asked a question or for a document | `reply_request` - the question or the requested document, and the deadline |
-| `completed` | An answer was delivered | `message` - either the status update the agent sent, or a clinical answer a `clinical_staff` reviewer wrote and approved |
+| `completed` | An answer was delivered | `message` - either the status update the agent sent, or a clinical answer a `clinical_staff` reviewer wrote and approved; `instructions` when the case loaded a preparation instruction |
 | `closed` | Finished without a delivered message (a reviewer resolved or rejected it) | `message` when the reviewer sent a closing message (sub-project 15), otherwise "Your request was closed. The clinic will contact you." |
 
 - `request_text` is the text the patient submitted; `null` once a staff member has deleted
@@ -212,31 +216,69 @@ patient route already returned everything else shown here.
   (§12.3) - and a status the case entered twice appears twice. The last entry's `status`
   always equals `status`, and the first is the submission. It is `[]` only for a case with
   no committed transition, which the patient routes never return.
+- `instructions` (sub-project 18, design D11) is `{"title": ..., "text": ...}` only when
+  **every one** of these holds (fix round 1, I1/I2):
+  - the status is `completed` *because* the agent itself delivered a `CASE_RESOLVED` message -
+    never a `clinical_staff` answer to a `MedicalQuestion`, and never `closed`;
+  - the case has a sub-project 18 instruction source (`instruction_source_id` is set) - a
+    pre-sub-project-18 case never shows the old fixed mock text; the mock path itself (design
+    D7) does set one (the demo colonoscopy source) and so is not excluded by this gate alone;
+  - `safety_level` is `LowRisk` or `MediumRisk` - text a later Safety re-check flagged
+    `HighRisk`/`CriticalRisk` is never shown, even when a human overrode a `PolicyReview`
+    escalation to let the case proceed regardless;
+  - the case's **latest** Data Log `instructions` entry (§12.3) is present (not tombstoned) -
+    the fixed plan loads instructions once (after the patient's upload, golden scenario 1 goes
+    back through `Classifying` to `AssessingReadiness`, with no re-plan), but nothing in the
+    Data Log limits a case to one such entry, so this is always the latest entry by recency;
+    if that latest entry was deleted, the result is `null`, and this never falls back to an
+    older, still-present entry.
+  Exactly what was approved and shown, split into its title and body on the first newline.
+  `null` whenever any of the above fails to hold, in particular for every status but
+  `completed`.
 - `document_upload` says which upload the screen offers for `needs_document`: `"file"` when the
   server is configured with the document-service (`DOCUMENT_SERVICE_URL` and
   `DOCUMENT_API_KEY`) - a document picker (PDF, JPEG or PNG), sent to `POST .../documents/file` - or `"text"` without
   it - the text box, sent to `POST .../documents`. It is the same for every case of a running
   server, and present in every state.
 
-**Polling.** The case advances in the background, so after a submit or an upload the UI
-polls `GET /api/patient/requests/{case_id}` (every ~2 s is plenty) until `status` stops
-being `in_progress`.
+**Polling.** The case advances in the background, so the request screen polls
+`GET /api/patient/requests/{case_id}` (sub-project 18, the owner's request of 2026-09-26):
+
+- every 5 s while the case is moving (`received`, `in_progress`), with no time limit;
+- in every other non-final status (`needs_document`, `in_review`, `needs_reply`), every 5 s for
+  a 60 s window, which restarts on a status change, on a patient action (an upload or a reply)
+  and when the tab becomes visible again; after the window the screen shows when it was last
+  updated and a "רענון" button, which reads the case and restarts the window;
+- never in `completed` or `closed`.
+
+"הפניות שלי" (the request list) keeps its own 3 s refresh while a case is moving.
 
 ### POST /api/patient/requests
 
 Request:
 
 ```json
-{"text": "When is my appointment and which documents do I need?"}
+{"text": "When is my appointment and which documents do I need?", "appointment_id": "APT-8391"}
 ```
 
-`text` is trimmed, and must then be 1-2000 characters.
+`text` is trimmed, and must then be 1-2000 characters. `appointment_id` (sub-project 18,
+design D5) is optional - the appointment the patient picked from their own upcoming list
+(`GET /api/patient/appointments`, §9). Omit the field entirely for "the nearest appointment"
+(there is no value that means that - it is the field's absence, not any particular string).
+When present, it must be 1-64 characters of `A-Z a-z 0-9 . _ -`, starting with a letter or
+digit. It is stored on the case as it is opened and is never read from anywhere else - the
+LLM never supplies it - and `CheckAppointment` (§11) reads it back to answer about that
+exact appointment. Its answer also carries `upcoming_count`: the patient's Scheduled
+appointments within 90 days from now - the same window the "פנייה חדשה" picker offers - and
+when that is above 1 the status message adds the "you have other appointments" sentence
+(design D10).
 
 `201`: the patient view. A verified patient's case starts in `in_progress`; `P-30000`'s
 case comes back `in_review` at once.
 
 - `403 patients_only` - a staff token.
-- `422 invalid_body` - empty, whitespace-only or over 2000 characters.
+- `422 invalid_body` - `text` empty, whitespace-only or over 2000 characters, or
+  `appointment_id` present but not that shape.
 - `409 request_rejected` - the state machine refused the request. It does not happen for a
   valid body; the exact reason stays on the server (the Blocked audit row and the
   application log), because a guard's reason code is internal (§12.3). Show a general
@@ -446,12 +488,33 @@ the counters the list above does not carry. `200`:
   "held_documents": ["referral", "blood_test"],
   "escalated_from_state": null,
   "patient_deadline": "2026-09-20T22:12:38.786253Z",
-  "created_at": "2026-09-19T22:12:38.560531Z"
+  "created_at": "2026-09-19T22:12:38.560531Z",
+  "appointment_id": "APT-8392",
+  "answered_appointment_id": "APT-8392",
+  "department": "Cardiology",
+  "exam_type_label": "מבחן מאמץ",
+  "instruction_source_id": "INSTR-CARD-STRESS",
+  "instruction_version": "1"
 }
 ```
 
 `intent` is `AppointmentPreparation`, `MedicalQuestion` or `Unsupported`; `safety_level` is
 `LowRisk`, `MediumRisk`, `HighRisk` or `CriticalRisk`. `404 case_not_found`.
+
+`appointment_id`, `answered_appointment_id`, `department`, `exam_type_label`,
+`instruction_source_id` and `instruction_version` (sub-project 18, design D13) are read-only
+staff fields: the appointment the patient chose (if any) and the one the appointment-service
+actually resolved, its department and exam type, and the instruction source the policy
+approved for this case. `appointment_id` is write-once: stored from the request at
+`REQUEST_SUBMITTED` and never changed afterwards (the service's own answer goes to
+`answered_appointment_id`, `docs/spec_corrections.md` row 92), so it is `null` exactly when
+the patient chose no appointment - on the mock path too. Fix round 1 (M6):
+`answered_appointment_id`, `department` and `exam_type_label` are `null` on the mock path
+(`MockGateway` never sets them) and on a case that never resolved an appointment - but
+`instruction_source_id` and
+`instruction_version` are **not**: even the mock path stores a source
+(`INSTR-PREP-COLONOSCOPY`/`3`, design D7), since every `LoadInstructions` needs one. Never
+shown to the patient.
 
 ### GET /api/staff/cases/{case_id}/audit
 
@@ -578,10 +641,20 @@ Everything the reviewer is shown, plus the reference that binds the decision to 
       "recorded_at": "2026-09-19T22:12:39.678380Z"
     }
   ],
-  "shown_context_ref": "ctx-ba3e0652b0ea355663db57e7d19550c61ee1d156fea64c91c2cacd539bbc7d83"
+  "shown_context_ref": "ctx-ba3e0652b0ea355663db57e7d19550c61ee1d156fea64c91c2cacd539bbc7d83",
+  "appointment_id": null,
+  "answered_appointment_id": null,
+  "department": null,
+  "exam_type_label": null,
+  "instruction_source_id": null,
+  "instruction_version": null
 }
 ```
 
+- `appointment_id` … `instruction_version` (sub-project 18, design D13) are the same
+  read-only fields as `GET /api/staff/cases/{case_id}` above - part of what the reviewer is
+  shown, so they are part of `shown_context_ref` too (a case whose source changed after the
+  context was fetched is `409 context_changed`, same as any other change).
 - `data` is the Data Log (§12.3) - the only place content lives. `kind` is `request_text`,
   `uploaded_document`, `instructions`, `outgoing_message`, `staff_message` or `patient_reply`
   (the last two, sub-project 15, §8). Deleted entries and uploads the case never accepted
@@ -1016,7 +1089,7 @@ Two more codes are sub-project 15's own:
   (the patient answered), `"reply_timeout"` (the deadline passed, the SLA Worker returned
   it), or `null` (it came from elsewhere, e.g. it just escalated).
 
-## 9. The patient's appointments (sub-project 16)
+## 9. The patient's appointments (sub-project 16, sub-project 18)
 
 ```
 GET /api/patient/appointments?from=&to=
@@ -1067,7 +1140,9 @@ actually asked (`404 patient_not_found` / `503 appointments_unavailable`).
       "doctor_name": "Dr. Cohen",
       "location": "Building B, Floor 2",
       "status": "Scheduled",
-      "required_documents": ["CBC", "ECG"]
+      "required_documents": ["CBC", "ECG"],
+      "exam_type": {"code": "NEURO_VISIT", "label": "ביקור במרפאה נוירולוגית"},
+      "instruction": {"source_id": "INSTR-NEURO-VISIT", "version": "1", "title": "הכנה לביקור במרפאה נוירולוגית"}
     }
   ],
   "truncated": false
@@ -1079,6 +1154,15 @@ own answer was cut off at its cap (100 rows) rather than the full window's worth
 should say the list may be incomplete and suggest narrowing the range. `appointment_at` is
 always normalised to UTC before it goes out, exactly like the window bounds - whatever offset
 or zone the appointment-service itself answered with.
+
+`exam_type` and `instruction` (sub-project 18, design D3) are never null in the real service,
+but the client treats each as optional - an older service simply omits it, and a row missing
+either is still delivered without it. A *present* `exam_type` or `instruction` with the wrong
+shape (not an object, an empty or over-200-character `code`/`label`/`title`, or a
+`source_id`/`version` that is not the same id shape used everywhere else) makes the whole
+answer `503 appointments_unavailable` (`invalid_response`) - never a partial row. `instruction`
+carries only the title, never the text; the appointments panel loads the text separately
+through `GET /api/patient/instructions/{source_id}?version=` below.
 
 - `401 not_authenticated` - as everywhere.
 - `403 patients_only` (the patient route, a staff token) / `403 staff_only` (the staff
@@ -1103,3 +1187,90 @@ or zone the appointment-service itself answered with.
   request is even sent; the first two are not reachable through these routes, since they always
   resolve a token- or case-bound `patient_id` and always build the window as aware datetimes,
   so in practice `client_error` means an operator's configuration mistake) - never the patient_id and never an appointment (§12.3, design D9).
+
+### The instruction text (sub-project 18, design D12)
+
+```
+GET /api/patient/instructions/{source_id}?version=
+GET /api/staff/instructions/{source_id}?version=
+```
+
+The full text behind one appointment's `instruction` summary above (title only there). Read
+live from the appointment-service on every call, never cached and never stored - the same
+recorded exception as the appointment list itself (`docs/spec_corrections.md` row 89, which
+sub-project 18 extends to cover this read too). The patient route answers for any `source_id`/`version`
+the registry currently approves, not only ones on the patient's own appointments: the
+instruction texts are generic catalog content (one per exam type, not per patient) with nothing
+patient-specific in them, so the route needs no ownership check. The staff route is identical
+and needs no case id - it is not bound to any one case's `shown_context_ref` (design D13's
+appointment/instruction fields on `CaseDetail`/`ReviewContext` already carry the source for
+staff viewing).
+
+Both `source_id` and `version` must match the same id shape used everywhere else in this API
+(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`, e.g. `NewRequest.appointment_id`) - `version` is a
+required query parameter, not optional; a missing or malformed one is `422 invalid_instruction`.
+
+**Check order**, mirroring the appointment list's own convention: whether an
+appointment-service is configured at all (`404 instructions_not_enabled`) is checked *before*
+the id/version pattern - an unconfigured server answers 404 regardless of what the path or
+query looks like. Only once a client exists are `source_id`/`version` validated
+(`422 invalid_instruction`); only once that holds is the Approved Source Registry consulted
+(`404 instruction_not_approved`, or `503 instructions_unavailable` when OPA itself cannot be
+asked); only once the registry approves is the appointment-service actually asked
+(`503 instructions_unavailable`).
+
+**The registry, never the service, approves.** The requested `source_id`/`version` is put to
+the real OPA binary - the same `policy.rego` rule (`instruction_source_approved`) the Policy
+Service's own `decision` reads, over the same policy bundle
+(`policy/data/approved_instruction_sources.json`) - never a second, Python reimplementation of
+its time parsing, and never trusting the appointment-service's own answer. OPA approves only
+when `source_id` is listed with `approved: true`, the exact same `version`, and the current
+time (OPA's own clock) inside `[valid_from, valid_until)`. Anything else - unlisted, the wrong
+version, not yet valid, or expired - is `404 instruction_not_approved`, and the
+appointment-service is never called for it. When OPA itself cannot be asked (the binary
+missing, a crash or non-zero exit, a timeout, or output that is not `opa eval`'s own shape),
+that is not a verdict on the source: the answer is `503 instructions_unavailable` instead, and
+it is exactly as closed - nothing is approved and the appointment-service is never called.
+
+`200`:
+
+```json
+{
+  "source_id": "INSTR-NEURO-VISIT",
+  "version": "1",
+  "title": "הכנה לביקור במרפאה נוירולוגית",
+  "text": "רשימת תרופות, הדמיות קודמות, יומן התקפים או תסמינים. ... טיוטת דמו – טעונה אישור רפואי. בכל שאלה רפואית יש לפנות לצוות המטפל."
+}
+```
+
+The answer is exactly the requested `source_id` + `version`, with a non-empty `title` (at most
+200 characters) and a non-empty `text` (at most 4000 characters) - the same bounds
+`LoadInstructions`'s own gateway enforces (`docs/spec_corrections.md` row 90).
+
+- `401 not_authenticated` - as everywhere.
+- `403 patients_only` (the patient route, a staff token) / `403 staff_only` (the staff route,
+  a patient token).
+- `404 instructions_not_enabled` - no appointment-service configured
+  (`APPOINTMENT_SERVICE_URL` + `APPOINTMENT_API_KEY`); checked before everything below.
+- `422 invalid_instruction` - `source_id` or `version` does not match the id shape, or
+  `version` is missing.
+- `404 instruction_not_approved` - the Approved Source Registry does not currently approve this
+  exact `source_id` + `version` (unlisted, a different version, not yet valid, or expired). The
+  appointment-service is never asked in this case. Only OPA's own answer is a deny; OPA being
+  unavailable is the `503` below, never this.
+- `503 instructions_unavailable` - OPA itself could not be asked (the binary missing, a crash or
+  non-zero exit, a timeout, or unreadable output; the appointment-service is then never asked),
+  or the appointment-service did not answer, answered something
+  other than its documented 200 shape, answered for a different source or version than asked,
+  itself answered `404 instruction_not_found` (the registry and the service disagree - never
+  delivered as though approved), or the client itself was misconfigured (e.g. an invalid API
+  key header the transport rejects before a request is even sent - an operator's mistake, never
+  the caller's). The application log records one line, `instruction read: <code> in <n> ms`,
+  for every *service-call* outcome (success included), and for an OPA outage
+  (`policy_unavailable`) - never for the checks above it (not-configured, a bad id/version,
+  or the registry's own denial, which are a fixed verdict on the request itself, not a call
+  to the appointment-service) - where `<code>` is `ok`,
+  `not_found`, one of the client's own codes (`no_answer`, `status_<n>`, `invalid_response`),
+  `client_error` (the client's defensive `ValueError`), or `policy_unavailable` (OPA itself
+  could not be asked, so the appointment-service was not either) - never the source_id, the
+  title or the text (§12.3).

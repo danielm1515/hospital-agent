@@ -40,8 +40,9 @@ import threading
 import uuid
 
 from .. import data_log, repository
+from ..case import CaseRecord
 from ..execution.executor import ToolExecutor
-from ..execution.gateway import ACTION_TARGETS, ToolGateway
+from ..execution.gateway import ACTION_TARGETS, ToolGateway, present_patient_fields
 from ..execution.verify import EXECUTING_STATES
 from ..naming import Action, Component, EscalationKind, Event, State
 from ..policy.readiness import ReadinessCheck
@@ -58,9 +59,6 @@ logger = logging.getLogger(__name__)
 ACTIVE_STATES = (State.CLASSIFYING, State.CLASSIFIED, State.PLANNING, State.ASSESSING_READINESS, State.READY)
 MAX_CONSECUTIVE_BLOCKED = 3
 DEFAULT_INTERVAL_SECONDS = 5.0
-# The approved instruction source of the demo's one intent (spec §8 bundle data); the Planner
-# never supplies it (§3.1 ApprovedSource).
-INSTRUCTION_SOURCE = InstructionSource("INSTR-PREP-COLONOSCOPY", "3")
 
 # (the escalation kind, the component that signals it) when a State cannot make progress
 FAILURE: dict[State, tuple[EscalationKind, Component]] = {
@@ -230,12 +228,13 @@ class Orchestrator:
     def _decide_and_execute(self, case_id: str) -> TransitionResult:
         case = self.sm.load(case_id)
         action = case.current_action
-        target, fields = ACTION_TARGETS[action.value]
+        target, _ = ACTION_TARGETS[action.value]
+        fields = present_patient_fields(case, action.value)
         request = PolicyRequest(
             execution_id=f"EXEC-{uuid.uuid4().hex[:12]}",
             proposed_action=ProposedAction(action.value, case.current_step, target, fields),
             outgoing_message=self._evaluated_message(case_id) if action is Action.SEND_STATUS_UPDATE else None,
-            instruction_source=INSTRUCTION_SOURCE if action is Action.LOAD_INSTRUCTIONS else None,
+            instruction_source=_case_instruction_source(case) if action is Action.LOAD_INSTRUCTIONS else None,
         )
         decided = self.policy.apply(self.sm, case_id, request)
         if decided.committed and decided.state_after in EXECUTING_STATES:
@@ -268,7 +267,7 @@ class Orchestrator:
     def _evaluated_message(self, case_id: str) -> OutgoingMessage:
         """The template message, kept in the Data Log and classified by the Response Evaluator."""
         case = self.sm.load(case_id)
-        text = status_message(case, INSTRUCTION_SOURCE)
+        text = status_message(case, _case_instruction_source(case))
         with self.sm.engine.begin() as conn:
             entry = data_log.record(conn, case_id, case.patient_id, data_log.DataKind.OUTGOING_MESSAGE, text,
                                     self.sm.clock())
@@ -299,6 +298,17 @@ class Orchestrator:
     def _active_case_ids(self) -> list[str]:
         with self.sm.engine.connect() as conn:
             return [case.case_id for state in ACTIVE_STATES for case in repository.list_cases(conn, state)]
+
+
+def _case_instruction_source(case: CaseRecord) -> InstructionSource | None:
+    """Sub-project 18 (D7): the approved instruction source is the case's own
+    (`instruction_source_id`/`instruction_version`, stored by RECORD_RETRIEVAL from
+    CheckAppointment) - never a module constant and never supplied by the Planner/LLM. A case
+    with no source (e.g. no exam type resolved) is None, and the Policy Service then denies
+    `unapproved_instruction_source` (fail closed)."""
+    if case.instruction_source_id is None or case.instruction_version is None:
+        return None
+    return InstructionSource(case.instruction_source_id, case.instruction_version)
 
 
 def _last_transition_event(trace: list[repository.AuditEntry]) -> str | None:

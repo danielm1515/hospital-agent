@@ -46,7 +46,11 @@ export function MyRequests() {
 
   return (
     <div className="patient-home">
-      <AppointmentsPanel audience="patient" load={api.listMyAppointments} />
+      <AppointmentsPanel
+        audience="patient"
+        load={api.listMyAppointments}
+        loadInstruction={api.getPatientInstruction}
+      />
 
       <section className="card">
         <div className="page-head">

@@ -60,6 +60,14 @@ class CaseDetail(BaseModel):
     escalated_from_state: State | None
     patient_deadline: datetime | None
     created_at: datetime
+    # Sub-project 18 (design D13): the chosen appointment, its exam type/department and the
+    # instruction source - staff-only, read-only, never shown to the patient.
+    appointment_id: str | None = None
+    answered_appointment_id: str | None = None
+    department: str | None = None
+    exam_type_label: str | None = None
+    instruction_source_id: str | None = None
+    instruction_version: str | None = None
 
 
 class AuditRecord(BaseModel):
@@ -105,6 +113,9 @@ class NewRequest(BaseModel):
     """§3.1 RequestValid also checks the text; this is the first, cheap gate."""
 
     text: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=2000)]
+    # Sub-project 18 (design D5): the appointment the patient picked, from the sub-project 16
+    # appointments list - optional; "the nearest appointment" (no id) omits it entirely.
+    appointment_id: Annotated[str, StringConstraints(pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")] | None = None
 
 
 class DocumentUpload(BaseModel):
@@ -141,6 +152,16 @@ class ConversationEntryView(BaseModel):
     at: datetime
 
 
+class PatientInstructionsView(BaseModel):
+    """Sub-project 18 (design D11): the case's own Data Log `instructions` entry, split into
+    its title and text."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    title: str
+    text: str
+
+
 class PatientCaseView(BaseModel):
     """What a patient may see (design decision 8): never an escalation kind, a reason or Audit."""
 
@@ -158,6 +179,7 @@ class PatientCaseView(BaseModel):
     document_upload: Literal["file", "text"]
     reply_request: ReplyRequestView | None
     conversation: list[ConversationEntryView]
+    instructions: PatientInstructionsView | None = None
 
 
 class UploadResult(BaseModel):
@@ -216,6 +238,13 @@ class ReviewContext(BaseModel):
     data: list[dict[str, Any]]
     trace: list[dict[str, Any]]
     shown_context_ref: str
+    # Sub-project 18 (design D13): read-only, same as CaseDetail above.
+    appointment_id: str | None = None
+    answered_appointment_id: str | None = None
+    department: str | None = None
+    exam_type_label: str | None = None
+    instruction_source_id: str | None = None
+    instruction_version: str | None = None
 
 
 class MessageBody(BaseModel):
@@ -366,8 +395,32 @@ class MetricsResponse(_FromMetrics):
 # Read live from the appointment-service and never stored (docs/spec_corrections.md row 89).
 
 
+class ExamTypeView(BaseModel):
+    """Sub-project 18 (design D3): one appointment's exam type, as the appointment-service
+    answered it - never null in the real service, but optional here (an older service simply
+    omits it)."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    code: str
+    label: str
+
+
+class InstructionSummaryView(BaseModel):
+    """Sub-project 18 (design D3, D12): which preparation instruction belongs to the
+    appointment - never its text (the panel loads that separately, through
+    GET /api/patient/instructions/{source_id})."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    source_id: str
+    version: str
+    title: str
+
+
 class AppointmentView(BaseModel):
-    """One appointment, as the appointment-service answered it (sub-project 16, design D6)."""
+    """One appointment, as the appointment-service answered it (sub-project 16, design D6;
+    sub-project 18 design D3 adds exam_type/instruction)."""
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -378,6 +431,20 @@ class AppointmentView(BaseModel):
     location: str | None
     status: Literal["Scheduled", "Cancelled"]
     required_documents: list[str]
+    exam_type: ExamTypeView | None = None
+    instruction: InstructionSummaryView | None = None
+
+
+class InstructionView(BaseModel):
+    """Sub-project 18 (design D12): `GET /api/patient/instructions/{source_id}` and its staff
+    counterpart - the approved text behind one appointment's `instruction` summary above."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    source_id: str
+    version: str
+    title: str
+    text: str
 
 
 class AppointmentsView(BaseModel):

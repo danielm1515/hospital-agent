@@ -51,6 +51,13 @@ cases = Table(
     Column("human_engaged", Boolean, nullable=False),  # migration 0006
     Column("reply_kind", Text),  # migration 0006
     Column("requested_document", Text),  # migration 0006
+    Column("appointment_id", Text),  # migration 0007
+    Column("answered_appointment_id", Text),  # migration 0007
+    Column("department", Text),  # migration 0007
+    Column("exam_type_label", Text),  # migration 0007
+    Column("instruction_source_id", Text),  # migration 0007
+    Column("instruction_version", Text),  # migration 0007
+    Column("upcoming_count", Integer),  # migration 0007
 )
 
 executions = Table(

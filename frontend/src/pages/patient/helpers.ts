@@ -9,8 +9,17 @@ import { ApiError } from '../../api/client'
 import type { DocumentType, PatientStatus, UploadResult } from '../../api/types'
 import type { AlertVariant } from '../../components/Alert'
 
-/** The patient screens refresh every 3 s while a case is still moving (design §4). */
+/** "הפניות שלי" refreshes every 3 s while a case is still moving (design §4). */
 export const POLL_MS = 3000
+
+/**
+ * The request screen's own rhythm (sub-project 18, owner's request of 2026-09-26): every
+ * 5 s while the case moves, and for a 60 s window in any other non-final status - a window
+ * that restarts on a status change, on the patient's own action and when the tab is shown
+ * again. "הפניות שלי" keeps `POLL_MS`.
+ */
+export const REQUEST_POLL_MS = 5000
+export const REQUEST_POLL_WINDOW_MS = 60_000
 
 /** The card text is cut at 120 characters on the list screen. */
 export const SUMMARY_LENGTH = 120
@@ -18,6 +27,11 @@ export const SUMMARY_LENGTH = 120
 /** The two statuses the agent advances on its own; the rest wait for a person. */
 export function isMoving(status: PatientStatus): boolean {
   return status === 'received' || status === 'in_progress'
+}
+
+/** The two statuses nothing follows: the request screen never polls in them. */
+export function isFinal(status: PatientStatus): boolean {
+  return status === 'completed' || status === 'closed'
 }
 
 export function truncate(text: string, max = SUMMARY_LENGTH): string {
@@ -59,6 +73,18 @@ const CLOCK = new Intl.DateTimeFormat('he-IL', {
 export function formatClock(iso: string): string {
   const date = new Date(iso)
   return Number.isNaN(date.getTime()) ? iso : CLOCK.format(date)
+}
+
+const ISRAEL_HOUR_MINUTE = new Intl.DateTimeFormat('he-IL', {
+  timeZone: 'Asia/Jerusalem',
+  hour: '2-digit',
+  minute: '2-digit',
+  hourCycle: 'h23',
+})
+
+/** HH:MM in Israel time, e.g. for "עודכן לאחרונה ב־14:05". */
+export function formatIsraelHourMinute(date: Date): string {
+  return Number.isNaN(date.getTime()) ? '' : ISRAEL_HOUR_MINUTE.format(date)
 }
 
 /** The same calendar day, so a timeline can print the date only when it changes. */
@@ -296,15 +322,19 @@ export function errorMessage(caught: unknown): string {
   return 'אירעה תקלה. נסו שוב בעוד רגע.'
 }
 
-/** Runs `tick` every `POLL_MS` while `active`, always with the latest closure. */
-export function usePolling(active: boolean, tick: () => void): void {
+/**
+ * Runs `tick` every `intervalMs` (default `POLL_MS`) while `active`, always with the latest
+ * closure. One interval at a time: it is cleared whenever `active` or the interval changes
+ * and on unmount (StrictMode's double mount included).
+ */
+export function usePolling(active: boolean, tick: () => void, intervalMs: number = POLL_MS): void {
   const latest = useRef(tick)
   useEffect(() => {
     latest.current = tick
   })
   useEffect(() => {
     if (!active) return
-    const timer = setInterval(() => latest.current(), POLL_MS)
+    const timer = setInterval(() => latest.current(), intervalMs)
     return () => clearInterval(timer)
-  }, [active])
+  }, [active, intervalMs])
 }

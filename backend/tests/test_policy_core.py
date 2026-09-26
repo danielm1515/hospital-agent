@@ -41,6 +41,35 @@ def test_audit_rows_carry_the_policy_version(app_engine):
     assert d.trace()[0].rule_version == f"{RULE_VERSION}+policy-{policy_version()}"
 
 
+def test_changing_the_registry_changes_the_policy_version(tmp_path):
+    """Fix round 1 (I2): policy_version() must hash the OPA bundle's data files too - a
+    change to the approved-instruction-sources registry (or the minimized-fields export)
+    changes rule_version exactly as a policy.rego/rules.pl/flows.dl change already does,
+    so no two audit rows can carry the same rule_version under two different registries."""
+    import hospital_agent.wiring as wiring
+
+    tmp_policy, tmp_data = tmp_path / "policy", tmp_path / "policy" / "data"
+    tmp_data.mkdir(parents=True)
+    for name in wiring.POLICY_FILES:
+        dst = tmp_policy / name
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        dst.write_bytes((wiring.POLICY_DIR / name).read_bytes())
+
+    original_dir = wiring.POLICY_DIR
+    wiring.POLICY_DIR = tmp_policy
+    try:
+        wiring.policy_version.cache_clear()
+        before = wiring.policy_version()
+        (tmp_data / "approved_instruction_sources.json").write_text(
+            '{"hospital_agent": {"approved_instruction_sources": {}}}', encoding="utf-8")
+        wiring.policy_version.cache_clear()
+        after = wiring.policy_version()
+        assert before != after
+    finally:
+        wiring.POLICY_DIR = original_dir
+        wiring.policy_version.cache_clear()
+
+
 def test_policy_decision_rows_keep_the_evidence(sm, app_engine):
     d = Driver(sm, app_engine)
     d.to_classified()

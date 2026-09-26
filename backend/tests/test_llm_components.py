@@ -222,7 +222,7 @@ def test_status_message_uses_only_state_facts():
     text = status_message(_case(), InstructionSource("INSTR-PREP-COLONOSCOPY", "3"))
     assert text == ("התור שלך נקבע ל־23/09/2026 בשעה 11:30 (שעון ישראל). "
                     "המסמכים הנדרשים: referral, blood_test - כולם התקבלו. "
-                    "הוראות ההכנה המאושרות (INSTR-PREP-COLONOSCOPY, גרסה 3) זמינות לעיון באזור האישי.")
+                    "הוראות ההכנה המאושרות (INSTR-PREP-COLONOSCOPY, גרסה 3) מופיעות בפנייה זו.")
 
 
 def test_status_message_shows_israel_time_in_winter_and_across_midnight():
@@ -251,4 +251,105 @@ def test_status_message_leaves_out_the_documents_sentence_when_none_are_required
     assert "המסמכים הנדרשים" not in text
     assert "  " not in text  # no stray double space where the documents clause used to sit
     assert text == ("התור שלך נקבע ל־23/09/2026 בשעה 11:30 (שעון ישראל). "
-                    "הוראות ההכנה המאושרות (INSTR-PREP-COLONOSCOPY, גרסה 3) זמינות לעיון באזור האישי.")
+                    "הוראות ההכנה המאושרות (INSTR-PREP-COLONOSCOPY, גרסה 3) מופיעות בפנייה זו.")
+
+
+# --- sub-project 18 (design D10): exam type, department, and the multi-appointment sentences --
+
+def test_status_message_names_the_exam_and_department_when_the_case_has_them():
+    text = status_message(
+        _case(exam_type_label="מבחן מאמץ", department="Cardiology"),
+        InstructionSource("INSTR-CARD_STRESS", "1"),
+    )
+    assert text == ("התור שלך למבחן מאמץ (קרדיולוגיה) נקבע ל־23/09/2026 בשעה 11:30 (שעון ישראל). "
+                    "המסמכים הנדרשים: referral, blood_test - כולם התקבלו. "
+                    "הוראות ההכנה המאושרות (INSTR-CARD_STRESS, גרסה 1) מופיעות בפנייה זו.")
+
+
+def test_status_message_names_the_exam_and_department_without_documents():
+    text = status_message(
+        _case(exam_type_label="מבחן מאמץ", department="Cardiology", required_documents=[], held_documents=[]),
+        InstructionSource("INSTR-CARD_STRESS", "1"),
+    )
+    assert text == ("התור שלך למבחן מאמץ (קרדיולוגיה) נקבע ל־23/09/2026 בשעה 11:30 (שעון ישראל). "
+                    "הוראות ההכנה המאושרות (INSTR-CARD_STRESS, גרסה 1) מופיעות בפנייה זו.")
+
+
+def test_status_message_falls_back_to_the_old_structure_without_an_exam_type():
+    # The mock path: exam_type_label/department are never set, so the message keeps its old
+    # shape (no exam clause) - only the D10 ending changed, checked above.
+    text = status_message(_case(exam_type_label=None, department=None),
+                          InstructionSource("INSTR-PREP-COLONOSCOPY", "3"))
+    assert text.startswith("התור שלך נקבע ל־23/09/2026")  # no "ל<exam> (<department>)" clause
+
+
+def test_status_message_needs_both_exam_and_department_to_name_the_exam():
+    # A case with only one of the two fields is treated as not having an exam type at all -
+    # fail closed, never half a clause.
+    only_exam = status_message(_case(exam_type_label="מבחן מאמץ", department=None),
+                               InstructionSource("INSTR-PREP-COLONOSCOPY", "3"))
+    assert only_exam.startswith("התור שלך נקבע ל־23/09/2026")
+    only_department = status_message(_case(exam_type_label=None, department="Cardiology"),
+                                     InstructionSource("INSTR-PREP-COLONOSCOPY", "3"))
+    assert only_department.startswith("התור שלך נקבע ל־23/09/2026")
+
+
+@pytest.mark.parametrize("department,label", [
+    ("Cardiology", "קרדיולוגיה"),
+    ("Dermatology", "עור"),
+    ("Neurology", "נוירולוגיה"),
+    ("Ophthalmology", "עיניים"),
+    ("Orthopedics", "אורתופדיה"),
+])
+def test_status_message_maps_every_catalog_department_to_its_hebrew_label(department, label):
+    text = status_message(_case(exam_type_label="בדיקה", department=department),
+                          InstructionSource("INSTR-X", "1"))
+    assert f"({label})" in text
+
+
+def test_status_message_drops_the_parenthetical_for_an_unknown_department():
+    """Fix round 1 (M4): never show English - drop the parenthetical entirely."""
+    text = status_message(_case(exam_type_label="בדיקה", department="Oncology"),
+                          InstructionSource("INSTR-X", "1"))
+    assert "(Oncology)" not in text
+    assert "(" not in text.split(" נקבע ")[0]
+    assert text.startswith("התור שלך לבדיקה נקבע ל־23/09/2026")
+
+
+@pytest.mark.parametrize("label", ["EEG", "1234", "-x"])
+def test_status_message_gets_a_maqaf_before_a_non_hebrew_exam_label(label):
+    """Fix round 1 (M3): "ל" attached straight to a non-Hebrew label reads wrong ("לEEG")."""
+    text = status_message(_case(exam_type_label=label, department="Cardiology"),
+                          InstructionSource("INSTR-X", "1"))
+    assert f"ל־{label} (" in text
+
+
+def test_status_message_attaches_the_prefix_directly_to_a_hebrew_exam_label():
+    text = status_message(_case(exam_type_label="מבחן מאמץ", department="Cardiology"),
+                          InstructionSource("INSTR-X", "1"))
+    assert "למבחן מאמץ (" in text
+    assert "ל־מבחן מאמץ" not in text
+
+
+@pytest.mark.parametrize("upcoming_count", [None, 0, 1])
+def test_status_message_adds_no_sentence_with_at_most_one_upcoming_appointment(upcoming_count):
+    text = status_message(_case(upcoming_count=upcoming_count, appointment_id=None),
+                          InstructionSource("INSTR-PREP-COLONOSCOPY", "3"))
+    assert "תורים נוספים" not in text
+    assert "תור אחר" not in text
+    chosen = status_message(_case(upcoming_count=upcoming_count, appointment_id="APT-1"),
+                            InstructionSource("INSTR-PREP-COLONOSCOPY", "3"))
+    assert "תורים נוספים" not in chosen
+    assert "תור אחר" not in chosen
+
+
+def test_status_message_offers_to_pick_when_no_appointment_was_chosen_and_more_are_upcoming():
+    text = status_message(_case(upcoming_count=2, appointment_id=None),
+                          InstructionSource("INSTR-PREP-COLONOSCOPY", "3"))
+    assert text.endswith(" יש לך תורים נוספים - אפשר לפתוח פנייה על תור מסוים.")
+
+
+def test_status_message_offers_to_switch_when_an_appointment_was_chosen_and_more_are_upcoming():
+    text = status_message(_case(upcoming_count=2, appointment_id="APT-8391"),
+                          InstructionSource("INSTR-PREP-COLONOSCOPY", "3"))
+    assert text.endswith(" אם התכוונת לתור אחר, אפשר לפתוח פנייה חדשה ולבחור אותו.")

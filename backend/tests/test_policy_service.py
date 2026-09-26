@@ -62,6 +62,16 @@ def test_opa_input_comes_from_stored_state_and_trusted_request():
     assert (data["safety_level"], data["identity_verified"], data["approval"]) == ("MediumRisk", True, None)
 
 
+def test_opa_input_carries_appointment_id_for_check_appointment_when_set():
+    """Sub-project 18 (D5/D6): appointment_id rides in proposed_action.parameters exactly like
+    any other minimized field, when the caller's ProposedAction declares it -
+    present_patient_fields (execution/gateway.py) is what decides that from the case, before
+    this point (see test_orchestrator.py for the real end-to-end wiring)."""
+    data = build_opa_input(planned(step=1), request("CheckAppointment", 1, "appointment_system",
+                                                    ("patient_id", "appointment_id")), None)
+    assert data["proposed_action"]["parameters"] == {"patient_fields": ["patient_id", "appointment_id"]}
+
+
 def test_approvals_are_sent_with_rfc3339_times_and_policy_review_origin():
     override = content_approval(approval_type="WorkflowDecision", escalation_kind="PolicyReview")
     data = build_opa_input(planned(), request(), override)["policy_review_override"]

@@ -474,6 +474,12 @@ describe('ReviewCase -> ReviewQueue: the decision notice (Task 7)', () => {
       data: [],
       trace: [],
       shown_context_ref: 'ctx-1',
+      appointment_id: null,
+      answered_appointment_id: null,
+      department: null,
+      exam_type_label: null,
+      instruction_source_id: null,
+      instruction_version: null,
       ...overrides,
     }
   }

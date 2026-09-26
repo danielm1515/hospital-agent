@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor } from '@testing-library/react'
+import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -64,6 +64,12 @@ const DETAIL: CaseDetail = {
   escalated_from_state: null,
   patient_deadline: null,
   created_at: '2026-09-19T22:12:38.560531Z',
+  appointment_id: 'APT-8392',
+  answered_appointment_id: 'APT-8392',
+  department: 'Cardiology',
+  exam_type_label: 'מבחן מאמץ',
+  instruction_source_id: 'INSTR-CARD-STRESS',
+  instruction_version: '1',
 }
 
 const CONTEXT: ReviewContext = {
@@ -103,6 +109,12 @@ const CONTEXT: ReviewContext = {
     },
   ],
   shown_context_ref: 'ctx-ba3e0652b0ea',
+  appointment_id: null,
+  answered_appointment_id: null,
+  department: null,
+  exam_type_label: null,
+  instruction_source_id: null,
+  instruction_version: null,
 }
 
 function renderMonitor() {
@@ -371,6 +383,45 @@ describe('CaseMonitor', () => {
     // And the plan shows which step is the current one.
     expect(container.querySelector('.plan-steps .step-current')).toHaveTextContent('CheckDocuments')
     expect(container.querySelector('.plan-steps .step-done')).toHaveTextContent('CheckAppointment')
+  })
+
+  it('shows the chosen appointment, its exam type and the instruction source, labels beside codes (sub-project 18, D13)', async () => {
+    renderMonitor()
+    await userEvent.click(await screen.findByRole('button', { name: 'CASE-23FE645294B7' }))
+    await screen.findByText('REQUEST_SUBMITTED')
+
+    const group = screen.getByRole('heading', { name: 'תור והוראות הכנה' }).closest('.fact-group') as HTMLElement
+    for (const code of ['appointment_id', 'answered_appointment_id', 'department', 'exam_type_label', 'instruction_source_id']) {
+      expect(within(group).getByText(code)).toHaveClass('fact-code')
+    }
+    expect(within(group).getByText('התור שנבחר')).toBeInTheDocument()
+    expect(within(group).getByText('מבחן מאמץ')).toBeInTheDocument()
+    expect(group).toHaveTextContent('קרדיולוגיה')
+    expect(group).toHaveTextContent('גרסה 1')
+    // Every code is its own isolated element, never folded into a Hebrew string.
+    const codes = Array.from(group.querySelectorAll('.code')).map((el) => el.textContent)
+    expect(codes).toEqual(['APT-8392', 'APT-8392', 'Cardiology', 'INSTR-CARD-STRESS'])
+  })
+
+  it('says the patient chose no appointment, and dashes the rest, on a mock-path case', async () => {
+    vi.mocked(api.getCase).mockImplementation(async (caseId: string) => ({
+      ...DETAIL,
+      case_id: caseId,
+      appointment_id: null,
+      answered_appointment_id: null,
+      department: null,
+      exam_type_label: null,
+      instruction_source_id: 'INSTR-PREP-COLONOSCOPY',
+      instruction_version: '3',
+    }))
+    renderMonitor()
+    await userEvent.click(await screen.findByRole('button', { name: 'CASE-23FE645294B7' }))
+    await screen.findByText('REQUEST_SUBMITTED')
+
+    const group = screen.getByRole('heading', { name: 'תור והוראות הכנה' }).closest('.fact-group') as HTMLElement
+    expect(group).toHaveTextContent('לא נבחר (התור הקרוב ביותר)')
+    expect(within(group).getByText('INSTR-PREP-COLONOSCOPY')).toHaveClass('code')
+    expect(group).toHaveTextContent('גרסה 3')
   })
 
   it('shows a Hebrew error, not a blank panel, when the row detail call fails', async () => {

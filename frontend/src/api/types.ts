@@ -124,10 +124,27 @@ export interface PatientView {
   reply_request: ReplyRequest | null
   /** Staff messages the patient may see and the patient's replies, oldest first. */
   conversation: ConversationEntry[]
+  /**
+   * Sub-project 18 (design D11, `docs/api.md` §4): the preparation instruction the case
+   * loaded and delivered, split into title and body - only on an agent-delivered
+   * `completed` case, `null` otherwise.
+   */
+  instructions: PatientInstructions | null
+}
+
+/** `PatientView.instructions` (sub-project 18): exactly what was approved and shown. */
+export interface PatientInstructions {
+  title: string
+  text: string
 }
 
 export interface CreateRequestBody {
   text: string
+  /**
+   * Sub-project 18 (design D5): the appointment the patient picked from their own upcoming
+   * list. Omitted entirely for "the nearest appointment" - there is no value meaning that.
+   */
+  appointment_id?: string
 }
 
 export type DocumentFormat = 'pdf' | 'jpg' | 'png'
@@ -216,7 +233,7 @@ export interface PlanStep {
 }
 
 /** `GET /api/staff/cases/{case_id}`. */
-export interface CaseDetail extends CaseSummary {
+export interface CaseDetail extends CaseSummary, CaseAppointmentFacts {
   patient_id: string
   state_version: number
   intent: string | null
@@ -234,7 +251,23 @@ export interface CaseDetail extends CaseSummary {
   created_at: IsoDateTime
 }
 
-/** `GET /api/staff/cases/{case_id}/audit` item. */
+/**
+ * Sub-project 18 (design D13, `docs/api.md` §5): the chosen and the resolved appointment,
+ * its department and exam type, and the instruction source the case loaded - read-only,
+ * staff-only, on both `CaseDetail` and `ReviewContext`. The first four are `null` on the
+ * mock path and on a case that never resolved an appointment.
+ */
+export interface CaseAppointmentFacts {
+  /** The appointment the patient chose, or `null` for "the nearest appointment". */
+  appointment_id: string | null
+  /** The appointment the appointment-service actually answered about. */
+  answered_appointment_id: string | null
+  department: string | null
+  /** A Hebrew label; the API carries no exam code here. */
+  exam_type_label: string | null
+  instruction_source_id: string | null
+  instruction_version: string | null
+}
 export interface AuditRecord {
   audit_id: number
   record_type: string
@@ -309,7 +342,7 @@ export interface TraceRow {
 }
 
 /** `GET /api/staff/cases/{case_id}/context`. */
-export interface ReviewContext {
+export interface ReviewContext extends CaseAppointmentFacts {
   case_id: string
   patient_id: string
   state: State
@@ -491,6 +524,32 @@ export interface Appointment {
   location: string | null
   status: AppointmentStatus
   required_documents: string[]
+  /** Sub-project 18 (design D3): optional - an older appointment-service omits it. */
+  exam_type?: AppointmentExamType | null
+  /** Sub-project 18: the approved instruction's title only; the text is a separate read. */
+  instruction?: AppointmentInstruction | null
+}
+
+export interface AppointmentExamType {
+  code: string
+  label: string
+}
+
+export interface AppointmentInstruction {
+  source_id: string
+  version: string
+  title: string
+}
+
+/**
+ * `GET /api/patient/instructions/{source_id}?version=` and the staff twin (sub-project 18,
+ * design D12, `docs/api.md` §9): only a source the registry currently approves.
+ */
+export interface InstructionText {
+  source_id: string
+  version: string
+  title: string
+  text: string
 }
 
 export interface AppointmentList {

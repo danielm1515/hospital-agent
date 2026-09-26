@@ -8,7 +8,7 @@ import time
 import pytest
 
 from hospital_agent import data_log, repository
-from hospital_agent.execution.gateway import MockGateway
+from hospital_agent.execution.gateway import MockGateway, ToolResult
 from hospital_agent.llm.orchestrator import Orchestrator
 from hospital_agent.llm.provider import FakeProvider
 from hospital_agent.llm.schemas import Call, LLMUnusable
@@ -447,3 +447,120 @@ def test_a_tick_forgets_errors_of_cases_no_longer_active(run):
     agent._consecutive_errors["CASE-GONE"] = 2
     agent.tick()
     assert "CASE-GONE" not in agent._consecutive_errors
+
+
+# --- sub-project 18: the patient-chosen appointment (design D5/D6) --------------------------
+
+def test_check_appointment_carries_the_chosen_appointment_id_through_the_real_pipeline(run):
+    """The policy still Allows CheckAppointment with appointment_id sent (§11:
+    minimized(appointment_id, appointment_system)), the Tool Executor sends it because the
+    case has one, and it stays stored on the case throughout."""
+    gateway = MockGateway()
+    patient, agent = run(gateway=gateway)
+    patient.submit(appointment_id="APT-8391")
+    patient.validate()
+    assert agent.run_case(patient.case_id) is State.AWAITING_PATIENT_INPUT  # unaffected: still needs blood_test
+    assert patient.case.appointment_id == "APT-8391"
+    check = next(call for call in gateway.calls if call[0] == "CheckAppointment")
+    assert check[1] == {"patient_id": patient.patient_id, "appointment_id": "APT-8391"}
+
+
+def test_check_appointment_sends_only_patient_id_without_a_chosen_appointment(run):
+    gateway = MockGateway()
+    patient, agent = run(gateway=gateway)
+    patient.submit()
+    patient.validate()
+    agent.run_case(patient.case_id)
+    assert patient.case.appointment_id is None
+    check = next(call for call in gateway.calls if call[0] == "CheckAppointment")
+    assert check[1] == {"patient_id": patient.patient_id}
+
+
+@pytest.mark.parametrize("appointment_id", ["APT-8391", None])
+def test_policy_patient_fields_match_what_the_gateway_actually_received(run, appointment_id):
+    """M4: the OPA input's declared patient_fields for CheckAppointment must be exactly the
+    keys the Tool Executor's own parameters carry - neither more (an unminimized leak the
+    policy never actually checked) nor less (a field sent to the real system without ever
+    being declared to the policy) - whether or not the patient chose an appointment."""
+    gateway = MockGateway()
+    patient, agent = run(gateway=gateway)
+    captured: list[tuple[str, ...]] = []
+    original_apply = agent.policy.apply
+
+    def spy(sm, case_id, request):
+        if request.proposed_action.action == "CheckAppointment":
+            captured.append(request.proposed_action.patient_fields)
+        return original_apply(sm, case_id, request)
+
+    agent.policy.apply = spy
+    patient.submit(appointment_id=appointment_id)
+    patient.validate()
+    agent.run_case(patient.case_id)
+    check = next(call for call in gateway.calls if call[0] == "CheckAppointment")
+    assert len(captured) == 1
+    assert set(captured[0]) == set(check[1])
+
+
+# --- Task 4: LoadInstructions from the appointment-service, source from the case (D7/D8) ----
+
+class NoInstructionSourceGateway(MockGateway):
+    """A CheckAppointment answer that never resolves an exam type (e.g. an older
+    appointment-service, or one whose registration failed): the case then holds no
+    instruction_source_id/instruction_version at all - never a substitute."""
+
+    def call(self, action, parameters, idempotency_key):
+        result = super().call(action, parameters, idempotency_key)
+        if action == "CheckAppointment":
+            data = {k: v for k, v in result.data.items()
+                    if k not in ("instruction_source_id", "instruction_version")}
+            return ToolResult(result.kind, data)
+        return result
+
+
+def test_a_case_with_no_instruction_source_is_denied_fail_closed(run):
+    """D7: the policy's instruction_source comes from the case; a case with none is passed
+    None, and OPA denies unapproved_instruction_source - fail closed, never a fallback source.
+    LoadInstructions (plan step 3) is denied before readiness is ever assessed, so the case
+    never reaches AwaitingPatientInput here even though blood_test is still missing."""
+    patient, agent = run(gateway=NoInstructionSourceGateway())
+    patient.submit()
+    patient.validate()
+    agent.run_case(patient.case_id)
+    assert patient.case.instruction_source_id is None
+    assert escalation(patient) == (State.AWAITING_HUMAN_REVIEW, EscalationKind.POLICY_DENIED)
+    assert events(patient)[-1] == "POLICY_DENIED"
+    assert "unapproved_instruction_source" in patient.trace()[-1].policy_reasons
+
+
+def test_an_approved_case_source_reaches_load_instructions(run):
+    """The mock path (D7): MockGateway's CheckAppointment supplies INSTR-PREP-COLONOSCOPY v3,
+    stored on the case by RECORD_RETRIEVAL, and the Orchestrator passes exactly that to the
+    policy and to the status message - the golden path's source, unchanged (35/4/54)."""
+    patient, agent = run()
+    patient.submit()
+    patient.validate()
+    agent.run_case(patient.case_id)
+    patient.upload("blood_test")
+    assert agent.run_case(patient.case_id) is State.COMPLETED
+    assert (patient.case.instruction_source_id, patient.case.instruction_version) == ("INSTR-PREP-COLONOSCOPY", "3")
+
+
+def test_policy_input_declares_no_patient_fields_for_load_instructions(run):
+    """§11: instruction_system receives no patient field at all - the policy input's
+    patient_fields for LoadInstructions must stay empty regardless of what the case holds."""
+    patient, agent = run()
+    captured: list[tuple[str, ...]] = []
+    original_apply = agent.policy.apply
+
+    def spy(sm, case_id, request):
+        if request.proposed_action.action == "LoadInstructions":
+            captured.append(request.proposed_action.patient_fields)
+        return original_apply(sm, case_id, request)
+
+    agent.policy.apply = spy
+    patient.submit()
+    patient.validate()
+    agent.run_case(patient.case_id)
+    patient.upload("blood_test")
+    agent.run_case(patient.case_id)
+    assert captured == [()]

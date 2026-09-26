@@ -43,34 +43,190 @@ def gateway(answer=None, raises=None, **kwargs):
 
 # --- the answer mapping, row by row (design §2.6) ------------------------------------------
 
+PATIENT = "P-10041"
+
+
+def _map(body_response, *, requested_patient_id: str = PATIENT, requested_appointment_id: str | None = None):
+    return map_response(body_response, now=NOW, requested_patient_id=requested_patient_id,
+                        requested_appointment_id=requested_appointment_id)
+
+
 def test_a_found_appointment_is_ok_with_an_aware_time():
-    result = map_response(response(200, FOUND), now=NOW)
+    result = _map(response(200, FOUND))
     assert result == ToolResult(OK, {"appointment_at": datetime(2026, 10, 3, 10, 30,
                                                                 tzinfo=timezone(timedelta(hours=3))),
-                                     "required_documents": ["CBC", "COAGULATION_TESTS", "ECG"]})
+                                     "required_documents": ["CBC", "COAGULATION_TESTS", "ECG"],
+                                     "answered_appointment_id": "APT-1", "department": "Neurology"})
     assert result.data["appointment_at"].utcoffset() == timedelta(hours=3)
 
 
 def test_a_found_appointment_carries_its_required_documents_sorted():
-    assert map_response(response(200, FOUND), now=NOW).data["required_documents"] == ["CBC", "COAGULATION_TESTS", "ECG"]
+    assert _map(response(200, FOUND)).data["required_documents"] == ["CBC", "COAGULATION_TESTS", "ECG"]
 
 
 def test_an_appointment_with_no_requirements_needs_nothing():
     body = {"found": True, "appointment": {**FOUND["appointment"], "required_documents": []}}
-    assert map_response(response(200, body), now=NOW).data["required_documents"] == []
+    assert _map(response(200, body)).data["required_documents"] == []
 
 
 @pytest.mark.parametrize("value", [None, "CBC", [""], [1], ["CBC", None]])
 def test_malformed_requirements_are_an_invalid_response(value):
     appointment = {**FOUND["appointment"], "required_documents": value}
-    assert map_response(response(200, {"found": True, "appointment": appointment}), now=NOW) == \
+    assert _map(response(200, {"found": True, "appointment": appointment})) == \
         ToolResult(ERROR, {"error": "invalid_response"})
 
 
 def test_an_appointment_service_without_the_field_is_an_invalid_response():
     """An older appointment-service (before sub-project 11) cannot say what is required: fail closed."""
     appointment = {k: v for k, v in FOUND["appointment"].items() if k != "required_documents"}
-    assert map_response(response(200, {"found": True, "appointment": appointment}), now=NOW).data == {"error": "invalid_response"}
+    assert _map(response(200, {"found": True, "appointment": appointment})).data == {"error": "invalid_response"}
+
+
+# --- sub-project 18: the patient-chosen appointment's new, optional facts (design §2, D3/D6) ----
+
+FOUND_WITH_EXTRAS = {
+    "found": True,
+    "appointment": {**FOUND["appointment"], "appointment_id": "APT-1", "department": "Cardiology",
+                    "exam_type": {"code": "CARD_STRESS", "label": "מבחן מאמץ"},
+                    "instruction": {"source_id": "INSTR-CARD-STRESS", "version": "1", "title": "הכנה למבחן מאמץ"}},
+    "upcoming_count": 3,
+}
+
+
+def test_the_new_fields_are_carried_when_present():
+    data = _map(response(200, FOUND_WITH_EXTRAS), requested_appointment_id="APT-1").data
+    assert data["answered_appointment_id"] == "APT-1"
+    assert data["department"] == "Cardiology"
+    assert data["exam_type_label"] == "מבחן מאמץ"
+    assert data["instruction_source_id"] == "INSTR-CARD-STRESS"
+    assert data["instruction_version"] == "1"
+    assert data["upcoming_count"] == 3
+
+
+def test_the_new_fields_are_absent_without_a_substitute_when_the_answer_omits_them():
+    """design §2: every new field is optional - absent means None (no key at all), never a
+    fallback value - so an older appointment-service still works exactly as before."""
+    appointment = {k: v for k, v in FOUND["appointment"].items() if k not in ("appointment_id", "department")}
+    data = _map(response(200, {"found": True, "appointment": appointment})).data
+    for key in ("answered_appointment_id", "department", "exam_type_label", "instruction_source_id",
+               "instruction_version", "upcoming_count"):
+        assert key not in data
+
+
+@pytest.mark.parametrize("appointment_patch, top_level", [
+    ({"appointment_id": ""}, {}),
+    ({"appointment_id": 1}, {}),
+    ({"appointment_id": "APT 1"}, {}),         # M2: not the id pattern (a space)
+    ({"appointment_id": ".APT-1"}, {}),        # M2: must start with a letter or digit
+    ({"appointment_id": "a" * 65}, {}),        # M2: over 64 characters
+    ({"department": ""}, {}),
+    ({"department": "   "}, {}),                # m2: whitespace-only, same as empty
+    ({"department": 1}, {}),
+    ({"department": "ד" * 201}, {}),           # M2: department over 200 characters
+    ({"exam_type": "CARD_STRESS"}, {}),          # not a dict
+    ({"exam_type": {"code": "CARD_STRESS"}}, {}),  # no label
+    ({"exam_type": {"label": ""}}, {}),           # empty label
+    ({"exam_type": {"label": "\t\n"}}, {}),       # m2: whitespace-only, same as empty
+    ({"exam_type": {"label": "מ" * 201}}, {}),  # M2: exam_type_label over 200 characters
+    ({"instruction": "INSTR-CARD-STRESS"}, {}),   # not a dict
+    ({"instruction": {"source_id": "INSTR-CARD-STRESS"}}, {}),  # no version
+    ({"instruction": {"version": "1"}}, {}),      # no source_id
+    ({"instruction": {"source_id": "", "version": "1"}}, {}),
+    ({"instruction": {"source_id": "INSTR CARD", "version": "1"}}, {}),  # M2: source_id not the id pattern
+    ({"instruction": {"source_id": "INSTR-CARD-STRESS", "version": "v.1.0!"}}, {}),  # M2: version not the id pattern
+    ({}, {"upcoming_count": "3"}),
+    ({}, {"upcoming_count": True}),
+    ({}, {"upcoming_count": 1.5}),
+    ({}, {"upcoming_count": -1}),               # M1: never negative
+    ({}, {"upcoming_count": 2**31}),            # M1: over the bound
+])
+def test_a_present_but_malformed_new_field_is_invalid_response(appointment_patch, top_level):
+    appointment = {**FOUND_WITH_EXTRAS["appointment"], **appointment_patch}
+    body = {**FOUND_WITH_EXTRAS, "appointment": appointment, **top_level}
+    assert _map(response(200, body)) == ToolResult(ERROR, {"error": "invalid_response"})
+
+
+def test_upcoming_count_at_the_bounds_is_accepted():
+    """M1: 0 and the maximum are both valid, only outside that range (or a bool) is refused."""
+    for value in (0, 2**31 - 1):
+        body = {**FOUND_WITH_EXTRAS, "upcoming_count": value}
+        assert _map(response(200, body)).data["upcoming_count"] == value
+
+
+def test_a_chosen_appointment_that_is_not_the_patients_is_not_found_with_no_substitute():
+    """design D6: a chosen appointment that is not the patient's (the service answers
+    found=false) takes the existing not_found path - never a fallback to some other
+    appointment."""
+    result = _map(response(200, {"found": False, "appointment": None, "upcoming_count": 2}),
+                  requested_appointment_id="APT-8391")
+    assert result == ToolResult(ERROR, {"error": "not_found"})
+
+
+# --- I1 (fix round 1): the answer must be about who and what was actually asked -------------
+
+def test_a_mismatched_answered_appointment_id_is_invalid_response():
+    """A chosen appointment_id must come back exactly as answered_appointment_id - a different
+    one is never trusted, even if it is otherwise a well-formed, Scheduled, future appointment."""
+    result = _map(response(200, FOUND_WITH_EXTRAS), requested_appointment_id="APT-OTHER")
+    assert result == ToolResult(ERROR, {"error": "invalid_response"})
+
+
+def test_a_requested_appointment_id_that_the_answer_omits_is_invalid_response():
+    appointment = {k: v for k, v in FOUND["appointment"].items() if k != "appointment_id"}
+    result = _map(response(200, {"found": True, "appointment": appointment}), requested_appointment_id="APT-8391")
+    assert result == ToolResult(ERROR, {"error": "invalid_response"})
+
+
+def test_a_matching_answered_appointment_id_is_ok():
+    result = _map(response(200, FOUND_WITH_EXTRAS), requested_appointment_id="APT-1")
+    assert result.data["answered_appointment_id"] == "APT-1"
+
+
+def test_no_appointment_id_was_requested_the_answers_is_still_carried():
+    """Without a chosen appointment_id (the "nearest appointment" case), whatever the service
+    answers is simply carried along - there is nothing to compare it against."""
+    result = _map(response(200, FOUND_WITH_EXTRAS))
+    assert result.data["answered_appointment_id"] == "APT-1"
+
+
+def test_a_patient_id_mismatch_is_invalid_response():
+    """Closes a pre-existing gap: the answer's own patient_id, when present, must name the
+    patient CheckAppointment actually asked about - never silently trusted otherwise."""
+    result = _map(response(200, FOUND), requested_patient_id="P-99999")
+    assert result == ToolResult(ERROR, {"error": "invalid_response"})
+
+
+def test_a_matching_patient_id_is_ok():
+    assert _map(response(200, FOUND), requested_patient_id="P-10041").kind == OK
+
+
+def test_an_answer_without_a_patient_id_is_still_ok():
+    appointment = {k: v for k, v in FOUND["appointment"].items() if k != "patient_id"}
+    result = _map(response(200, {"found": True, "appointment": appointment}), requested_patient_id="P-99999")
+    assert result.kind == OK
+
+
+def test_appointment_id_is_sent_as_a_query_parameter_when_present():
+    gw, transport = gateway(response(200, FOUND))
+    gw.call("CheckAppointment", {"patient_id": "P-10041", "appointment_id": "APT-1"}, "K-1")
+    [(url, _, _)] = transport.requests
+    assert url == "http://appointments.test/api/v1/patients/P-10041/appointment?appointment_id=APT-1"
+
+
+def test_no_query_parameter_when_appointment_id_is_absent():
+    gw, transport = gateway(response(200, FOUND))
+    gw.call("CheckAppointment", {"patient_id": "P-10041"}, "K-1")
+    [(url, _, _)] = transport.requests
+    assert url == "http://appointments.test/api/v1/patients/P-10041/appointment"
+
+
+def test_appointment_id_is_url_encoded_when_it_has_reserved_characters():
+    """M5: a reserved character (here '/' and '&') must be percent-encoded, not left to be
+    read as a path separator or a second query parameter."""
+    gw, transport = gateway(response(200, FOUND))
+    gw.call("CheckAppointment", {"patient_id": "P-10041", "appointment_id": "APT/8391&x"}, "K-1")
+    [(url, _, _)] = transport.requests
+    assert url == "http://appointments.test/api/v1/patients/P-10041/appointment?appointment_id=APT%2F8391%26x"
 
 
 @pytest.mark.parametrize("answer, error", [
@@ -99,14 +255,14 @@ def test_an_appointment_service_without_the_field_is_an_invalid_response():
                                                     "appointment_at": "2026-09-22T15:00:00+03:00"}}), "not_found"),
 ])
 def test_every_other_answer_is_an_error_with_a_known_code(answer, error):
-    assert map_response(answer, now=NOW) == ToolResult(ERROR, {"error": error})
+    assert _map(answer) == ToolResult(ERROR, {"error": error})
     assert error in KNOWN_TOOL_ERRORS
 
 
 @pytest.mark.parametrize("status, error", [(500, "unavailable"), (502, "unavailable"),
                                            (503, "unavailable"), (504, "timeout")])
 def test_a_server_side_failure_is_transient(status, error):
-    assert map_response(response(status, {"error": "x"}), now=NOW) == ToolResult(TRANSIENT_FAILURE, {"error": error})
+    assert _map(response(status, {"error": "x"})) == ToolResult(TRANSIENT_FAILURE, {"error": error})
 
 
 @pytest.mark.parametrize("raised, error", [
@@ -150,16 +306,127 @@ def test_a_missing_patient_id_is_never_sent():
     assert transport.requests == []
 
 
-def test_the_other_actions_are_the_mocks():
+def test_check_documents_and_send_status_update_are_the_mocks():
+    """Task 4: LoadInstructions no longer falls back to the mock when the appointment-service
+    is configured (design D8) - only CheckDocuments and SendStatusUpdate still do."""
     fallback = MockGateway()
     gw, transport = gateway(response(200, FOUND), fallback=fallback)
-    for action in ("CheckDocuments", "LoadInstructions"):
-        assert gw.call(action, {"patient_id": "P"}, "K") == MockGateway().call(action, {"patient_id": "P"}, "K")
+    assert gw.call("CheckDocuments", {"patient_id": "P"}, "K") == \
+        MockGateway().call("CheckDocuments", {"patient_id": "P"}, "K")
     gw.call("SendStatusUpdate", {"patient_id": "P", "content_hash": "H"}, "K9")
     assert fallback.delivered == {"K9": {"patient_id": "P", "content_hash": "H"}}
     assert transport.requests == []
     assert all(gw.idempotent(a) == fallback.idempotent(a)
                for a in ("CheckAppointment", "CheckDocuments", "LoadInstructions", "SendStatusUpdate"))
+
+
+# --- Task 4: LoadInstructions against the instruction system (design D8) --------------------
+
+INSTRUCTION = {"source_id": "INSTR-CARD-STRESS", "version": "1", "title": "הכנה למבחן מאמץ",
+              "text": "יש לצום כ-3 שעות לפני הבדיקה. " + "x" * 10}
+
+
+def _load(answer=None, raises=None, **params):
+    gw, transport = gateway(answer, raises)
+    parameters = {"source_id": "INSTR-CARD-STRESS", "version": "1", **params}
+    return gw.call("LoadInstructions", parameters, "K-1"), transport
+
+
+def test_a_matching_instruction_answer_is_ok():
+    result, transport = _load(response(200, INSTRUCTION))
+    assert result == ToolResult(OK, {"instruction_ids": ["INSTR-CARD-STRESS:1"],
+                                     "instruction_text": f"{INSTRUCTION['title']}\n{INSTRUCTION['text']}"})
+    [(url, headers, timeout)] = transport.requests
+    assert url == "http://appointments.test/api/v1/instructions/INSTR-CARD-STRESS?version=1"
+    assert headers == {"X-API-Key": KEY, "X-Execution-ID": "K-1", "Accept": "application/json"}
+    assert timeout == TIMEOUT_SECONDS
+
+
+def test_a_mismatched_source_id_is_invalid_response():
+    body = {**INSTRUCTION, "source_id": "INSTR-CARD-ECHO"}
+    assert _load(response(200, body))[0] == ToolResult(ERROR, {"error": "invalid_response"})
+
+
+def test_a_source_id_the_answer_omits_is_invalid_response():
+    body = {k: v for k, v in INSTRUCTION.items() if k != "source_id"}
+    assert _load(response(200, body))[0] == ToolResult(ERROR, {"error": "invalid_response"})
+
+
+def test_a_mismatched_version_is_invalid_response():
+    body = {**INSTRUCTION, "version": "2"}
+    assert _load(response(200, body))[0] == ToolResult(ERROR, {"error": "invalid_response"})
+
+
+@pytest.mark.parametrize("title", ["", "   ", 1, None, "x" * 201])
+def test_a_malformed_title_is_invalid_response(title):
+    body = {**INSTRUCTION, "title": title}
+    assert _load(response(200, body))[0] == ToolResult(ERROR, {"error": "invalid_response"})
+
+
+@pytest.mark.parametrize("title", ["line one\nline two", "line one\rline two", "trailing\n"])
+def test_a_title_carrying_a_newline_is_invalid_response(title):
+    """Fix round 1 (M5): instruction_text is `f"{title}\\n{text}"`, and the patient view splits
+    it back on the first newline - a title with its own \\n or \\r would shift that split."""
+    body = {**INSTRUCTION, "title": title}
+    assert _load(response(200, body))[0] == ToolResult(ERROR, {"error": "invalid_response"})
+
+
+@pytest.mark.parametrize("text", ["", "   ", 1, None, "x" * 4001])
+def test_a_malformed_text_is_invalid_response(text):
+    body = {**INSTRUCTION, "text": text}
+    assert _load(response(200, body))[0] == ToolResult(ERROR, {"error": "invalid_response"})
+
+
+def test_titles_and_text_at_the_bound_are_accepted():
+    body = {**INSTRUCTION, "title": "x" * 200, "text": "y" * 4000}
+    assert _load(response(200, body))[0].kind == OK
+
+
+def test_an_unknown_source_is_not_found():
+    assert _load(response(404, {"error": "instruction_not_found"}))[0] == ToolResult(ERROR, {"error": "not_found"})
+
+
+def test_an_unexpected_404_shape_is_invalid_response():
+    assert _load(response(404, {"detail": "not found"}))[0] == ToolResult(ERROR, {"error": "invalid_response"})
+
+
+@pytest.mark.parametrize("status, error", [(500, "unavailable"), (502, "unavailable"),
+                                           (503, "unavailable"), (504, "timeout")])
+def test_a_server_side_failure_is_transient_for_load_instructions(status, error):
+    assert _load(response(status, {"error": "x"}))[0] == ToolResult(TRANSIENT_FAILURE, {"error": error})
+
+
+@pytest.mark.parametrize("raised, error", [
+    (TimeoutError("timed out"), "timeout"),
+    (OSError("no route"), "unavailable"),
+])
+def test_no_answer_at_all_is_transient_for_load_instructions(raised, error):
+    result, _ = _load(raises=raised)
+    assert result == ToolResult(TRANSIENT_FAILURE, {"error": error})
+
+
+def test_unauthorized_for_load_instructions():
+    assert _load(response(401, {"error": "unauthorized"}))[0] == ToolResult(ERROR, {"error": "unauthorized"})
+
+
+@pytest.mark.parametrize("params", [{"version": "1", "source_id": None}, {"source_id": "INSTR-CARD-STRESS",
+                                                                          "version": None}])
+def test_a_missing_source_id_or_version_is_never_sent(params):
+    gw, transport = gateway(response(200, INSTRUCTION))
+    result = gw.call("LoadInstructions", {k: v for k, v in params.items() if v is not None}, "K")
+    assert result.data == {"error": "invalid_request"}
+    assert transport.requests == []
+
+
+def test_load_instructions_calls_are_recorded():
+    gw, _ = gateway(response(200, INSTRUCTION))
+    gw.call("LoadInstructions", {"source_id": "INSTR-CARD-STRESS", "version": "1"}, "K-1")
+    assert gw.calls == [("LoadInstructions", {"source_id": "INSTR-CARD-STRESS", "version": "1"}, "K-1")]
+
+
+def test_load_instructions_is_idempotent():
+    gw, _ = gateway(response(200, INSTRUCTION))
+    assert gw.idempotent("LoadInstructions")
 
 
 def test_calls_are_recorded_like_the_mocks():
@@ -242,7 +509,7 @@ def test_no_proxy_is_used_even_when_one_is_configured(server, monkeypatch):
 def test_a_body_over_64kib_is_invalid_response_through_map_response():
     big = json.dumps({"found": True, "appointment": FOUND["appointment"], "pad": "x" * (70 * 1024)}).encode()
     assert len(big) > 64 * 1024
-    assert map_response(HttpResponse(200, big), now=NOW) == ToolResult(ERROR, {"error": "invalid_response"})
+    assert _map(HttpResponse(200, big)) == ToolResult(ERROR, {"error": "invalid_response"})
 
 
 def test_a_body_over_64kib_is_invalid_response_through_the_local_server(server):

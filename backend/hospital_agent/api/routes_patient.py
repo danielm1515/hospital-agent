@@ -23,11 +23,12 @@ from ..session import (
     ReplyKindMismatch,
     SessionService,
 )
-from . import appointments
+from . import appointments, instructions
 from .deps import get_session, require_patient
 from .schemas import (
     AppointmentsView,
     DocumentUpload,
+    InstructionView,
     NewRequest,
     PatientCaseView,
     PdfUploadResponse,
@@ -54,7 +55,8 @@ def submit_request(body: NewRequest, principal: Principal = Depends(require_pati
                    session: SessionService = Depends(get_session)) -> PatientCaseView:
     try:
         case_id = session.submit_request(principal.patient_id, body.text,
-                                         identity_verified=_identity_verified(principal))
+                                         identity_verified=_identity_verified(principal),
+                                         appointment_id=body.appointment_id)
     except EventRejected as rejected:
         # The patient gets one code: a guard's reason (§3.1) is internal, and §12.3 keeps it
         # out of an answer a patient sees. The reason stays on the server - in the Blocked
@@ -71,6 +73,16 @@ def list_appointments(request: Request, start: str | None = Query(default=None, 
     """The patient's own appointments (sub-project 16): the patient is the token's, never a
     parameter (§18.3) - a query `patient_id` is ignored."""
     return appointments.read(request.app.state.appointment_list, principal.patient_id, start, end)
+
+
+@router.get("/instructions/{source_id}", response_model=InstructionView)
+def get_instruction(source_id: str, request: Request, version: str | None = Query(default=None),
+                    principal: Principal = Depends(require_patient)) -> InstructionView:
+    """Sub-project 18 (design D12): the text behind one appointment's preparation
+    instruction - answers only a source_id/version the Approved Source Registry currently
+    approves (`instructions.read`), and never trusts the appointment-service to approve
+    itself."""
+    return instructions.read(request.app.state.instructions_client, source_id, version)
 
 
 @router.get("/requests", response_model=list[PatientCaseView])

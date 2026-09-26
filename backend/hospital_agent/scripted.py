@@ -59,8 +59,8 @@ class ScriptedAgents:
 
     # --- patient, through the Session Service -------------------------------------------
 
-    def submit(self) -> TransitionResult:
-        result = self.session.open_case(self.patient_id)
+    def submit(self, appointment_id: str | None = None) -> TransitionResult:
+        result = self.session.open_case(self.patient_id, appointment_id=appointment_id)
         self.case_id = result.case_id
         return result
 

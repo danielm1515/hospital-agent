@@ -16,7 +16,7 @@ from sqlalchemy.engine import Engine
 from hospital_agent import repository
 from hospital_agent.case import ExecutionRecord
 from hospital_agent.execution.executor import ToolExecutor
-from hospital_agent.execution.gateway import ACTION_TARGETS, MockGateway, ToolGateway
+from hospital_agent.execution.gateway import ACTION_TARGETS, MockGateway, ToolGateway, present_patient_fields
 from hospital_agent.execution.verify import EXECUTING_STATES
 from hospital_agent.naming import Action, Component, Event
 from hospital_agent.policy.readiness import ReadinessCheck
@@ -32,7 +32,6 @@ PLAN = [
     {"step": 3, "action": "LoadInstructions"},
     {"step": 4, "action": "SendStatusUpdate"},
 ]
-APPROVED_SOURCE = InstructionSource("INSTR-PREP-COLONOSCOPY", "3")
 STATUS_MESSAGE = OutgoingMessage(evaluated=True, medical_content_flag=False, content_hash="HASH-STATUS-1")
 
 
@@ -72,15 +71,30 @@ class Driver(ScriptedAgents):
     # --- the real Policy Service / Tool Executor / Readiness Check -------------------------
 
     def request(self, **overrides) -> PolicyRequest:
-        """A well-formed PolicyRequest for the current plan step; overrides replace fields."""
+        """A well-formed PolicyRequest for the current plan step; overrides replace fields.
+
+        Task 4 (D7), fix round 1 (m1/m2): like the real Orchestrator, instruction_source comes
+        only from the case's own instruction_source_id/instruction_version - never a hardcoded
+        fallback. A test that drives the case through retrieve_step() shortcuts must store the
+        source on the case through the CheckAppointment step's own DATA_RETRIEVED payload, the
+        same way MockGateway supplies it (see at_step() in tests/test_policy_d_tests.py), or
+        LoadInstructions has no source and this returns None - exactly what a case that never
+        resolved one gets in production. A test that needs a specific (possibly unapproved)
+        source still overrides `instruction_source=` explicitly (e.g.
+        test_d17_instructions_only_from_the_approved_registry).
+        """
         case = self.case
         action = case.current_action
-        target, fields = ACTION_TARGETS[action.value]
+        target, _ = ACTION_TARGETS[action.value]
+        fields = present_patient_fields(case, action.value)
+        source = None
+        if action is Action.LOAD_INSTRUCTIONS and case.instruction_source_id and case.instruction_version:
+            source = InstructionSource(case.instruction_source_id, case.instruction_version)
         request = PolicyRequest(
             execution_id=f"EXEC-{uuid.uuid4().hex[:8]}",
             proposed_action=ProposedAction(action.value, case.current_step, target, fields),
             outgoing_message=STATUS_MESSAGE if action is Action.SEND_STATUS_UPDATE else None,
-            instruction_source=APPROVED_SOURCE if action is Action.LOAD_INSTRUCTIONS else None,
+            instruction_source=source,
         )
         return replace(request, **overrides)
 
@@ -144,8 +158,8 @@ class Driver(ScriptedAgents):
 
     # --- scenario prefixes -------------------------------------------------------------------
 
-    def to_classified(self) -> None:
-        self.submit()
+    def to_classified(self, appointment_id: str | None = None) -> None:
+        self.submit(appointment_id)
         self.validate()
         self.classify()
 
@@ -156,9 +170,14 @@ class Driver(ScriptedAgents):
         self.retrieved(**result)
 
     def to_assessing_readiness(self, required: list[str], held: list[str], hours_until: float = 96) -> None:
+        # Fix round 1 (m1/m2): the CheckAppointment retrieval also carries
+        # instruction_source_id/version, the same demo source MockGateway's own CheckAppointment
+        # answer stores on the case - Driver.request() no longer falls back to a hardcoded
+        # source for LoadInstructions, so this shortcut must resolve one itself.
         self.to_classified()
         self.plan()
-        self.retrieve_step(appointment_at=datetime.now(UTC) + timedelta(hours=hours_until))
+        self.retrieve_step(appointment_at=datetime.now(UTC) + timedelta(hours=hours_until),
+                           instruction_source_id="INSTR-PREP-COLONOSCOPY", instruction_version="3")
         self.advance()
         self.retrieve_step(required_documents=required, held_documents=held)
         self.advance()

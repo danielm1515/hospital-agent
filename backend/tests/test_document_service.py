@@ -87,7 +87,8 @@ def test_only_the_patient_id_leaves_quoted_with_the_key():
 def test_the_other_actions_are_the_fallbacks():
     fallback = MockGateway()
     gw = DocumentServiceGateway("http://docs.test", KEY, fallback=fallback, transport=Transport(listing()))
-    assert gw.call("LoadInstructions", {}, "k") == MockGateway().call("LoadInstructions", {}, "k")
+    demo_source = {"source_id": "INSTR-PREP-COLONOSCOPY", "version": "3"}
+    assert gw.call("LoadInstructions", demo_source, "k") == MockGateway().call("LoadInstructions", demo_source, "k")
     assert gw.idempotent("CheckDocuments") == fallback.idempotent("CheckDocuments")
 
 

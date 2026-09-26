@@ -8,7 +8,9 @@ import {
   formatClock,
   formatDate,
   formatDateTime,
+  formatIsraelHourMinute,
   isAcceptedDocumentFile,
+  isFinal,
   isMoving,
   sameDay,
   truncate,
@@ -26,6 +28,20 @@ describe('patient helpers', () => {
     for (const status of ['needs_document', 'in_review', 'completed', 'closed'] as const) {
       expect(isMoving(status)).toBe(false)
     }
+  })
+
+  it('knows the two final statuses, where the request screen never polls', () => {
+    expect(isFinal('completed')).toBe(true)
+    expect(isFinal('closed')).toBe(true)
+    for (const status of ['received', 'in_progress', 'needs_document', 'needs_reply', 'in_review'] as const) {
+      expect(isFinal(status)).toBe(false)
+    }
+  })
+
+  it('prints HH:MM in Israel time, whatever the browser zone', () => {
+    expect(formatIsraelHourMinute(new Date('2026-10-03T07:05:00Z'))).toBe('10:05')
+    expect(formatIsraelHourMinute(new Date('2026-12-03T22:30:00Z'))).toBe('00:30')
+    expect(formatIsraelHourMinute(new Date('nope'))).toBe('')
   })
 
   it('cuts the card text at 120 characters', () => {

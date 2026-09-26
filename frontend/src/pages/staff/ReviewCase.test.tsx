@@ -15,6 +15,7 @@ vi.mock('../../api/client', async (importOriginal) => ({
   tombstone: vi.fn(),
   getMessageTemplates: vi.fn(),
   listCaseAppointments: vi.fn(),
+  getStaffInstruction: vi.fn(),
 }))
 
 function appointmentList(overrides: Partial<AppointmentList> = {}): AppointmentList {
@@ -110,6 +111,12 @@ function context(overrides: Partial<ReviewContext> = {}): ReviewContext {
       },
     ],
     shown_context_ref: 'ctx-ba3e0652b0ea',
+    appointment_id: null,
+    answered_appointment_id: null,
+    department: null,
+    exam_type_label: null,
+    instruction_source_id: null,
+    instruction_version: null,
     ...overrides,
   }
 }
@@ -166,6 +173,59 @@ describe('ReviewCase', () => {
     await waitFor(() =>
       expect(api.listCaseAppointments).toHaveBeenCalledWith(CASE_ID, expect.any(Date), expect.any(Date)),
     )
+  })
+
+  it('shows the chosen appointment, its exam type and the instruction source (sub-project 18, D13)', async () => {
+    vi.mocked(api.getContext).mockResolvedValue(
+      context({
+        appointment_id: 'APT-8392',
+        answered_appointment_id: 'APT-8392',
+        department: 'Cardiology',
+        exam_type_label: 'מבחן מאמץ',
+        instruction_source_id: 'INSTR-CARD-STRESS',
+        instruction_version: '1',
+      }),
+    )
+    renderCase()
+
+    const group = (await screen.findByRole('heading', { name: 'תור והוראות הכנה' })).closest('.fact-group') as HTMLElement
+    expect(within(group).getByText('מבחן מאמץ')).toBeInTheDocument()
+    expect(within(group).getByText('Cardiology')).toHaveClass('code')
+    expect(group).toHaveTextContent('קרדיולוגיה')
+    expect(within(group).getByText('INSTR-CARD-STRESS')).toHaveClass('code')
+    expect(group).toHaveTextContent('גרסה 1')
+    expect(within(group).getAllByText('APT-8392')).toHaveLength(2)
+  })
+
+  it('reads the preparation text through the staff route (sub-project 18, D12)', async () => {
+    vi.mocked(api.listCaseAppointments).mockResolvedValue(
+      appointmentList({
+        appointments: [
+          {
+            appointment_id: 'APT-8392',
+            appointment_at: '2026-10-07T06:00:00Z',
+            department: 'Cardiology',
+            doctor_name: null,
+            location: null,
+            status: 'Scheduled',
+            required_documents: [],
+            exam_type: { code: 'CARD_STRESS', label: 'מבחן מאמץ' },
+            instruction: { source_id: 'INSTR-CARD-STRESS', version: '1', title: 'לפני מבחן מאמץ' },
+          },
+        ],
+      }),
+    )
+    vi.mocked(api.getStaffInstruction).mockResolvedValue({
+      source_id: 'INSTR-CARD-STRESS',
+      version: '1',
+      title: 'לפני מבחן מאמץ',
+      text: 'צום 3 שעות.',
+    })
+    renderCase()
+
+    await userEvent.click(await screen.findByRole('button', { name: 'הצגת הוראות ההכנה' }))
+    expect(await screen.findByText('צום 3 שעות.')).toBeInTheDocument()
+    expect(api.getStaffInstruction).toHaveBeenCalledWith('INSTR-CARD-STRESS', '1')
   })
 
   it('does not reload the appointments list when the review context is refreshed', async () => {

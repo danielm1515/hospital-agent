@@ -33,6 +33,12 @@ STATUSES = frozenset({"Scheduled", "Cancelled"})
 # routes always pass one already resolved from the token or the case - so it never reaches HTTP.
 _PATIENT_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 
+# Sub-project 18 (design D3, D12): the same id shape source_id/version use everywhere else
+# (api/schemas.py NewRequest, execution/appointment_service.py ID_PATTERN) - exam_type.code and
+# instruction.source_id/version are all this shape.
+_ID_RE = _PATIENT_ID_RE
+MAX_LABEL_LENGTH = 200  # exam_type.label, instruction.title (same bound as execution/appointment_service.py)
+
 Transport = Callable[[str, str, Mapping[str, str], bytes | None, float], HttpResponse]
 
 
@@ -49,6 +55,19 @@ class PatientNotFound(Exception):
 
 
 @dataclass(frozen=True)
+class ExamType:
+    code: str
+    label: str
+
+
+@dataclass(frozen=True)
+class InstructionSummary:
+    source_id: str
+    version: str
+    title: str
+
+
+@dataclass(frozen=True)
 class Appointment:
     appointment_id: str
     appointment_at: datetime
@@ -57,6 +76,10 @@ class Appointment:
     location: str | None
     status: str
     required_documents: tuple[str, ...]
+    # Sub-project 18 (design D3, D12): never null in the real service, but treated as optional
+    # here - absent means None, and a present field with a bad shape is invalid_response.
+    exam_type: ExamType | None = None
+    instruction: InstructionSummary | None = None
 
 
 @dataclass(frozen=True)
@@ -71,6 +94,41 @@ def _text(value: object) -> bool:
 
 def _optional_text(value: object) -> bool:
     return value is None or isinstance(value, str)
+
+
+def _bounded_label(value: object) -> bool:
+    # Fix round 1 (M6): stripped before checking for empty, so a whitespace-only string (e.g.
+    # "   ") is refused exactly like "" - the bound itself is still checked against the
+    # original, unstripped length.
+    return isinstance(value, str) and bool(value.strip()) and len(value) <= MAX_LABEL_LENGTH
+
+
+def _id_shaped(value: object) -> bool:
+    return isinstance(value, str) and bool(_ID_RE.fullmatch(value))
+
+
+def _exam_type(value: object) -> ExamType | None:
+    """Sub-project 18 (design D3): absent means None; a present value must carry {code, label}
+    (extra keys are ignored), each a non-empty string capped at MAX_LABEL_LENGTH - anything
+    else is invalid_response, fail closed."""
+    if value is None:
+        return None
+    if not isinstance(value, dict) or not _bounded_label(value.get("code")) \
+            or not _bounded_label(value.get("label")):
+        raise AppointmentsUnavailable("invalid_response")
+    return ExamType(value["code"], value["label"])
+
+
+def _instruction(value: object) -> InstructionSummary | None:
+    """Sub-project 18 (design D3): absent means None; a present value must carry {source_id,
+    version, title} (extra keys are ignored) - source_id/version the id shape, title a bounded
+    non-empty string - anything else is invalid_response, fail closed."""
+    if value is None:
+        return None
+    if not isinstance(value, dict) or not _id_shaped(value.get("source_id")) \
+            or not _id_shaped(value.get("version")) or not _bounded_label(value.get("title")):
+        raise AppointmentsUnavailable("invalid_response")
+    return InstructionSummary(value["source_id"], value["version"], value["title"])
 
 
 def _appointment(item: object, patient_id: str) -> Appointment:
@@ -96,8 +154,11 @@ def _appointment(item: object, patient_id: str) -> Appointment:
         # that no longer fits - the appointment-service's own contract, not the caller's
         # fault either way, so it fails closed the same as any other unparseable row.
         raise AppointmentsUnavailable("invalid_response") from None
+    exam_type = _exam_type(item.get("exam_type"))
+    instruction = _instruction(item.get("instruction"))
     return Appointment(item["appointment_id"], at, item["department"], item.get("doctor_name"),
-                       item.get("location"), status, tuple(sorted(set(documents))))
+                       item.get("location"), status, tuple(sorted(set(documents))),
+                       exam_type, instruction)
 
 
 def map_answer(response: HttpResponse, patient_id: str) -> AppointmentList:

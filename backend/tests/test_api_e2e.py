@@ -10,7 +10,7 @@ from fastapi.testclient import TestClient
 
 from hospital_agent.api.app import create_app
 from hospital_agent.auth import demo_password
-from hospital_agent.execution.gateway import MockGateway
+from hospital_agent.execution.gateway import INSTRUCTION_TEXT, MockGateway
 from hospital_agent.llm.orchestrator import Orchestrator
 from hospital_agent.llm.provider import FakeProvider
 from hospital_agent.session import MISSING_DOCUMENT_TEMPLATE_ID
@@ -84,6 +84,7 @@ def test_scenario_1_a_missing_document_then_the_status_message(api):
     assert waiting["missing_document_ids"] == ["blood_test"]
     assert waiting["missing_document_request_template_id"] == MISSING_DOCUMENT_TEMPLATE_ID
     assert waiting["message"] is None
+    assert waiting["instructions"] is None  # fix round 1 (I3): not completed yet, though loaded
 
     app.upload(case_id)
     app.run(case_id)
@@ -91,6 +92,10 @@ def test_scenario_1_a_missing_document_then_the_status_message(api):
     done = app.view(case_id)
     assert done["status"] == "completed"
     assert "INSTR-PREP-COLONOSCOPY" in done["message"]
+    # Fix round 1 (M8): a non-null `instructions` at the API level, not just at the service
+    # level. MockGateway's own INSTRUCTION_TEXT carries no newline, so the generic title
+    # applies (M5) and the whole entry is the text.
+    assert done["instructions"] == {"title": "הוראות הכנה", "text": INSTRUCTION_TEXT}
 
 
 def test_scenario_2_a_medical_question_is_queued_and_resolved(api):

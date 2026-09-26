@@ -15,13 +15,24 @@ MEDICAL = OutgoingMessage(evaluated=True, medical_content_flag=True, content_has
 
 
 def at_step(d: Driver, step: int) -> None:
-    """Drive a fresh case to Planning at `step` with the step proposed (docs held, so readiness passes)."""
+    """Drive a fresh case to Planning at `step` with the step proposed (docs held, so readiness passes).
+
+    Fix round 1 (m1/m2): the CheckAppointment retrieval (current_step 1) also carries
+    instruction_source_id/instruction_version, exactly what MockGateway's own CheckAppointment
+    answer stores on the case (execution/gateway.py) - Driver.request() no longer falls back to
+    a hardcoded source for LoadInstructions, so a test that reaches step 3+ through this shortcut
+    must resolve one itself, the same way the real Tool Executor would.
+    """
     d.to_classified()
     d.plan()
     for _ in range(step - 1):
         if d.case.current_step == 3:
             break
-        d.retrieve_step(required_documents=["referral"], held_documents=["referral"])
+        if d.case.current_step == 1:
+            d.retrieve_step(required_documents=["referral"], held_documents=["referral"],
+                            instruction_source_id="INSTR-PREP-COLONOSCOPY", instruction_version="3")
+        else:
+            d.retrieve_step(required_documents=["referral"], held_documents=["referral"])
         d.advance()
     if step == 4:
         d.retrieve_step()                 # LoadInstructions -> AssessingReadiness

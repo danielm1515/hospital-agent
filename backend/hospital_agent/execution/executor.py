@@ -31,7 +31,16 @@ from .. import data_log
 from ..case import CaseRecord, ExecutionRecord
 from ..naming import Action, Component, EscalationKind, Event, SafetyLevel
 from ..state_manager import ExecutionOutcome, StateManager, TransitionResult
-from .gateway import ACTION_TARGETS, KNOWN_TOOL_ERRORS, OK, RESULT_FIELDS, TRANSIENT_FAILURE, ToolGateway, ToolResult
+from .gateway import (
+    ERROR,
+    KNOWN_TOOL_ERRORS,
+    OK,
+    RESULT_FIELDS,
+    TRANSIENT_FAILURE,
+    ToolGateway,
+    ToolResult,
+    present_patient_fields,
+)
 from .retry import after_failure
 from .verify import EXECUTING_STATES
 
@@ -69,6 +78,17 @@ class ToolExecutor:
     def finish(self, case_id: str, execution: ExecutionRecord, result: ToolResult) -> TransitionResult:
         sm = self.state_manager
         execution_id = execution.execution_id
+        if result.kind == OK and execution.action == Action.LOAD_INSTRUCTIONS.value:
+            # Fix round 1 (m1): defense in depth - the gateway (map_instruction_response) already
+            # requires its own HTTP answer to name exactly the requested source_id/version, but
+            # a gateway result is trusted data by the time it reaches here, so re-derive what the
+            # instruction_ids the Tool Executor itself asked for (the case's own source at the
+            # moment of the call) must look like, and refuse an OK that does not match it - never
+            # silently accept instructions for a source the case did not (or no longer) hold.
+            case = sm.load(case_id)
+            expected = [f"{case.instruction_source_id}:{case.instruction_version}"]
+            if result.data.get("instruction_ids") != expected:
+                result = ToolResult(ERROR, {"error": "invalid_response"})
         if result.kind == OK:
             outcome = ExecutionOutcome(execution_id, "succeeded")
             if execution.action == Action.SEND_STATUS_UPDATE.value:
@@ -131,9 +151,21 @@ class ToolExecutor:
 
     @staticmethod
     def _parameters(case: CaseRecord, execution: ExecutionRecord) -> dict[str, Any]:
-        """Only the patient fields the target may receive (spec §11), plus the message reference."""
-        _, fields = ACTION_TARGETS[execution.action]
+        """Only the patient fields the target may receive (spec §11), plus non-patient extras.
+
+        present_patient_fields (sub-project 18) drops a declared field the case does not
+        actually hold - CheckAppointment's appointment_id is sent only when the patient chose
+        an appointment (D5/D6); every other action's fields are always present, so this changes
+        nothing for them. LoadInstructions declares no patient field at all (§11:
+        instruction_system gets none) - its source_id/version are sent as non-patient
+        parameters, taken from the case's own instruction_source_id/instruction_version
+        (Task 4, D7/D8), never through present_patient_fields/ACTION_TARGETS.
+        """
+        fields = present_patient_fields(case, execution.action)
         parameters: dict[str, Any] = {name: getattr(case, name) for name in fields}
         if execution.action == Action.SEND_STATUS_UPDATE.value:
             parameters["content_hash"] = execution.content_hash
+        if execution.action == Action.LOAD_INSTRUCTIONS.value:
+            parameters["source_id"] = case.instruction_source_id
+            parameters["version"] = case.instruction_version
         return parameters

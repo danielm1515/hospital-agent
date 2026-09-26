@@ -14,10 +14,17 @@ from enum import StrEnum
 
 from .case import CaseRecord, compute_plan_hash
 from .guards import GUARD_FAILED, GUARDS, GuardContext
+from .naming import Action
 from .naming import EscalationKind as K
 from .naming import Event as E
 from .naming import SafetyLevel
 from .naming import State as S
+
+# Sub-project 18 (D6): the case columns a CheckAppointment answer sets on RECORD_RETRIEVAL - all
+# six from that answer alone, None when it omits one (final review M3). appointment_id is not
+# here: it is the patient's write-once choice from REQUEST_SUBMITTED.
+APPOINTMENT_FACTS = ("answered_appointment_id", "department", "exam_type_label",
+                     "instruction_source_id", "instruction_version", "upcoming_count")
 
 
 class Effect(StrEnum):
@@ -298,6 +305,21 @@ def apply_effects(case: CaseRecord, row: Transition, ctx: GuardContext) -> CaseR
                     changes["required_documents"] = list(p["required_documents"])
                 if "held_documents" in p:
                     changes["held_documents"] = list(p["held_documents"])
+                # Sub-project 18 (D6): CheckAppointment's own facts about the appointment it
+                # read. A CheckAppointment answer sets all six from itself (final review M3): a
+                # field the answer omits becomes None, never a value left over from an earlier
+                # answer (a different appointment, a retry that no longer resolves an exam type) -
+                # in particular a stale instruction source can never survive into the next
+                # LoadInstructions (fix round 1, m4). CheckDocuments' and LoadInstructions' own
+                # DATA_RETRIEVED never touch these fields at all - the case's current_action
+                # distinguishes the CheckAppointment step from the others (and RESULT_FIELDS
+                # never lets another action carry them).
+                # appointment_id itself is NEVER written here (fix round 1, I2): it is the
+                # patient's write-once choice from REQUEST_SUBMITTED, and RECORD_RETRIEVAL must
+                # never overwrite it with the service's own answered_appointment_id.
+                if case.current_action is Action.CHECK_APPOINTMENT:
+                    for fact in APPOINTMENT_FACTS:
+                        changes[fact] = p.get(fact)
                 if "safety_level" in p:  # LLM design §5: a re-check only ever raises the risk
                     changes["safety_level"] = _higher_risk(case.safety_level, SafetyLevel(p["safety_level"]))
             case Effect.RECORD_PATIENT_DEADLINE:
