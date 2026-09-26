@@ -158,5 +158,18 @@ describe('app.css structural integrity', () => {
     // status text.
     const reducedMotion = collectAtRuleBodies(stripComments(css), 'prefers-reduced-motion: reduce')
     expect(reducedMotion).toMatch(/\.loader-ring\s*{[^}]*animation:\s*none/)
+    // Fix round 1 (M5): stopping the animation still leaves a static ring on screen, which
+    // can read as a frozen/stuck spinner - the ring must be hidden outright too, leaving
+    // only the status text.
+    expect(reducedMotion).toMatch(/\.loader-ring\s*{[^}]*display:\s*none/)
+  })
+
+  it('gives the alert close button a tappable minimum size (M8)', () => {
+    const stripped = stripComments(css)
+    const match = stripped.match(/\.alert-close\s*{([^}]*)}/)
+    expect(match).not.toBeNull()
+    const body = match![1]
+    expect(body).toMatch(/min-inline-size:\s*24px/)
+    expect(body).toMatch(/min-block-size:\s*24px/)
   })
 })

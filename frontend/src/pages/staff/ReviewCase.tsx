@@ -44,6 +44,10 @@ export function ReviewCase() {
 
   const [context, setContext] = useState<ReviewContext | null>(null)
   const [item, setItem] = useState<ReviewItem | null>(null)
+  // Fix round 1 (M2): `item` alone can't tell "not fetched yet" from "fetched, no decision
+  // waits here" - both leave `item` at its initial `null`. Without this, the decision panel
+  // briefly showed "not awaiting a decision" while `getReviewItem` was still in flight.
+  const [itemLoaded, setItemLoaded] = useState(false)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [templates, setTemplates] = useState<MessageTemplate[]>([])
 
@@ -61,6 +65,7 @@ export function ReviewCase() {
   const [deleting, setDeleting] = useState(false)
 
   const load = useCallback(async () => {
+    setItemLoaded(false)
     try {
       const fresh = await api.getContext(caseId)
       setContext(fresh)
@@ -77,6 +82,8 @@ export function ReviewCase() {
     } catch (caught) {
       if (caught instanceof api.ApiError && caught.status === 404) setItem(null)
       else setLoadError(detailOf(caught))
+    } finally {
+      setItemLoaded(true)
     }
   }, [caseId])
 
@@ -317,7 +324,9 @@ export function ReviewCase() {
               onContextChanged={() => void refreshContext()}
             />
           )}
-          {allowed.length === 0 ? (
+          {!itemLoaded ? (
+            <Loading size="inline" />
+          ) : allowed.length === 0 ? (
             <Alert variant="info" title="הפנייה אינה ממתינה להכרעה">
               המסך מציג את ההקשר בלבד. פניות להכרעה מופיעות בתור ההסלמות.
             </Alert>

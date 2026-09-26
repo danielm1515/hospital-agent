@@ -322,7 +322,7 @@ function ExpandableRow({ row, detail, detailError, open, context, contextError, 
                   <span className="mono">{detailError}</span>
                 </Alert>
               ) : (
-                <Loading size="inline" />
+                <Loading size="inline" label="טוען פרטים" />
               )}
 
               {detail?.ordered_steps && detail.ordered_steps.length > 0 && (
@@ -355,7 +355,7 @@ function ExpandableRow({ row, detail, detailError, open, context, contextError, 
                   <AuditTimeline rows={context.trace} label={`יומן הביקורת של ${row.case_id}`} />
                 </>
               ) : (
-                <Loading size="inline" />
+                <Loading size="inline" label="טוען תכתובת" />
               )}
             </div>
           </td>

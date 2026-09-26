@@ -39,6 +39,15 @@ afterEach(() => {
 })
 
 describe('AppointmentsPanel', () => {
+  it('shows the shared loading status on the first load, before any result or error (I2)', async () => {
+    const load = vi.fn().mockReturnValue(new Promise(() => {})) // never resolves
+    render(<AppointmentsPanel audience="patient" load={load} />)
+
+    const status = await screen.findByText('טוען תורים')
+    expect(status).toHaveAttribute('role', 'status')
+    expect(status.closest('.loader')).toHaveClass('loader-inline')
+  })
+
   it('loads the default 30-day range on mount and shows it in the two date inputs', async () => {
     const load = vi.fn().mockResolvedValue(appointmentList())
     render(<AppointmentsPanel audience="patient" load={load} />)

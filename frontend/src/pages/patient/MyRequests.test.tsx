@@ -118,7 +118,9 @@ describe('MyRequests', () => {
   it('shows the shared loading status while the list is still loading', async () => {
     listRequests.mockReturnValue(new Promise(() => {})) // never resolves
     renderList()
-    expect(await screen.findByText('טוען פניות')).toHaveAttribute('role', 'status')
+    const status = await screen.findByText('טוען פניות')
+    expect(status).toHaveAttribute('role', 'status')
+    expect(status.closest('.loader')).toBeInTheDocument()
   })
 
   it('shows an empty state when there are no requests', async () => {

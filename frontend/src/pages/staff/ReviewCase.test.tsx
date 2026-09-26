@@ -140,7 +140,21 @@ describe('ReviewCase', () => {
   it('shows the shared loading status while the context is still loading', async () => {
     vi.mocked(api.getContext).mockReturnValue(new Promise(() => {})) // never resolves
     renderCase()
-    expect(await screen.findByText('טוען…')).toHaveAttribute('role', 'status')
+    const status = await screen.findByText('טוען…')
+    expect(status).toHaveAttribute('role', 'status')
+    expect(status.closest('.loader')).toBeInTheDocument()
+  })
+
+  it('does not flash "not awaiting a decision" while the review item is still loading (M2)', async () => {
+    vi.mocked(api.getReviewItem).mockReturnValue(new Promise(() => {})) // never resolves
+    renderCase()
+
+    // The context itself loads fine and fast (its own mock resolves), so the page is past
+    // the whole-page loader by now - only the decision panel's own item fetch is pending.
+    await screen.findByRole('heading', { name: 'התורים של המטופל' })
+    expect(screen.queryByText('הפנייה אינה ממתינה להכרעה')).not.toBeInTheDocument()
+    const panelStatus = screen.getByText('טוען…')
+    expect(panelStatus.closest('.loader')).toHaveClass('loader-inline')
   })
 
   it('shows the appointments panel for the patient, loaded with the case id', async () => {

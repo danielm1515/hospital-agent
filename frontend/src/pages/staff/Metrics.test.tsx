@@ -84,7 +84,9 @@ describe('Metrics', () => {
   it('shows the shared loading status while the metrics are still loading', async () => {
     vi.mocked(api.getMetrics).mockReturnValue(new Promise(() => {})) // never resolves
     render(<Metrics />)
-    expect(await screen.findByText('טוען…')).toHaveAttribute('role', 'status')
+    const status = await screen.findByText('טוען…')
+    expect(status).toHaveAttribute('role', 'status')
+    expect(status.closest('.loader')).toBeInTheDocument()
   })
 
   it('loads the last 7 days and shows every group', async () => {

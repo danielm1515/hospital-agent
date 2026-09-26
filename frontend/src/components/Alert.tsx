@@ -15,7 +15,7 @@ interface AlertProps {
 }
 
 export function Alert({ variant = 'info', title, children, className, onClose }: AlertProps) {
-  return (
+  const box = (
     <div
       className={['alert', variant, className].filter(Boolean).join(' ')}
       role={variant === 'error' ? 'alert' : 'status'}
@@ -28,11 +28,20 @@ export function Alert({ variant = 'info', title, children, className, onClose }:
         {title !== undefined && <p className="title">{title}</p>}
         {children !== undefined && <div className="text">{children}</div>}
       </div>
-      {onClose && (
-        <button type="button" className="alert-close" aria-label="סגירה" onClick={onClose}>
-          <span aria-hidden="true">✕</span>
-        </button>
-      )}
+    </div>
+  )
+
+  if (!onClose) return box
+
+  // Fix round 1 (M8): the close button is a sibling of the `role="status"`/`role="alert"`
+  // element, not nested inside it - a screen reader announcing the live region would
+  // otherwise also announce "button, סגירה" as part of that region's own content.
+  return (
+    <div className="alert-shell">
+      {box}
+      <button type="button" className="alert-close" aria-label="סגירה" onClick={onClose}>
+        <span aria-hidden="true">✕</span>
+      </button>
     </div>
   )
 }

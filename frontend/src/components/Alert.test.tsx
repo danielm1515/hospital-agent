@@ -56,4 +56,16 @@ describe('Alert', () => {
     await userEvent.click(screen.getByRole('button', { name: 'סגירה' }))
     expect(onClose).toHaveBeenCalledTimes(1)
   })
+
+  it('places the close button as a sibling of the status region, not inside it (M8)', () => {
+    render(
+      <Alert variant="ok" title="ההכרעה נשמרה" onClose={() => {}}>
+        תוכן
+      </Alert>,
+    )
+    const status = screen.getByRole('status')
+    const button = screen.getByRole('button', { name: 'סגירה' })
+    expect(status.contains(button)).toBe(false)
+    expect(button.parentElement).toBe(status.parentElement)
+  })
 })

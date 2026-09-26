@@ -123,7 +123,9 @@ describe('CaseMonitor', () => {
   it('shows the shared loading status while the list is still loading', async () => {
     vi.mocked(api.listCases).mockReturnValue(new Promise(() => {})) // never resolves
     renderMonitor()
-    expect(await screen.findByText('טוען פניות')).toHaveAttribute('role', 'status')
+    const status = await screen.findByText('טוען פניות')
+    expect(status).toHaveAttribute('role', 'status')
+    expect(status.closest('.loader')).toBeInTheDocument()
   })
 
   it('lists every case straight from the one call, with no per-row detail call', async () => {
@@ -207,15 +209,18 @@ describe('CaseMonitor', () => {
     expect(api.getContext).toHaveBeenCalledWith('CASE-23FE645294B7')
   })
 
-  it('shows the smaller inline loading status in an expanded row while its detail and context load', async () => {
+  it('shows the smaller inline loading status in an expanded row while its detail and context load, with distinct labels (M1)', async () => {
     vi.mocked(api.getCase).mockReturnValue(new Promise(() => {})) // never resolves
     vi.mocked(api.getContext).mockReturnValue(new Promise(() => {})) // never resolves
     renderMonitor()
 
     await userEvent.click(await screen.findByRole('button', { name: 'CASE-23FE645294B7' }))
 
-    const statuses = await screen.findAllByText('טוען…')
-    expect(statuses).toHaveLength(2) // the detail panel and the correspondence/audit panel
+    // Two live regions with the same text ("טוען…") would be indistinguishable to a screen
+    // reader; each panel now names what it is loading.
+    const detailStatus = await screen.findByText('טוען פרטים')
+    const contextStatus = screen.getByText('טוען תכתובת')
+    const statuses = [detailStatus, contextStatus]
     for (const status of statuses) expect(status.closest('.loader')).toHaveClass('loader-inline')
   })
 

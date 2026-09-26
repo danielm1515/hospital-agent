@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
@@ -74,7 +75,9 @@ describe('ReviewQueue', () => {
   it('shows the shared loading status while the queue is still loading', async () => {
     vi.mocked(api.listReviews).mockReturnValue(new Promise(() => {})) // never resolves
     renderQueue()
-    expect(await screen.findByText('טוען פניות')).toHaveAttribute('role', 'status')
+    const status = await screen.findByText('טוען פניות')
+    expect(status).toHaveAttribute('role', 'status')
+    expect(status.closest('.loader')).toBeInTheDocument()
   })
 
   it('renders a row per queue item, with the Hebrew label and the code', async () => {
@@ -134,7 +137,7 @@ describe('ReviewQueue', () => {
     expect(screen.getByText('ההכרעה נשמרה')).toHaveClass('title')
   })
 
-  it('auto-dismisses the notice after 8 s', async () => {
+  it('auto-dismisses the notice after exactly 8 s, not a moment before (M3)', async () => {
     vi.useFakeTimers()
     vi.mocked(api.listReviews).mockResolvedValue(page([]))
     render(
@@ -146,12 +149,27 @@ describe('ReviewQueue', () => {
     )
     expect(screen.getByText('X')).toBeInTheDocument()
 
-    await act(() => vi.advanceTimersByTimeAsync(NOTICE_DISMISS_MS))
+    await act(() => vi.advanceTimersByTimeAsync(7999))
+    expect(screen.getByText('X')).toBeInTheDocument()
 
+    await act(() => vi.advanceTimersByTimeAsync(1))
     expect(screen.queryByText('X')).not.toBeInTheDocument()
   })
 
-  it('closes the notice with the close button', async () => {
+  it('renders no title when the decision state carried none (M4: the fallback is gone)', async () => {
+    vi.mocked(api.listReviews).mockResolvedValue(page([]))
+    render(
+      <MemoryRouter initialEntries={[{ pathname: '/staff', state: { notice: 'X' } }]}>
+        <Routes>
+          <Route path="/staff" element={<ReviewQueue />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+    const status = await screen.findByText('X')
+    expect(status.closest('[role="status"]')?.querySelector('.title')).toBeNull()
+  })
+
+  it('closes the notice with the close button, and moves focus to the page heading (M8)', async () => {
     vi.mocked(api.listReviews).mockResolvedValue(page([]))
     render(
       <MemoryRouter initialEntries={[{ pathname: '/staff', state: { notice: 'X', title: 'ההכרעה נשמרה' } }]}>
@@ -165,19 +183,79 @@ describe('ReviewQueue', () => {
     await userEvent.click(screen.getByRole('button', { name: 'סגירה' }))
 
     expect(screen.queryByText('X')).not.toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'תור הסלמות' })).toHaveFocus()
   })
 
-  it('does not show the notice again on remount - the history entry was replaced (Task 7)', async () => {
+  it('pauses the auto-dismiss while the notice is hovered, and resumes it on mouse-leave (M8)', async () => {
+    vi.useFakeTimers()
     vi.mocked(api.listReviews).mockResolvedValue(page([]))
-
-    function Harness({ show }: { show: boolean }) {
-      return show ? <ReviewQueue /> : null
-    }
-
-    const { rerender } = render(
+    render(
       <MemoryRouter initialEntries={[{ pathname: '/staff', state: { notice: 'X', title: 'ההכרעה נשמרה' } }]}>
         <Routes>
-          <Route path="/staff" element={<Harness show={true} />} />
+          <Route path="/staff" element={<ReviewQueue />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+    const notice = screen.getByText('X')
+
+    fireEvent.mouseEnter(notice)
+    await act(() => vi.advanceTimersByTimeAsync(NOTICE_DISMISS_MS + 1000))
+    expect(screen.getByText('X')).toBeInTheDocument() // paused - would have dismissed by now
+
+    fireEvent.mouseLeave(notice)
+    await act(() => vi.advanceTimersByTimeAsync(NOTICE_DISMISS_MS))
+    expect(screen.queryByText('X')).not.toBeInTheDocument() // resumed, and ran to completion
+  })
+
+  it('pauses the auto-dismiss while the close button has focus, and resumes it on blur (M8)', async () => {
+    vi.useFakeTimers()
+    vi.mocked(api.listReviews).mockResolvedValue(page([]))
+    render(
+      <MemoryRouter initialEntries={[{ pathname: '/staff', state: { notice: 'X', title: 'ההכרעה נשמרה' } }]}>
+        <Routes>
+          <Route path="/staff" element={<ReviewQueue />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+    const closeButton = screen.getByRole('button', { name: 'סגירה' })
+
+    // A real `.focus()`/`.blur()` call, not a manually-fired synthetic event: it dispatches
+    // the whole native cascade (`focus`/`focusin`, then `blur`/`focusout`), which is what
+    // React's onFocus/onBlur delegation actually listens for.
+    act(() => closeButton.focus())
+    await act(() => vi.advanceTimersByTimeAsync(NOTICE_DISMISS_MS + 1000))
+    expect(screen.getByText('X')).toBeInTheDocument() // paused - would have dismissed by now
+
+    act(() => closeButton.blur())
+    await act(() => vi.advanceTimersByTimeAsync(NOTICE_DISMISS_MS))
+    expect(screen.queryByText('X')).not.toBeInTheDocument() // resumed, and ran to completion
+  })
+
+  it('does not show the notice again on remount - the history entry was replaced (Task 7, fix round 1 M9)', async () => {
+    vi.mocked(api.listReviews).mockResolvedValue(page([]))
+
+    // Fix round 1 (M9): one `render()` call, one `MemoryRouter`/history instance for the
+    // whole test - the unmount/remount is driven by the harness's own state, through real
+    // button clicks, not by swapping in a new router element across `rerender()` calls.
+    function RemountHarness() {
+      const [mounted, setMounted] = useState(true)
+      return (
+        <>
+          {mounted && <ReviewQueue />}
+          <button type="button" onClick={() => setMounted(false)}>
+            test-unmount
+          </button>
+          <button type="button" onClick={() => setMounted(true)}>
+            test-remount
+          </button>
+        </>
+      )
+    }
+
+    render(
+      <MemoryRouter initialEntries={[{ pathname: '/staff', state: { notice: 'X', title: 'ההכרעה נשמרה' } }]}>
+        <Routes>
+          <Route path="/staff" element={<RemountHarness />} />
         </Routes>
       </MemoryRouter>,
     )
@@ -187,21 +265,8 @@ describe('ReviewQueue', () => {
     // Unmount, then remount at the same route: the mount effect already replaced the
     // history entry's state with `null`, so a fresh ReviewQueue (a reload, or Back to
     // this same entry) reads no notice at all - this is what a real reload would see.
-    rerender(
-      <MemoryRouter initialEntries={[{ pathname: '/staff' }]}>
-        <Routes>
-          <Route path="/staff" element={<Harness show={false} />} />
-        </Routes>
-      </MemoryRouter>,
-    )
-    rerender(
-      <MemoryRouter initialEntries={[{ pathname: '/staff' }]}>
-        <Routes>
-          <Route path="/staff" element={<Harness show={true} />} />
-        </Routes>
-      </MemoryRouter>,
-    )
-    await act(async () => {}) // flushes the remounted queue's own listReviews call
+    await userEvent.click(screen.getByRole('button', { name: 'test-unmount' }))
+    await userEvent.click(screen.getByRole('button', { name: 'test-remount' }))
 
     expect(screen.queryByText('X')).not.toBeInTheDocument()
   })
@@ -336,7 +401,7 @@ describe('ReviewCase -> ReviewQueue: the decision notice (Task 7)', () => {
     }
   }
 
-  it('shows a titled notice once and the queue no longer carries the decided case', async () => {
+  it('decides a case from the queue: the notice shows once, and a reload finds no notice with the case gone (I1)', async () => {
     vi.mocked(api.getContext).mockResolvedValue(reviewContext())
     vi.mocked(api.getReviewItem).mockResolvedValue(MEDICAL)
     vi.mocked(api.getMessageTemplates).mockResolvedValue([])
@@ -347,29 +412,61 @@ describe('ReviewCase -> ReviewQueue: the decision notice (Task 7)', () => {
       truncated: false,
     })
     vi.mocked(api.decide).mockResolvedValue({ case_id: MEDICAL.case_id, state: 'Completed' })
-    // The decision already committed server-side before the queue is asked again, so the
-    // one call the queue makes on mount (Task 3/5) already reflects it - no stale row.
-    vi.mocked(api.listReviews).mockResolvedValue(page([]))
+    // Step 1: the queue's very first call still carries the case; the decision commits
+    // server-side before the queue is ever asked again, so every call after that does not.
+    vi.mocked(api.listReviews).mockResolvedValueOnce(page([MEDICAL])).mockResolvedValue(page([]))
+
+    // Toggled by real button clicks below, so "unmount, then remount" (step 4) is an honest
+    // reload simulation under the one router this test renders (fix round 1 M9) - not a
+    // `rerender()` swap of a whole new router element.
+    function StaffHarness() {
+      const [mounted, setMounted] = useState(true)
+      return (
+        <>
+          {mounted && <ReviewQueue />}
+          <button type="button" onClick={() => setMounted(false)}>
+            test-unmount
+          </button>
+          <button type="button" onClick={() => setMounted(true)}>
+            test-remount
+          </button>
+        </>
+      )
+    }
 
     render(
-      <MemoryRouter initialEntries={[`/staff/cases/${MEDICAL.case_id}`]}>
+      <MemoryRouter initialEntries={['/staff']}>
         <TestAuthProvider value={authValue({ user: STAFF_USER })}>
           <Routes>
-            <Route path="/staff" element={<ReviewQueue />} />
+            <Route path="/staff" element={<StaffHarness />} />
             <Route path="/staff/cases/:caseId" element={<ReviewCase />} />
           </Routes>
         </TestAuthProvider>
       </MemoryRouter>,
     )
 
+    // Step 2: click the row, then decide.
+    await userEvent.click(await screen.findByText(MEDICAL.case_id))
     await userEvent.type(await screen.findByLabelText(/סיבת ההכרעה/), 'טופלה מול הרופא.')
     await userEvent.click(screen.getByRole('button', { name: 'סגירת הפנייה' }))
 
-    // The queue screen, reached through the decision's own navigate.
+    // Step 3: the notice shows (title and text), and the row is gone.
     expect(await screen.findByText('ההכרעה נשמרה')).toHaveClass('title')
+    // Step 6: the new State is visible right here, through the notice's own "(Completed)" -
+    // the case genuinely changed state, not merely vanished from the table.
     expect(screen.getByText(`הפנייה ${MEDICAL.case_id} עברה למצב הושלמה (Completed).`)).toBeInTheDocument()
     expect(await screen.findByText('אין פניות הממתינות להכרעה')).toBeInTheDocument()
     expect(screen.queryByText(MEDICAL.case_id)).not.toBeInTheDocument()
+    expect(api.listReviews).toHaveBeenCalledTimes(2)
+
+    // Step 4: unmount and remount ReviewQueue under the same router, as a reload would.
+    await userEvent.click(screen.getByRole('button', { name: 'test-unmount' }))
+    await userEvent.click(screen.getByRole('button', { name: 'test-remount' }))
+
+    // Step 5: the notice is absent, and the queue was asked again (a third call).
+    expect(screen.queryByText('ההכרעה נשמרה')).not.toBeInTheDocument()
+    expect(screen.queryByText(`הפנייה ${MEDICAL.case_id} עברה למצב הושלמה (Completed).`)).not.toBeInTheDocument()
+    expect(api.listReviews).toHaveBeenCalledTimes(3)
   })
 
   it('titles the notice "הבקשה נשלחה" when a request to the patient is sent (PatientRequest onSent)', async () => {

@@ -62,7 +62,9 @@ describe('RequestDetail: loading', () => {
   it('shows the shared loading status while the request is still loading', async () => {
     getRequest.mockReturnValue(new Promise(() => {})) // never resolves
     renderDetail()
-    expect(await screen.findByText('טוען…')).toHaveAttribute('role', 'status')
+    const status = await screen.findByText('טוען…')
+    expect(status).toHaveAttribute('role', 'status')
+    expect(status.closest('.loader')).toBeInTheDocument()
   })
 })
 

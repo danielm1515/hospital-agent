@@ -11,6 +11,7 @@ import { documentLabel } from '../pages/patient/helpers'
 import { detailOf } from '../pages/staff/labels'
 import { Alert } from './Alert'
 import { Button } from './Button'
+import { Loading } from './Loading'
 import { TextField } from './TextField'
 
 /** The appointment-service catalog (`app/catalog.py`), presentation only (design D11). */
@@ -223,6 +224,10 @@ export function AppointmentsPanel({ audience, load }: AppointmentsPanelProps) {
             </ul>
           )}
         </>
+      ) : busy ? (
+        // Fix round 1 (I2): the panel's first load has no previous result or error to show,
+        // so without this the whole panel rendered nothing at all while it was in flight.
+        <Loading size="inline" label="טוען תורים" />
       ) : null}
     </section>
   )

@@ -13,9 +13,6 @@ import { PATIENT_HOME, STAFF_HOME, PATIENT_LOGIN, STAFF_LOGIN } from './routes'
 // themselves live in `./routes`, a leaf module with no imports, to avoid an
 // import cycle (App -> PatientRoutes/StaffRoutes -> ... -> paths -> App).
 export { PATIENT_HOME, STAFF_HOME, PATIENT_LOGIN, STAFF_LOGIN }
-// `Loading` itself now lives in `./components/Loading` (staff-fixes design Task 6),
-// re-exported here so an existing `from '../../App'` import keeps working.
-export { Loading }
 
 type Area = 'patient' | 'staff'
 

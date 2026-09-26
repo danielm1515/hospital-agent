@@ -35,14 +35,19 @@ export interface QueueNotice {
 export function ReviewQueue() {
   const navigate = useNavigate()
   const location = useLocation()
+  const headingRef = useRef<HTMLHeadingElement>(null)
 
   // Copied out of `location.state` once, on mount (a lazy initializer runs exactly once) -
   // never read from `location.state` again after that, because a reload keeps the browser's
   // `history.state` around, and the notice must not come back from a reload or Back (Task 7).
-  const [notice, setNotice] = useState<{ text: string; title: string } | null>(() => {
+  // Fix round 1 (M4): no fallback title - the title is whatever `ReviewCase` sent (or none),
+  // never invented here, so the decide/onSent/onAnswered titles are pinned by their own tests.
+  const [notice, setNotice] = useState<{ text: string; title?: string } | null>(() => {
     const state = location.state as QueueNotice | null
-    return state?.notice ? { text: state.notice, title: state.title ?? 'ההכרעה נשמרה' } : null
+    return state?.notice ? { text: state.notice, title: state.title } : null
   })
+  // Fix round 1 (M8): hovering or focusing the notice pauses its auto-dismiss.
+  const [noticePaused, setNoticePaused] = useState(false)
 
   useEffect(() => {
     // Replaces the history entry's state with `null` right after reading it, so a refresh
@@ -50,14 +55,26 @@ export function ReviewQueue() {
     if (location.state !== null) {
       navigate(location.pathname, { replace: true, state: null })
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  // Fix round 1 (M8): a real pause, not a restart - the remaining time survives a
+  // hover/focus-driven pause and resume, tracked across the effect's own start/stop.
+  const remainingMsRef = useRef(NOTICE_DISMISS_MS)
   useEffect(() => {
-    if (!notice) return
-    const timer = setTimeout(() => setNotice(null), NOTICE_DISMISS_MS)
-    return () => clearTimeout(timer)
-  }, [notice])
+    if (!notice || noticePaused) return
+    const startedAt = Date.now()
+    const timer = setTimeout(() => setNotice(null), remainingMsRef.current)
+    return () => {
+      clearTimeout(timer)
+      remainingMsRef.current -= Date.now() - startedAt
+    }
+  }, [notice, noticePaused])
+
+  function closeNotice() {
+    setNotice(null)
+    // Fix round 1 (M8): focus goes to the page heading, not lost to the document body.
+    headingRef.current?.focus()
+  }
 
   const [items, setItems] = useState<ReviewItem[] | null>(null)
   const [nextCursor, setNextCursor] = useState<string | null>(null)
@@ -124,7 +141,9 @@ export function ReviewQueue() {
   return (
     <section className="staff-page">
       <header className="page-head">
-        <h1 className="page-h">תור הסלמות</h1>
+        <h1 className="page-h" ref={headingRef} tabIndex={-1}>
+          תור הסלמות
+        </h1>
         <p className="lede">
           פניות שממתינות להכרעת אדם, מהחדשה שנכנסה לתור ועד הישנה. הרשימה מתרעננת כל חמש
           שניות; פנייה שחזרה מתשובת מטופל או מבקשה שפג זמנה נכנסת מחדש וקופצת לראש התור, כי
@@ -133,9 +152,18 @@ export function ReviewQueue() {
       </header>
 
       {notice && (
-        <Alert variant="ok" title={notice.title} onClose={() => setNotice(null)}>
-          {notice.text}
-        </Alert>
+        <div
+          onMouseEnter={() => setNoticePaused(true)}
+          onMouseLeave={() => setNoticePaused(false)}
+          onFocus={() => setNoticePaused(true)}
+          onBlur={(event) => {
+            if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setNoticePaused(false)
+          }}
+        >
+          <Alert variant="ok" title={notice.title} onClose={closeNotice}>
+            {notice.text}
+          </Alert>
+        </div>
       )}
       {error && (
         <Alert variant="error" title="טעינת התור נכשלה">

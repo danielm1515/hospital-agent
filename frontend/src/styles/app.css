@@ -389,11 +389,27 @@ img {
   color: var(--success-500);
 }
 
+/* Fix round 1 (M8): the close button is a sibling of the alert's own `role="status"` div
+   (not a descendant of it), positioned over it - `.alert-shell` is the only element that
+   wraps both, and only exists when `onClose` is given. */
+.alert-shell {
+  position: relative;
+}
+
+.alert-shell .alert {
+  padding-inline-end: var(--space-7);
+}
+
 .alert-close {
-  margin-inline-start: auto;
-  padding: var(--space-1);
-  flex: none;
-  align-self: flex-start;
+  position: absolute;
+  inset-block-start: var(--space-2);
+  inset-inline-end: var(--space-2);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-inline-size: 24px;
+  min-block-size: 24px;
+  padding: 0;
   background: none;
   border: 0;
   border-radius: var(--radius-sm);
