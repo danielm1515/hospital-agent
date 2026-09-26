@@ -221,7 +221,7 @@ export function ReviewCase() {
         )}
       </header>
 
-      <AppointmentsPanel audience="staff" load={loadAppointments} />
+      <AppointmentsPanel key={caseId} audience="staff" load={loadAppointments} />
 
       {loadError && (
         <Alert variant="error" title="רענון ההקשר נכשל">

@@ -235,7 +235,7 @@ function errorBody(audience: 'patient' | 'staff', detail: string): ReactNode {
     }
     return 'מערכת התורים אינה זמינה כרגע. נסו שוב בעוד רגע.'
   }
-  const label = ERROR_LABELS[detail] ?? detail
+  const label = ERROR_LABELS[detail] ?? 'שגיאה לא צפויה'
   return (
     <>
       {label} <span className="mono">{detail}</span>
