@@ -6,9 +6,9 @@
  */
 import { useEffect, useRef, useState } from 'react'
 import type { FormEvent, ReactNode } from 'react'
-import { ApiError } from '../api/client'
 import type { Appointment, AppointmentList, AppointmentStatus } from '../api/types'
 import { documentLabel } from '../pages/patient/helpers'
+import { detailOf } from '../pages/staff/labels'
 import { Alert } from './Alert'
 import { Button } from './Button'
 import { TextField } from './TextField'
@@ -33,12 +33,17 @@ const ERROR_LABELS: Record<string, string> = {
   patient_not_found: 'המטופל אינו מוכר במערכת התורים',
   case_not_found: 'הפנייה לא נמצאה',
   invalid_range: 'טווח תאריכים לא תקין',
+  network_error: 'אין חיבור לשרת',
 }
 
+const INVALID_DATES_ERROR = 'יש לבחור שני תאריכים תקינים'
 const RANGE_ORDER_ERROR = 'תאריך הסיום חייב להיות אחרי תאריך ההתחלה או באותו יום'
 const RANGE_SPAN_ERROR = 'אפשר להציג עד שנה אחת'
 const MAX_SPAN_DAYS = 366
 const ONE_DAY_MS = 24 * 60 * 60 * 1000
+/** `<input type="date">` value shape, a four-digit year required (never a two-digit
+ * year: the multi-arg `Date` constructor maps 0-99 to 1900-1999, silently). */
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/
 
 const DATE_TIME = new Intl.DateTimeFormat('he-IL', {
   weekday: 'long',
@@ -70,20 +75,22 @@ function dateParts(value: string): [number, number, number] {
   return [y, m, d]
 }
 
+/**
+ * `value` is a well-formed `YYYY-MM-DD` day with a four-digit year (>= 1000). An empty,
+ * partial or two/three-digit-year string (from a cleared or half-typed date input) fails
+ * this, so it is refused before it ever reaches `new Date(...)` or `toISOString()`.
+ */
+function isValidDay(value: string): boolean {
+  if (!DATE_RE.test(value)) return false
+  const [y] = dateParts(value)
+  return y >= 1000
+}
+
 /** Local midnight of `from`, local midnight of the day *after* `to` - `to` is included. */
 export function rangeToInstants(from: string, to: string): { from: Date; to: Date } {
   const [fy, fm, fd] = dateParts(from)
   const [ty, tm, td] = dateParts(to)
   return { from: new Date(fy, fm - 1, fd), to: new Date(ty, tm - 1, td + 1) }
-}
-
-/** `to`'s calendar day is strictly before `from`'s (same day is fine: the range is inclusive). */
-function toDayBeforeFrom(from: string, to: string): boolean {
-  const [fy, fm, fd] = dateParts(from)
-  const [ty, tm, td] = dateParts(to)
-  if (ty !== fy) return ty < fy
-  if (tm !== fm) return tm < fm
-  return td < fd
 }
 
 export interface AppointmentsPanelProps {
@@ -101,11 +108,23 @@ export function AppointmentsPanel({ audience, load }: AppointmentsPanelProps) {
   const requestId = useRef(0)
 
   function runLoad(from: string, to: string) {
-    if (toDayBeforeFrom(from, to)) {
-      setRangeError(RANGE_ORDER_ERROR)
+    // Validated first, and entirely before any state that starts a request (`shown`,
+    // `busy`, `error`) - a cleared or half-typed date input must never leave the panel
+    // permanently busy (it would, if `toISOString()` on an Invalid Date threw before
+    // `busy` was ever set back to `false`).
+    if (!isValidDay(from) || !isValidDay(to)) {
+      setRangeError(INVALID_DATES_ERROR)
       return
     }
     const instants = rangeToInstants(from, to)
+    if (Number.isNaN(instants.from.getTime()) || Number.isNaN(instants.to.getTime())) {
+      setRangeError(INVALID_DATES_ERROR)
+      return
+    }
+    if (instants.to.getTime() <= instants.from.getTime()) {
+      setRangeError(RANGE_ORDER_ERROR)
+      return
+    }
     const spanDays = (instants.to.getTime() - instants.from.getTime()) / ONE_DAY_MS
     if (spanDays > MAX_SPAN_DAYS) {
       setRangeError(RANGE_SPAN_ERROR)
@@ -116,7 +135,11 @@ export function AppointmentsPanel({ audience, load }: AppointmentsPanelProps) {
     setBusy(true)
     setError(null)
     const id = ++requestId.current
-    load(instants.from, instants.to)
+    // `Promise.resolve().then(...)` so a `load` that throws synchronously (rather than
+    // returning a rejected promise) still lands in `.catch` instead of escaping `runLoad`
+    // with `busy` stuck at `true`.
+    Promise.resolve()
+      .then(() => load(instants.from, instants.to))
       .then((answer) => {
         if (id !== requestId.current) return
         setResult(answer)
@@ -148,7 +171,7 @@ export function AppointmentsPanel({ audience, load }: AppointmentsPanelProps) {
   }
 
   const heading = audience === 'patient' ? 'התורים שלי' : 'התורים של המטופל'
-  const detail = error instanceof ApiError ? error.detail : null
+  const detail = error ? detailOf(error) : null
 
   return (
     <section className="appointments card">
@@ -180,7 +203,7 @@ export function AppointmentsPanel({ audience, load }: AppointmentsPanelProps) {
         <Alert variant="info">רשימת התורים אינה זמינה כרגע.</Alert>
       ) : error ? (
         <Alert variant="error" title="לא הצלחנו לטעון את התורים">
-          <p>{errorBody(audience, detail)}</p>
+          <p>{errorBody(audience, detail ?? 'network_error')}</p>
           <Button variant="secondary" busy={busy} onClick={retry}>
             נסה שוב
           </Button>
@@ -205,18 +228,17 @@ export function AppointmentsPanel({ audience, load }: AppointmentsPanelProps) {
   )
 }
 
-function errorBody(audience: 'patient' | 'staff', detail: string | null): ReactNode {
+function errorBody(audience: 'patient' | 'staff', detail: string): ReactNode {
   if (audience === 'patient') {
     if (detail === 'patient_not_found') {
       return 'לא נמצאו פרטי המטופל במערכת התורים. אפשר לפנות למוקד המטופלים.'
     }
     return 'מערכת התורים אינה זמינה כרגע. נסו שוב בעוד רגע.'
   }
-  const code = detail ?? 'unknown_error'
-  const label = ERROR_LABELS[code] ?? code
+  const label = ERROR_LABELS[detail] ?? detail
   return (
     <>
-      {label} <span className="mono">{code}</span>
+      {label} <span className="mono">{detail}</span>
     </>
   )
 }

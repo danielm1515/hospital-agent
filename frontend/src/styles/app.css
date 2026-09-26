@@ -2348,6 +2348,7 @@ img {
   margin: 0;
   margin-block-start: var(--space-1);
   padding: 0;
+  list-style: none;
   font-size: 13px;
   line-height: 20px;
   color: var(--ink-500);
