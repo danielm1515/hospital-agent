@@ -268,7 +268,7 @@ describe('RequestDetail: needs_document, file upload (sub-project 13, docs/api.m
     ['bad_date', null, 'error', 'תאריך המסמך עתידי. ודאו שהעליתם את המסמך הנכון.'],
     ['no_date', null, 'error', 'לא מצאנו תאריך על המסמך. העלו מסמך שמופיע עליו תאריך הבדיקה.'],
     ['unsupported_format', null, 'error', 'סוג הקובץ אינו נתמך. העלו PDF או תמונה (JPG/PNG).'],
-    ['too_large', null, 'error', 'הקובץ גדול מ־10MB. העלו קובץ קטן יותר.'],
+    ['too_large', null, 'error', 'התמונה גדולה מדי ברזולוציה. העלו תמונה קטנה יותר או קובץ PDF.'],
   ] as const)('shows the sentence for upload.code %s', async (code, documentType, variant, sentence) => {
     const user = userEvent.setup()
     getRequest.mockResolvedValue(needsDocumentFile())
