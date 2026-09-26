@@ -7,7 +7,7 @@ reason code the Human Review Service gives - the API never decides that itself.
 """
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from sqlalchemy.engine import Engine
 
 from .. import repository
@@ -15,9 +15,11 @@ from ..auth import Principal
 from ..human_review import AnswerRejected, ContextChanged, DecisionRejected, HumanReviewService, NotInReview
 from ..naming import State
 from ..session import CaseNotFound
+from . import appointments
 from .deps import get_engine, get_reviews, require_staff
 from .schemas import (
     AnswerRequest,
+    AppointmentsView,
     AuditRecord,
     CaseDetail,
     CaseSummary,
@@ -47,6 +49,19 @@ def get_case(case_id: str, db: Engine = Depends(get_engine)) -> CaseDetail:
     if case is None:
         raise HTTPException(status_code=404, detail="case_not_found")
     return CaseDetail.model_validate(case)
+
+
+@router.get("/cases/{case_id}/appointments", response_model=AppointmentsView)
+def case_appointments(case_id: str, request: Request, start: str | None = Query(default=None, alias="from"),
+                      end: str | None = Query(default=None, alias="to"),
+                      db: Engine = Depends(get_engine)) -> AppointmentsView:
+    """The case's patient's appointments (sub-project 16). Apart from `/context` on purpose:
+    the list is not part of what a decision is bound to (`shown_context_ref`)."""
+    with db.connect() as conn:
+        case = repository.load_case(conn, case_id)
+    if case is None:
+        raise HTTPException(status_code=404, detail="case_not_found")
+    return appointments.read(request.app.state.appointment_list, case.patient_id, start, end)
 
 
 @router.get("/cases/{case_id}/audit", response_model=list[AuditRecord])

@@ -10,7 +10,7 @@ import logging
 from email.message import Message
 from email.parser import HeaderParser
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from starlette.concurrency import run_in_threadpool
 
 from ..auth import DEMO_USERS, Principal
@@ -23,8 +23,17 @@ from ..session import (
     ReplyKindMismatch,
     SessionService,
 )
+from . import appointments
 from .deps import get_session, require_patient
-from .schemas import DocumentUpload, NewRequest, PatientCaseView, PdfUploadResponse, ReplyBody, UploadResult
+from .schemas import (
+    AppointmentsView,
+    DocumentUpload,
+    NewRequest,
+    PatientCaseView,
+    PdfUploadResponse,
+    ReplyBody,
+    UploadResult,
+)
 
 router = APIRouter(prefix="/api/patient", tags=["patient"])
 logger = logging.getLogger(__name__)
@@ -53,6 +62,15 @@ def submit_request(body: NewRequest, principal: Principal = Depends(require_pati
         logger.info("request rejected: %s", rejected.reason)
         raise HTTPException(status_code=409, detail="request_rejected") from None
     return PatientCaseView.model_validate(session.patient_view(case_id))
+
+
+@router.get("/appointments", response_model=AppointmentsView)
+def list_appointments(request: Request, start: str | None = Query(default=None, alias="from"),
+                      end: str | None = Query(default=None, alias="to"),
+                      principal: Principal = Depends(require_patient)) -> AppointmentsView:
+    """The patient's own appointments (sub-project 16): the patient is the token's, never a
+    parameter (§18.3) - a query `patient_id` is ignored."""
+    return appointments.read(request.app.state.appointment_list, principal.patient_id, start, end)
 
 
 @router.get("/requests", response_model=list[PatientCaseView])

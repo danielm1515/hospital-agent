@@ -26,6 +26,7 @@ from sqlalchemy import text
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import SQLAlchemyError
 
+from ..appointment_list import AppointmentListClient, build_list_client
 from ..db import make_engine
 from ..document_intake import build_intake_client
 from ..execution.appointment_service import build_gateway
@@ -88,7 +89,8 @@ class UploadSizeLimit:
 
 
 def create_app(engine: Engine | None = None, orchestrator: Orchestrator | None = None,
-               document_intake: DocumentIntake | None = None) -> FastAPI:
+               document_intake: DocumentIntake | None = None,
+               appointment_list: AppointmentListClient | None = None) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         owned = engine is None
@@ -97,6 +99,10 @@ def create_app(engine: Engine | None = None, orchestrator: Orchestrator | None =
         app.state.appointments_source = None  # likewise: "mock" or "appointment-service"
         app.state.documents_source = None  # likewise: "mock" or "document-service"
         app.state.orchestrator = orchestrator  # injected: stored as it is, never started
+        # Sub-project 16: the patient's own appointment-list read (routes_patient/routes_staff),
+        # separate from CheckAppointment's gateway above - a test injects its own fake the way
+        # it injects the Orchestrator.
+        app.state.appointment_list = build_list_client() if owned else appointment_list
 
         def _wake() -> None:
             running = app.state.orchestrator

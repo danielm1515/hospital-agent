@@ -326,3 +326,30 @@ class MetricsResponse(_FromMetrics):
     tools: ToolsView
     patient_sla: PatientSlaView
     policy: PolicyView
+
+
+# --- sub-project 16: the patient's appointments (design D5, D6) ---------------------------
+# Read live from the appointment-service and never stored (docs/spec_corrections.md row 89).
+
+
+class AppointmentView(BaseModel):
+    """One appointment, as the appointment-service answered it (sub-project 16, design D6)."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    appointment_id: str
+    appointment_at: datetime
+    department: str
+    doctor_name: str | None
+    location: str | None
+    status: Literal["Scheduled", "Cancelled"]
+    required_documents: list[str]
+
+
+class AppointmentsView(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    window_from: datetime = Field(alias="from")
+    window_to: datetime = Field(alias="to")
+    appointments: list[AppointmentView]
+    truncated: bool

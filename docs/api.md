@@ -71,9 +71,11 @@ methods: `GET`, `POST`, `DELETE`, `OPTIONS`. Allowed headers: `Authorization`,
 | POST | `/api/patient/requests/{case_id}/documents/file` | patient | Upload a PDF, forwarded to the document-service (sub-project 13) |
 | POST | `/api/patient/requests/{case_id}/reply` | patient | Answer a staff question (sub-project 15) |
 | POST | `/api/patient/requests/{case_id}/reply/file` | patient | Upload the PDF a staff member asked for (sub-project 15) |
+| GET | `/api/patient/appointments` | patient | My appointments (`?from=&to=`, sub-project 16) |
 | GET | `/api/staff/cases` | staff | All cases (`?state=`) |
 | GET | `/api/staff/cases/{case_id}` | staff | One case, in full |
 | GET | `/api/staff/cases/{case_id}/audit` | staff | The case's audit trace |
+| GET | `/api/staff/cases/{case_id}/appointments` | staff | The case's patient's appointments (`?from=&to=`, sub-project 16) |
 | GET | `/api/staff/reviews` | staff | The human-review queue |
 | GET | `/api/staff/cases/{case_id}/context` | staff | What the reviewer is shown |
 | POST | `/api/staff/cases/{case_id}/decision` | staff | Approve / resolve / reject |
@@ -908,3 +910,71 @@ Two more codes are sub-project 15's own:
 - `returned_by`: how the case last came back to `AwaitingHumanReview` - `"patient_reply"`
   (the patient answered), `"reply_timeout"` (the deadline passed, the SLA Worker returned
   it), or `null` (it came from elsewhere, e.g. it just escalated).
+
+## 9. The patient's appointments (sub-project 16)
+
+```
+GET /api/patient/appointments?from=&to=
+GET /api/staff/cases/{case_id}/appointments?from=&to=
+```
+
+Read live from the appointment-service on every call and never stored here
+(`docs/spec_corrections.md` row 89, beside row 79) - there is no cache, and a repeated
+request simply asks again. The patient route works on the token's own patient - a query
+`patient_id` is accepted but ignored, exactly like every other patient route (§18.3); the
+staff route works on the case's patient, resolved server-side, and needs a `clinical_staff`
+or `admin_staff` token. It is deliberately a separate route from `GET
+.../cases/{case_id}/context`: the appointment list is not part of what a decision is bound
+to, so reading it never changes `shown_context_ref`.
+
+**The window.** `from` is inclusive, `to` is exclusive; both are ISO 8601 and must carry a
+time zone offset (a value with no offset is rejected, not assumed to be UTC or local time).
+Neither given: `from` is now, `to` is 30 days after it. One given: the other is 30 days from
+it (before `to`, or after `from`). The window in the answer is always the one actually used
+(now + a fixed span, not "whatever `now` was" restated) - both bounds are echoed back
+converted to UTC, whatever offset the query used. A reversed window (`to` at or before
+`from`), or one longer than 366 days, is `422 invalid_range` - checked before the
+appointment-service is asked at all.
+
+`200`:
+
+```json
+{
+  "from": "2026-10-01T00:00:00Z",
+  "to": "2026-10-31T00:00:00Z",
+  "appointments": [
+    {
+      "appointment_id": "APT-8391",
+      "appointment_at": "2026-10-03T07:30:00Z",
+      "department": "Neurology",
+      "doctor_name": "Dr. Cohen",
+      "location": "Building B, Floor 2",
+      "status": "Scheduled",
+      "required_documents": ["CBC", "ECG"]
+    }
+  ],
+  "truncated": false
+}
+```
+
+`status` is `Scheduled` or `Cancelled`. `truncated` is `true` when the appointment-service's
+own answer was cut off at its cap (100 rows) rather than the full window's worth - the UI
+should say the list may be incomplete and suggest narrowing the range.
+
+- `401 not_authenticated` - as everywhere.
+- `403 patients_only` (the patient route, a staff token) / `403 staff_only` (the staff
+  route, a patient token).
+- `404 appointments_not_enabled` - the server has no appointment-service configured
+  (`APPOINTMENT_SERVICE_URL` + `APPOINTMENT_API_KEY`); there is no mock for this route
+  (design decision: unlike `CheckAppointment`'s own gateway, sub-project 10).
+- `404 case_not_found` - the staff route, an unknown case.
+- `404 patient_not_found` - the appointment-service's registry does not know the patient.
+- `422 invalid_range` - `from` or `to` does not parse as ISO 8601, either carries no time
+  zone offset, `to` is at or before `from`, or the span is over 366 days. Neither bound is
+  echoed in the error.
+- `503 appointments_unavailable` - the appointment-service did not answer, answered
+  something other than its documented 200/404 shape, or answered any other status. The
+  application log records only the outcome (`no_answer`, `status_<n>`, `invalid_response`,
+  or `invalid_patient_id` for a defensive check that never rejects a token- or
+  case-resolved patient in practice) - never the patient_id and never an appointment
+  (§12.3, design D9).
