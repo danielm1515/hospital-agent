@@ -11,11 +11,14 @@ from hospital_agent.api.app import UPLOAD_BODY_LIMIT, create_app
 from hospital_agent.auth import demo_password
 from hospital_agent.document_intake import IntakeAnswer, IntakeUnavailable
 from hospital_agent.naming import Event, State
-from hospital_agent.session import CaseNotFound, NotWaitingForDocument, SessionService, UploadOutcome
+from hospital_agent.session import (
+    _REJECTION_CODES, _UNREADABLE, CaseNotFound, NotWaitingForDocument, SessionService, UploadOutcome,
+)
 from tests.driver import Driver
 
 PATIENT, OTHER = "P-10041", "P-20000"
 PDF = b"%PDF-1.7\n1 0 obj << >> endobj\n%%EOF"
+JPEG = b"\xff\xd8\xff\xe0\x00\x10JFIF...binary..."
 FILENAME = "my-ecg-scan.pdf"
 
 
@@ -172,6 +175,54 @@ def test_no_reason_logs_only_the_code(sm, app_engine, caplog):
     lines = [r.getMessage() for r in caplog.records if r.name == "hospital_agent.session"]
     assert "pdf upload: not_medical" in lines
     assert not any("(" in line for line in lines)
+
+
+# --- fix round 1, M2: a reason only applies to the result it is documented for -----------------
+
+@pytest.mark.parametrize("result, reason", [
+    ("PATIENT_MISMATCH", "too_old"),        # a DOCUMENT_EXPIRED reason on a different result
+    ("PATIENT_MISMATCH", "unknown_type"),   # a DOCUMENT_UNREADABLE reason on a different result
+    ("NON_MEDICAL_DOCUMENT", "no_date"),
+    ("DOCUMENT_UNREADABLE", "too_old"),     # an DOCUMENT_EXPIRED-only reason on DOCUMENT_UNREADABLE
+    ("DOCUMENT_EXPIRED", "unknown_type"),   # a DOCUMENT_UNREADABLE-only reason on DOCUMENT_EXPIRED
+])
+def test_a_reason_on_the_wrong_result_is_ignored(sm, app_engine, result, reason):
+    d = awaiting(sm, app_engine)
+    answer = IntakeAnswer(result, "DOC-1", "ECG", None, reason)
+    outcome = SessionService(sm, document_intake=FakeIntake(answer)).upload_pdf(PATIENT, d.case_id, PDF, FILENAME)
+    assert outcome.code == _REJECTION_CODES.get(result, _UNREADABLE)
+
+
+# --- fix round 1, M3: the DOCUMENT_UPLOADED payload's format matches the sniffed kind -----------
+
+def test_the_uploaded_format_matches_the_sniffed_kind(sm, app_engine, monkeypatch):
+    d = awaiting(sm, app_engine)
+    session = SessionService(sm, document_intake=FakeIntake(accepted("ECG")))
+    calls = []
+    original = session.upload_document
+
+    def spy(*args, **kwargs):
+        calls.append(kwargs.get("fmt"))
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(session, "upload_document", spy)
+    session.upload_pdf(PATIENT, d.case_id, JPEG, "scan.jpg")
+    assert calls == ["jpg"]
+
+
+def test_a_pdf_upload_still_records_the_pdf_format(sm, app_engine, monkeypatch):
+    d = awaiting(sm, app_engine)
+    session = SessionService(sm, document_intake=FakeIntake(accepted("ECG")))
+    calls = []
+    original = session.upload_document
+
+    def spy(*args, **kwargs):
+        calls.append(kwargs.get("fmt"))
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(session, "upload_document", spy)
+    session.upload_pdf(PATIENT, d.case_id, PDF, FILENAME)
+    assert calls == ["pdf"]
 
 
 # --- rules 1 and 3: checked first; an unavailable service records nothing ---------------------------

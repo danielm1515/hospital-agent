@@ -59,7 +59,7 @@ _REASONS = frozenset({
 })
 
 
-def _sniff_kind(data: bytes) -> str:
+def sniff_kind(data: bytes) -> str:
     """`"jpeg"` or `"png"` by magic bytes, else `"pdf"` (the previous, and still the most
     common, case - and the safe default for anything unrecognised, since the document-service
     re-checks the actual bytes regardless of what this header claims)."""
@@ -177,7 +177,7 @@ class DocumentIntakeClient:
 
     def submit(self, patient_id: str, filename: str, data: bytes) -> IntakeAnswer:
         url = f"{self._base_url}/api/v1/patients/{urllib.parse.quote(patient_id, safe='')}/documents"
-        kind = _sniff_kind(data)
+        kind = sniff_kind(data)
         boundary, body = _multipart(filename, data, kind)
         headers = {"X-API-Key": self._api_key, "Accept": "application/json",
                    "Content-Type": f"multipart/form-data; boundary={boundary}"}

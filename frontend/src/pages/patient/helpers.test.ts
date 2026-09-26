@@ -91,7 +91,21 @@ describe('patient helpers', () => {
     // A name and a reported type that disagree, or neither saying an accepted kind: refused.
     expect(isAcceptedDocumentFile(file('photo.jpg', 'image/png'))).toBe(false)
     expect(isAcceptedDocumentFile(file('notes.txt', 'text/plain'))).toBe(false)
+  })
+
+  it('is case-insensitive about the extension (fix round 1, M1)', () => {
+    expect(isAcceptedDocumentFile(file('IMG_1.JPG', 'image/jpeg'))).toBe(true)
+    expect(isAcceptedDocumentFile(file('SCAN.PDF', ''))).toBe(true)
+  })
+
+  it('falls back to the MIME type when the file has no usable extension (fix round 1, M5)', () => {
+    // A camera app's own naming convention, or any other name with no recognised extension:
+    // still accepted when the browser reports one of the three MIME types.
+    expect(isAcceptedDocumentFile(file('IMG_20260926_101112', 'image/jpeg'))).toBe(true)
+    expect(isAcceptedDocumentFile(file('scan', 'application/pdf'))).toBe(true)
+    // No extension and no usable MIME type either: still refused.
     expect(isAcceptedDocumentFile(file('notes', ''))).toBe(false)
+    expect(isAcceptedDocumentFile(file('notes', 'text/plain'))).toBe(false)
   })
 
   it('gives one Hebrew sentence per sub-project 17 task 2 refusal reason code, and softens the generic unreadable text', () => {

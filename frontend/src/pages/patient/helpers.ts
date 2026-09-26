@@ -188,12 +188,16 @@ const MIME_KIND: Record<string, 'pdf' | 'jpeg' | 'png'> = {
 export function isAcceptedDocumentFile(file: File): boolean {
   const extension = file.name.split('.').pop()?.toLowerCase() ?? ''
   const kind = EXTENSION_KIND[extension]
-  if (!kind) return false
+  if (!kind) {
+    // No extension this client recognises (or none at all, e.g. a camera app's own naming):
+    // fall back to the reported MIME type alone, when the browser gave one.
+    return file.type in MIME_KIND
+  }
   if (file.type === '') return true
   return MIME_KIND[file.type] === kind
 }
 
-/** The outcome of a PDF upload, shown next to the request regardless of its status. */
+/** The outcome of a document upload, shown next to the request regardless of its status. */
 export interface UploadNotice {
   variant: AlertVariant
   text: string

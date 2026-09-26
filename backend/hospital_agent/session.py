@@ -26,7 +26,7 @@ from typing import Any, Literal, Protocol
 
 from . import auth, data_log, naming, patient_messages, repository
 from .case import CaseRecord
-from .document_intake import IntakeAnswer, IntakeUnavailable
+from .document_intake import IntakeAnswer, IntakeUnavailable, sniff_kind
 from .documents import CATALOG_LABELS, document_label
 from .naming import Component, Event, State
 from .state_manager import CaseNotFound as _UnknownCase
@@ -50,27 +50,36 @@ _REJECTION_CODES = {
 _UNREADABLE = "unreadable"
 
 # Sub-project 17, Task 2 decision 4: a finer patient code for the document-service's own
-# refusal `reason` (design §4.2), when it gave one this version recognises. Everything else -
-# no reason, or a reason not listed here (parse_error, too_many_pages, too_much_text,
-# classifier_unparsable) - falls back to `_REJECTION_CODES` above, i.e. stays "unreadable" for
-# every `DOCUMENT_UNREADABLE` reason this table does not name.
-_REASON_CODES = {
+# refusal `reason` (design §4.2), when it gave one this version recognises - but only on the
+# result that reason is actually documented for (design §4.2's own table): `DOCUMENT_UNREADABLE`
+# reasons never apply to a `DOCUMENT_EXPIRED` answer and vice versa, so a reason arriving on an
+# unexpected result (a future document-service bug, or a result this version does not otherwise
+# refine, e.g. PATIENT_MISMATCH) is ignored rather than misapplied. Everything else - no reason,
+# a reason not listed here (parse_error, too_many_pages, too_much_text, classifier_unparsable),
+# or a reason on the wrong result - falls back to `_REJECTION_CODES` above, i.e. stays
+# "unreadable"/"expired" per the coarser per-result mapping.
+_UNREADABLE_REASON_CODES = {
     "unknown_type": "unrecognised_type",
     "future_date": "bad_date",
-    "too_old": "expired",
-    "no_date": "no_date",
     "no_text_layer": "unreadable_scan",
     "not_supported_format": "unsupported_format",
     "too_large": "too_large",
+}
+_EXPIRED_REASON_CODES = {
+    "too_old": "expired",
+    "no_date": "no_date",
 }
 
 
 def _rejection_code(answer: IntakeAnswer) -> str:
     """The patient-facing code for a document-service answer with no effective type (rule 6):
-    the reason-based code when there is one this version knows, else the coarser per-result
-    code (fail closed, §14)."""
+    the reason-based code when there is one this version knows for this exact result, else the
+    coarser per-result code (fail closed, §14)."""
     if answer.reason is not None:
-        mapped = _REASON_CODES.get(answer.reason)
+        by_result = (_UNREADABLE_REASON_CODES if answer.result == "DOCUMENT_UNREADABLE"
+                    else _EXPIRED_REASON_CODES if answer.result == "DOCUMENT_EXPIRED"
+                    else {})
+        mapped = by_result.get(answer.reason)
         if mapped is not None:
             return mapped
     return _REJECTION_CODES.get(answer.result, _UNREADABLE)
@@ -310,17 +319,23 @@ class SessionService:
           5. With an effective type: if it is not in case.required_documents -> not_required, no
              event; if it is already in case.held_documents -> already_received, no event;
              otherwise call the existing upload_document(patient_id, case_id,
-             document_id=<the type>, content=<reference line>, fmt="pdf",
+             document_id=<the type>, content=<reference line>, fmt=<the uploaded file's own
+             kind - pdf/jpg/png, sniffed by magic bytes, sub-project 17 task 2 decision 4>,
              document_extra={"document_ref": <DOC id>}) - the type is the document_id because
              HOLD_DOCUMENT appends document_id to held_documents; the reference line is exactly
              f"{document_ref} {document_type} ACCEPTED" (no medical text reaches the Data Log
              or the Safety re-check) - and return accepted.
-          6. Without an effective type: NON_MEDICAL_DOCUMENT -> not_medical, DOCUMENT_UNREADABLE
-             -> unreadable, DOCUMENT_EXPIRED -> expired, PATIENT_MISMATCH -> not_yours, any
-             other result (including a duplicate without duplicate_of) -> unreadable. No event,
+          6. Without an effective type: NON_MEDICAL_DOCUMENT -> not_medical, PATIENT_MISMATCH ->
+             not_yours, any other result (including a duplicate without duplicate_of) ->
+             unreadable; DOCUMENT_UNREADABLE -> unreadable, refined to unrecognised_type,
+             unreadable_scan, bad_date, unsupported_format or too_large when the
+             document-service's own `reason` says so; DOCUMENT_EXPIRED -> expired, refined to
+             no_date likewise (sub-project 17 task 2 decision 4 - a reason on any other result,
+             or one this version does not know, is ignored, never misapplied). No event,
              nothing recorded.
-          7. The application log gets only the outcome code - never the patient id, the file
-             name or a document id.
+          7. The application log gets only the outcome code, and - when the document-service
+             gave one - its own reason code alongside it: never the patient id, the file name
+             or a document id.
 
         The document-service may take up to 70 s, so rule 5 reads the case again once it has
         answered: a case that moved on meanwhile is NotWaitingForDocument, and so is one whose
@@ -349,7 +364,7 @@ class SessionService:
                 outcome = UploadOutcome("already_received", document_type)
             else:
                 result = self.upload_document(patient_id, case_id, document_type,
-                                              f"{document_ref} {document_type} ACCEPTED", fmt="pdf",
+                                              f"{document_ref} {document_type} ACCEPTED", fmt=_fmt_of(data),
                                               document_extra={"document_ref": document_ref})
                 if not result.committed or result.state_after is not State.CLASSIFYING:
                     logger.info("pdf upload: not_waiting_for_document")
@@ -614,6 +629,17 @@ def _log_upload_outcome(verb: str, outcome: UploadOutcome, reason: str | None) -
         logger.info("%s: %s (%s)", verb, outcome.code, reason)
     else:
         logger.info("%s: %s", verb, outcome.code)
+
+
+# document_intake.sniff_kind's own vocabulary ("pdf"/"jpeg"/"png") to guards.SUPPORTED_DOCUMENT_FORMATS'
+# ("pdf"/"jpg"/"png", the same set DocumentValid checks and the text upload's DOCUMENT_FORMATS
+# already use) - sub-project 17 task 2 decision 4: the DOCUMENT_UPLOADED payload's "format" now
+# names the file the patient actually sent, not a hard-coded "pdf".
+_FMT_FOR_KIND = {"pdf": "pdf", "jpeg": "jpg", "png": "png"}
+
+
+def _fmt_of(data: bytes) -> str:
+    return _FMT_FOR_KIND[sniff_kind(data)]
 
 
 def _effective(answer: IntakeAnswer) -> tuple[str | None, str | None]:

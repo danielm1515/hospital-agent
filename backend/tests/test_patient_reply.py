@@ -1,4 +1,5 @@
 """The patient's side of sub-project 15 (design §7.5, §9, §10): replying, and what the patient sees."""
+import logging
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -78,6 +79,35 @@ def test_a_rejected_document_changes_nothing(sm, app_engine):
     ask(reviews, d, kind="document", document_type="URINALYSIS")
     assert session.reply_pdf(d.patient_id, d.case_id, PDF, "x.pdf").code == "unreadable"
     assert d.state is State.AWAITING_PATIENT_REPLY
+
+
+# --- fix round 1, I1: a reply's reason also maps to a finer code, with no event either way -----
+
+@pytest.mark.parametrize("result, reason, code", [
+    ("DOCUMENT_UNREADABLE", "no_text_layer", "unreadable_scan"),
+    ("DOCUMENT_EXPIRED", "too_old", "expired"),
+    ("DOCUMENT_EXPIRED", "no_date", "no_date"),
+])
+def test_a_reply_reason_maps_to_a_finer_code_with_no_event(sm, app_engine, result, reason, code):
+    d, session, reviews = setup(sm, app_engine, IntakeAnswer(result, "DOC-1", None, None, reason))
+    ask(reviews, d, kind="document", document_type="URINALYSIS")
+    before = len(d.trace())
+    outcome = session.reply_pdf(d.patient_id, d.case_id, PDF, "x.pdf")
+    assert outcome.code == code
+    assert d.state is State.AWAITING_PATIENT_REPLY
+    with d.engine.connect() as conn:
+        assert data_log.entries(conn, d.case_id, data_log.DataKind.PATIENT_REPLY) == []
+    assert len(d.trace()) == before
+
+
+def test_the_reply_log_line_carries_the_document_services_own_reason(sm, app_engine, caplog):
+    d, session, reviews = setup(
+        sm, app_engine, IntakeAnswer("DOCUMENT_UNREADABLE", "DOC-1", None, None, "no_text_layer"))
+    ask(reviews, d, kind="document", document_type="URINALYSIS")
+    with caplog.at_level(logging.INFO, logger="hospital_agent.session"):
+        session.reply_pdf(d.patient_id, d.case_id, PDF, "x.pdf")
+    lines = [r.getMessage() for r in caplog.records if r.name == "hospital_agent.session"]
+    assert "pdf reply: unreadable_scan (no_text_layer)" in lines
 
 
 def test_reply_pdf_on_a_question_case_is_a_kind_mismatch_and_never_calls_the_intake(sm, app_engine):
