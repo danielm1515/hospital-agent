@@ -64,24 +64,38 @@ export function ReviewCase() {
   const [pendingDelete, setPendingDelete] = useState<DataLogEntry | null>(null)
   const [deleting, setDeleting] = useState(false)
 
-  const load = useCallback(async () => {
-    setItemLoaded(false)
+  // Fix round 2 (I1, a regression from M2): `itemLoaded` is never reset back to `false`
+  // here - it is only ever false before the very first load completes. A refresh
+  // (`refreshContext`, or the tombstone flow) calls `load()` again, and if its own
+  // `getContext` fails, the decision panel must keep showing whatever it already had
+  // (the form, or "not awaiting a decision"), not fall back to a loader forever. The
+  // whole body is wrapped in one try/finally so `itemLoaded` becomes (or stays) `true`
+  // no matter which of the two calls below fails, and `load()` reports whether it
+  // actually succeeded so `refreshContext` knows whether to consider itself resolved.
+  const load = useCallback(async (): Promise<boolean> => {
+    let ok = true
     try {
-      const fresh = await api.getContext(caseId)
-      setContext(fresh)
-      setLoadError(null)
-    } catch (caught) {
-      setLoadError(detailOf(caught))
-      return
-    }
-    // A case not (or no longer) in AwaitingHumanReview is 404 not_in_review - not a load
-    // failure, just no decision to offer (staff-fixes design Task 3: one queue item,
-    // instead of fetching the whole queue just to find this case's row).
-    try {
-      setItem(await api.getReviewItem(caseId))
-    } catch (caught) {
-      if (caught instanceof api.ApiError && caught.status === 404) setItem(null)
-      else setLoadError(detailOf(caught))
+      try {
+        const fresh = await api.getContext(caseId)
+        setContext(fresh)
+        setLoadError(null)
+      } catch (caught) {
+        setLoadError(detailOf(caught))
+        return false
+      }
+      // A case not (or no longer) in AwaitingHumanReview is 404 not_in_review - not a load
+      // failure, just no decision to offer (staff-fixes design Task 3: one queue item,
+      // instead of fetching the whole queue just to find this case's row).
+      try {
+        setItem(await api.getReviewItem(caseId))
+      } catch (caught) {
+        if (caught instanceof api.ApiError && caught.status === 404) setItem(null)
+        else {
+          setLoadError(detailOf(caught))
+          ok = false
+        }
+      }
+      return ok
     } finally {
       setItemLoaded(true)
     }
@@ -96,9 +110,11 @@ export function ReviewCase() {
   }, [])
 
   const refreshContext = useCallback(async () => {
-    setContextChanged(false)
     setDecisionError(null)
-    await load()
+    // Fix round 2 (I1): `contextChanged` (and its "רענון הקשר" button) stays up until the
+    // refresh actually succeeds - a refresh that itself fails must not silently drop the
+    // only affordance to try again.
+    if (await load()) setContextChanged(false)
   }, [load])
 
   // Memoised on the route's case id alone (not on `context`, which is a fresh object on

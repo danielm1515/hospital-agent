@@ -46,8 +46,13 @@ export function ReviewQueue() {
     const state = location.state as QueueNotice | null
     return state?.notice ? { text: state.notice, title: state.title } : null
   })
-  // Fix round 1 (M8): hovering or focusing the notice pauses its auto-dismiss.
-  const [noticePaused, setNoticePaused] = useState(false)
+  // Fix round 2 (N1): hover and focus are two separate flags, not one shared "paused" -
+  // either one alone must pause the auto-dismiss, and each has to end on its own gesture
+  // (a mouse-leave must not resume the timer while the close button still has focus, and a
+  // blur must not resume it while the pointer is still hovering).
+  const [hovered, setHovered] = useState(false)
+  const [focused, setFocused] = useState(false)
+  const noticeRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     // Replaces the history entry's state with `null` right after reading it, so a refresh
@@ -61,19 +66,22 @@ export function ReviewQueue() {
   // hover/focus-driven pause and resume, tracked across the effect's own start/stop.
   const remainingMsRef = useRef(NOTICE_DISMISS_MS)
   useEffect(() => {
-    if (!notice || noticePaused) return
+    if (!notice || hovered || focused) return
     const startedAt = Date.now()
-    const timer = setTimeout(() => setNotice(null), remainingMsRef.current)
+    const timer = setTimeout(dismissNotice, remainingMsRef.current)
     return () => {
       clearTimeout(timer)
       remainingMsRef.current -= Date.now() - startedAt
     }
-  }, [notice, noticePaused])
+  }, [notice, hovered, focused])
 
-  function closeNotice() {
+  function dismissNotice() {
+    // Fix round 2 (N1): whatever dismisses the notice - the close button, or this same
+    // timer - focus must not fall through to the document body if it was inside the
+    // notice at that moment; it goes to the page heading instead.
+    const hadFocus = noticeRef.current?.contains(document.activeElement) ?? false
     setNotice(null)
-    // Fix round 1 (M8): focus goes to the page heading, not lost to the document body.
-    headingRef.current?.focus()
+    if (hadFocus) headingRef.current?.focus()
   }
 
   const [items, setItems] = useState<ReviewItem[] | null>(null)
@@ -153,14 +161,15 @@ export function ReviewQueue() {
 
       {notice && (
         <div
-          onMouseEnter={() => setNoticePaused(true)}
-          onMouseLeave={() => setNoticePaused(false)}
-          onFocus={() => setNoticePaused(true)}
+          ref={noticeRef}
+          onMouseEnter={() => setHovered(true)}
+          onMouseLeave={() => setHovered(false)}
+          onFocus={() => setFocused(true)}
           onBlur={(event) => {
-            if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setNoticePaused(false)
+            if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setFocused(false)
           }}
         >
-          <Alert variant="ok" title={notice.title} onClose={closeNotice}>
+          <Alert variant="ok" title={notice.title} onClose={dismissNotice}>
             {notice.text}
           </Alert>
         </div>

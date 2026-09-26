@@ -231,6 +231,56 @@ describe('ReviewQueue', () => {
     expect(screen.queryByText('X')).not.toBeInTheDocument() // resumed, and ran to completion
   })
 
+  it('keeps the notice up when the pointer leaves while the close button still has focus (N1)', async () => {
+    vi.useFakeTimers()
+    vi.mocked(api.listReviews).mockResolvedValue(page([]))
+    render(
+      <MemoryRouter initialEntries={[{ pathname: '/staff', state: { notice: 'X', title: 'ההכרעה נשמרה' } }]}>
+        <Routes>
+          <Route path="/staff" element={<ReviewQueue />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+    const notice = screen.getByText('X')
+    const closeButton = screen.getByRole('button', { name: 'סגירה' })
+
+    // Hover, tab to the close button, then move the mouse away - if hover and focus shared
+    // one flag, the mouse-leave would incorrectly resume the timer even though focus is
+    // still inside the notice.
+    fireEvent.mouseEnter(notice)
+    act(() => closeButton.focus())
+    fireEvent.mouseLeave(notice)
+
+    await act(() => vi.advanceTimersByTimeAsync(NOTICE_DISMISS_MS + 1000))
+    expect(screen.getByText('X')).toBeInTheDocument()
+  })
+
+  it('pins the pause instead of restarting the 8 s countdown (N2)', async () => {
+    vi.useFakeTimers()
+    vi.mocked(api.listReviews).mockResolvedValue(page([]))
+    render(
+      <MemoryRouter initialEntries={[{ pathname: '/staff', state: { notice: 'X', title: 'ההכרעה נשמרה' } }]}>
+        <Routes>
+          <Route path="/staff" element={<ReviewQueue />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+    const notice = screen.getByText('X')
+
+    await act(() => vi.advanceTimersByTimeAsync(3000)) // 5000 ms of the 8000 remain
+    fireEvent.mouseEnter(notice)
+    await act(() => vi.advanceTimersByTimeAsync(10000)) // paused well past where 8 s from now would land
+    fireEvent.mouseLeave(notice)
+
+    // A restart-from-8s mutant would still show the notice at this point (only 4999 ms of
+    // an 8 s restart would have run) and, worse, would not have dismissed by +5000 either.
+    await act(() => vi.advanceTimersByTimeAsync(4999))
+    expect(screen.getByText('X')).toBeInTheDocument() // exactly the paused-at remainder, minus 1 ms
+
+    await act(() => vi.advanceTimersByTimeAsync(1))
+    expect(screen.queryByText('X')).not.toBeInTheDocument() // the remaining 5000 ms, pinned, ran out
+  })
+
   it('does not show the notice again on remount - the history entry was replaced (Task 7, fix round 1 M9)', async () => {
     vi.mocked(api.listReviews).mockResolvedValue(page([]))
 

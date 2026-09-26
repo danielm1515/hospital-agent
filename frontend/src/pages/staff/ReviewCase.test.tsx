@@ -344,6 +344,37 @@ describe('ReviewCase', () => {
     expect(api.getContext).toHaveBeenCalledTimes(2)
   })
 
+  it('keeps the decision form and the refresh button usable when the refresh itself fails (I1, fix round 2)', async () => {
+    vi.mocked(api.decide).mockRejectedValue(new api.ApiError(409, 'context_changed'))
+    renderCase()
+
+    await userEvent.type(await screen.findByLabelText(/סיבת ההכרעה/), 'סגירה.')
+    await userEvent.click(screen.getByRole('button', { name: 'סגירת הפנייה' }))
+    expect(await screen.findByText('ההקשר השתנה')).toBeInTheDocument()
+
+    vi.mocked(api.getContext).mockRejectedValueOnce(new api.ApiError(503, 'appointments_unavailable'))
+    await userEvent.click(screen.getByRole('button', { name: 'רענון הקשר' }))
+
+    // Not stuck on a loader forever, and not unmounted: "ההקשר השתנה" (and its "רענון
+    // הקשר" button - the refresh that just ran did not resolve it) is still up, right
+    // alongside the new "the refresh itself failed" alert; the decision buttons never left.
+    await waitFor(() => expect(api.getContext).toHaveBeenCalledTimes(2))
+    expect(await screen.findByText('רענון ההקשר נכשל')).toBeInTheDocument()
+    expect(screen.getByText('appointments_unavailable')).toBeInTheDocument()
+    expect(screen.getByText('ההקשר השתנה')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'רענון הקשר' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'סגירת הפנייה' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'דחייה' })).toBeInTheDocument()
+    expect(screen.queryByText('טוען…')).not.toBeInTheDocument()
+
+    // A second refresh, this time succeeding, resolves it through the same button.
+    await userEvent.click(screen.getByRole('button', { name: 'רענון הקשר' }))
+
+    await waitFor(() => expect(api.getContext).toHaveBeenCalledTimes(3))
+    expect(screen.queryByText('ההקשר השתנה')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'סגירת הפנייה' })).toBeInTheDocument()
+  })
+
   it('shows the detail of any other 409', async () => {
     vi.mocked(api.decide).mockRejectedValue(new api.ApiError(409, 'not_in_review'))
     renderCase()
