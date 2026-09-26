@@ -4,16 +4,41 @@ import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import * as api from '../../api/client'
 import { ApiError } from '../../api/client'
+import type { Appointment, AppointmentList } from '../../api/types'
 import { MyRequests } from './MyRequests'
 import { patientView } from './fixtures'
 import { authValue, PATIENT_USER, TestAuthProvider } from '../../test/helpers'
 
 vi.mock('../../api/client', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../api/client')>()
-  return { ...actual, listRequests: vi.fn() }
+  return { ...actual, listRequests: vi.fn(), listMyAppointments: vi.fn() }
 })
 
 const listRequests = vi.mocked(api.listRequests)
+const listMyAppointments = vi.mocked(api.listMyAppointments)
+
+function appointment(overrides: Partial<Appointment> = {}): Appointment {
+  return {
+    appointment_id: 'APT-1',
+    appointment_at: '2026-10-03T07:30:00Z',
+    department: 'Cardiology',
+    doctor_name: 'ד"ר לוי',
+    location: 'בניין א, קומה 1',
+    status: 'Scheduled',
+    required_documents: [],
+    ...overrides,
+  }
+}
+
+function appointmentList(overrides: Partial<AppointmentList> = {}): AppointmentList {
+  return {
+    from: '2026-09-26T00:00:00Z',
+    to: '2026-10-26T00:00:00Z',
+    appointments: [appointment()],
+    truncated: false,
+    ...overrides,
+  }
+}
 
 function renderList() {
   return render(
@@ -31,9 +56,32 @@ function renderList() {
 
 beforeEach(() => {
   listRequests.mockReset()
+  listMyAppointments.mockReset()
+  listMyAppointments.mockResolvedValue(appointmentList())
 })
 
 describe('MyRequests', () => {
+  it('shows the appointments panel above the requests list, with the loaded appointment', async () => {
+    listRequests.mockResolvedValue([])
+    renderList()
+
+    const appointmentsHeading = await screen.findByRole('heading', { name: 'התורים שלי' })
+    const requestsHeading = await screen.findByRole('heading', { name: 'הפניות שלי' })
+    expect(
+      appointmentsHeading.compareDocumentPosition(requestsHeading) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy()
+    expect(screen.getByText('קרדיולוגיה')).toBeInTheDocument()
+  })
+
+  it('does not hide the requests list when the appointments load fails', async () => {
+    listRequests.mockResolvedValue([patientView({ case_id: 'CASE-1' })])
+    listMyAppointments.mockRejectedValue(new ApiError(500, 'boom'))
+    const { container } = renderList()
+
+    expect(await screen.findByRole('heading', { name: 'הפניות שלי' })).toBeInTheDocument()
+    expect(container.querySelectorAll('.req-card')).toHaveLength(1)
+  })
+
   it('renders one card per request, with the status pill, the date and the text cut at 120 characters', async () => {
     const long = 'א'.repeat(200)
     listRequests.mockResolvedValue([
@@ -47,8 +95,8 @@ describe('MyRequests', () => {
     expect(screen.getByText('בטיפול')).toBeInTheDocument()
     expect(screen.getByText('הושלמה')).toBeInTheDocument()
     expect(container.querySelectorAll('.req-card')).toHaveLength(2)
-    expect(container.querySelector('time')).toHaveAttribute('datetime', '2026-09-19T22:12:47.693947Z')
-    expect(container.querySelector('time')).toHaveTextContent('נפתחה ב־')
+    expect(container.querySelector('.req-date')).toHaveAttribute('datetime', '2026-09-19T22:12:47.693947Z')
+    expect(container.querySelector('.req-date')).toHaveTextContent('נפתחה ב־')
     expect(screen.getAllByRole('link')[0]).toHaveAttribute('href', '/patient/requests/CASE-1')
   })
 

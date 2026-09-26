@@ -1056,6 +1056,15 @@ img {
    below is built from the same tokens and the same classes as the design's own
    pages, with logical properties only. */
 
+/* Sub-project 16 (design D10): the shared appointments panel sits above the
+   requests card on "הפניות שלי" - both are top-level `.card`s here, so they need
+   their own gap (the staff review screen already gets one from `.staff-page`). */
+.patient-home {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+}
+
 .page-head {
   display: flex;
   align-items: center;
