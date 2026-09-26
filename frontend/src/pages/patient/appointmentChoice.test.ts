@@ -18,7 +18,7 @@ function appointment(overrides: Partial<Appointment> = {}): Appointment {
     status: 'Scheduled',
     required_documents: [],
     exam_type: { code: 'NEURO_EEG', label: 'EEG' },
-    instruction: { source_id: 'INSTR-NEURO-EEG', version: '1', title: 'לפני EEG' },
+    instruction: { source_id: 'INSTR-NEURO-EEG', version: '2', title: 'לפני EEG' },
     ...overrides,
   }
 }
