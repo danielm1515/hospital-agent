@@ -63,7 +63,7 @@
       },
       "INSTR-NEURO-EEG": {
         "approved": true,
-        "version": "1",
+        "version": "2",
         "valid_from": "2026-01-01T00:00:00Z",
         "valid_until": "2030-01-01T00:00:00Z"
       },
@@ -93,7 +93,7 @@
       },
       "INSTR-ORTHO-INJECTION": {
         "approved": true,
-        "version": "1",
+        "version": "2",
         "valid_from": "2026-01-01T00:00:00Z",
         "valid_until": "2030-01-01T00:00:00Z"
       }

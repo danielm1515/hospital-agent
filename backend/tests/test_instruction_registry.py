@@ -167,6 +167,33 @@ def test_the_real_registry_file_exists_and_parses():
     assert "INSTR-NEURO-VISIT" in REAL_ENTRIES
 
 
+# The 13 catalog instructions (the appointment-service's app/catalog.py). The two the live Safety
+# check rated HighRisk were reworded and bumped to version "2" (design D15); the rest stay at "1".
+CATALOG_VERSIONS = {
+    "INSTR-CARD-VISIT": "1", "INSTR-CARD-ECHO": "1", "INSTR-CARD-STRESS": "1",
+    "INSTR-CARD-HOLTER": "1", "INSTR-DERM-VISIT": "1", "INSTR-DERM-MOLES": "1",
+    "INSTR-NEURO-VISIT": "1", "INSTR-NEURO-EEG": "2", "INSTR-NEURO-EMG": "1",
+    "INSTR-OPHTH-VISIT": "1", "INSTR-OPHTH-DILATED": "1", "INSTR-ORTHO-VISIT": "1",
+    "INSTR-ORTHO-INJECTION": "2",
+}
+
+
+def test_the_registry_lists_every_catalog_instruction_at_its_catalog_version():
+    for source_id, version in CATALOG_VERSIONS.items():
+        entry = REAL_ENTRIES[source_id]
+        assert entry["version"] == version, source_id
+        assert entry["approved"] is True, source_id
+        assert (entry["valid_from"], entry["valid_until"]) ==             ("2026-01-01T00:00:00Z", "2030-01-01T00:00:00Z"), source_id
+
+
+@pytest.mark.parametrize("source_id", ["INSTR-NEURO-EEG", "INSTR-ORTHO-INJECTION"])
+def test_the_superseded_version_1_of_a_reworded_instruction_is_denied(source_id):
+    """Design D15: a case that still stores version "1" of either reworded instruction is
+    denied - it fails closed rather than delivering the old, HighRisk-rated text."""
+    assert is_approved(source_id, "2") is True
+    assert is_approved(source_id, "1") is False
+
+
 # --- final review M5: the memo in front of OPA --------------------------------------------
 
 class _CountingOpa:
