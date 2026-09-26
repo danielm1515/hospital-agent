@@ -55,3 +55,32 @@ an `api:` code. `LLMUnusable.retryable` (decision 2) is derived automatically fr
 `is_retryable()` rather than requiring every `raise LLMUnusable(...)` site to pass `retryable=False`
 explicitly, so every existing raise site needed no change; an explicit `retryable=` kwarg is still honoured
 where a caller wants to override it.
+
+## Task 2 - "לא הצלחנו לקרוא את המסמך" on a patient's upload
+
+**Diagnosis** (`.superpowers/sdd/2026-09-26-staff-fixes/diagnosis-2-7.md`, live logs, read-only). The two uploads
+the document-service ever received were readable text PDFs; its own OpenAI call got `429` (the same empty
+account) and `intake.py:96-99` turned every `ClassifierFailed` - an API failure included - into
+`DOCUMENT_UNREADABLE`, which hospital-agent shows as "unreadable, check it is a clear PDF". The reason was
+thrown away. `DOCUMENT_UNREADABLE` stands for eight different causes. There is no OCR; a scanned PDF (no text
+layer) and every image are refused.
+
+**Decisions.**
+1. document-service: a provider failure (`api:*`) is `503 classifier_unavailable` (the `storage_unavailable`
+   pattern), never a verdict on the file; hospital-agent already turns a 503 into "שירות המסמכים אינו זמין".
+2. document-service: every refusal carries a fixed `reason` code (`not_supported_format`, `too_large`,
+   `parse_error`, `no_text_layer`, `too_many_pages`, `too_much_text`, `classifier_unparsable`, `unknown_type`,
+   `future_date`, `no_date`, `too_old`), in its log line and, additively, in the 201 body. Never content.
+3. Scans and images: an LLM **vision** call inside the existing classifier (same prompt contract, same schema,
+   one call), not tesseract - it fits the one-call structure and the 70 s budget, needs no system packages,
+   and tesseract's Hebrew on RTL lab tables loses exactly the date and type validity depends on. JPEG and PNG
+   are accepted by magic bytes; a PDF without a text layer sends its first pages' embedded images (at most 4,
+   downscaled). The image goes to the same processor the text already goes to (same data class). If the
+   model refuses images, the answer is `classifier_unavailable`/`unreadable` - fail closed; `OPENAI_MODEL`
+   can point at a vision model.
+4. hospital-agent: the picker and the intake client accept PDF, JPEG and PNG (real `Content-Type` by magic
+   bytes); the optional `reason` becomes finer patient codes (`unrecognised_type`, `unreadable_scan`,
+   `bad_date`, `too_old`, `no_date`) with a Hebrew sentence each that says what happened and what to do; the
+   client's own refusals say it too ("הקובץ גדול מ־10MB. העלו קובץ קטן יותר."). The real reason is logged
+   as a code (the logging of Task 1 now reaches stderr). A document that then raises the safety level and
+   escalates (T10) is correct behaviour, not part of this fix.
