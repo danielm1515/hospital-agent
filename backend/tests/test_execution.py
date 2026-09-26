@@ -118,6 +118,30 @@ def test_a_result_field_outside_the_action_is_dropped(sm, app_engine):
     assert d.state is State.AWAITING_PATIENT_INPUT
 
 
+def test_a_mismatched_loaded_instruction_id_is_invalid_response(sm, app_engine):
+    """Fix round 1, m1: finish() re-derives the instruction_ids the case's own
+    instruction_source_id/version demand and refuses an OK answer that names a different one -
+    defense in depth beyond the gateway's own check, for a gateway that answered OK anyway."""
+    class MismatchedGateway(MockGateway):
+        def call(self, action, parameters, idempotency_key):
+            result = super().call(action, parameters, idempotency_key)
+            if action == "LoadInstructions":
+                return ToolResult(result.kind, {**result.data, "instruction_ids": ["INSTR-OTHER:9"]})
+            return result
+
+    d = Driver(sm, app_engine, gateway=MismatchedGateway())
+    d.to_classified()
+    d.plan()
+    d.run_step()  # CheckAppointment: case.instruction_source_id/version = INSTR-PREP-COLONOSCOPY/3
+    d.advance()
+    d.run_step()  # CheckDocuments
+    d.advance()
+    assert d.case.instruction_source_id == "INSTR-PREP-COLONOSCOPY"
+    d.run_step()  # LoadInstructions: the gateway answers OK, but for a different instruction id
+    assert (d.state, d.case.escalation_kind) == (State.AWAITING_HUMAN_REVIEW, EscalationKind.NON_IDEMPOTENT_FAILURE)
+    assert "tool:error:invalid_response" in [reason for row in d.trace() for reason in (row.policy_reasons or [])]
+
+
 def test_a_retried_check_appointment_never_substitutes_the_services_answered_id(sm, app_engine):
     """Sub-project 18 fix round 1 (I2): appointment_id is the patient's own write-once choice
     from REQUEST_SUBMITTED - a retried CheckAppointment (still the same plan step, no

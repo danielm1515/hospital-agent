@@ -143,7 +143,11 @@ def test_readiness_without_an_appointment_time_escalates(sm, app_engine):
     d = Driver(sm, app_engine)
     d.to_classified()
     d.plan()
-    for result in ({}, {"required_documents": ["referral"], "held_documents": []}):
+    # Fix round 1 (m1/m2): the CheckAppointment retrieval (first in the loop) still carries
+    # instruction_source_id/version - deliberately not appointment_at, which this test omits on
+    # purpose - the same demo source MockGateway's own CheckAppointment answer stores.
+    for result in ({"instruction_source_id": "INSTR-PREP-COLONOSCOPY", "instruction_version": "3"},
+                   {"required_documents": ["referral"], "held_documents": []}):
         d.retrieve_step(**result)
         d.advance()
     d.retrieve_step()

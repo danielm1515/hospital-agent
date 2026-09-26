@@ -136,6 +136,12 @@ class MockGateway:
             case Action.CHECK_DOCUMENTS.value:
                 return ToolResult(OK, {"held_documents": list(self.held_documents)})
             case Action.LOAD_INSTRUCTIONS.value:
+                # Fix round 1 (m1): the mock is itself a (fake) instruction system - it must
+                # answer only for the one source it actually knows, exactly like the real
+                # appointment-service's instructions endpoint would for an unknown source_id -
+                # never silently hand back the demo text for a different one.
+                if (parameters.get("source_id"), parameters.get("version")) != ("INSTR-PREP-COLONOSCOPY", "3"):
+                    return ToolResult(ERROR, {"error": "not_found"})
                 return ToolResult(OK, {"instruction_ids": ["INSTR-PREP-COLONOSCOPY:3"],
                                        "instruction_text": INSTRUCTION_TEXT})
             case Action.SEND_STATUS_UPDATE.value:

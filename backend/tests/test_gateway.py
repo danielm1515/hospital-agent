@@ -15,6 +15,7 @@ from hospital_agent.execution.gateway import (
     RESULT_FIELDS,
     TRANSIENT_FAILURE,
     MockGateway,
+    ToolResult,
     present_patient_fields,
 )
 from hospital_agent.execution.executor import ToolExecutor
@@ -51,8 +52,9 @@ def test_mock_returns_the_demo_data():
         type(gw.call("CheckAppointment", {}, "k0"))(OK, APPOINTMENT_DEMO_DATA)
     docs = gw.call("CheckDocuments", {"patient_id": "P"}, "k2")
     assert docs.data == {"held_documents": ["referral"]}
-    assert gw.call("LoadInstructions", {}, "k3").data == {"instruction_ids": ["INSTR-PREP-COLONOSCOPY:3"],
-                                                          "instruction_text": INSTRUCTION_TEXT}
+    demo_source = {"source_id": "INSTR-PREP-COLONOSCOPY", "version": "3"}
+    assert gw.call("LoadInstructions", demo_source, "k3").data == {"instruction_ids": ["INSTR-PREP-COLONOSCOPY:3"],
+                                                                   "instruction_text": INSTRUCTION_TEXT}
 
 
 def test_the_mock_appointment_carries_the_requirements_and_the_mock_documents_only_what_is_held():
@@ -67,6 +69,18 @@ def test_the_mock_carries_the_demo_colonoscopy_instruction_source():
     gw = MockGateway(clock=lambda: NOW)
     data = gw.call("CheckAppointment", {"patient_id": "P"}, "k").data
     assert (data["instruction_source_id"], data["instruction_version"]) == ("INSTR-PREP-COLONOSCOPY", "3")
+
+
+def test_the_mock_refuses_another_source():
+    """Fix round 1, m1: the mock is itself a (fake) instruction system - it only knows the one
+    demo source, and must answer not_found for any other, exactly like a real instruction
+    system would for a source_id it does not carry."""
+    gw = MockGateway(clock=lambda: NOW)
+    assert gw.call("LoadInstructions", {"source_id": "INSTR-CARD-STRESS", "version": "1"}, "k") == \
+        ToolResult(ERROR, {"error": "not_found"})
+    assert gw.call("LoadInstructions", {"source_id": "INSTR-PREP-COLONOSCOPY", "version": "2"}, "k") == \
+        ToolResult(ERROR, {"error": "not_found"})
+    assert gw.call("LoadInstructions", {}, "k") == ToolResult(ERROR, {"error": "not_found"})
 
 
 def test_each_system_supplies_only_its_own_facts():

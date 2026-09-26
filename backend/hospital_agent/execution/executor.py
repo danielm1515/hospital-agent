@@ -32,6 +32,7 @@ from ..case import CaseRecord, ExecutionRecord
 from ..naming import Action, Component, EscalationKind, Event, SafetyLevel
 from ..state_manager import ExecutionOutcome, StateManager, TransitionResult
 from .gateway import (
+    ERROR,
     KNOWN_TOOL_ERRORS,
     OK,
     RESULT_FIELDS,
@@ -77,6 +78,17 @@ class ToolExecutor:
     def finish(self, case_id: str, execution: ExecutionRecord, result: ToolResult) -> TransitionResult:
         sm = self.state_manager
         execution_id = execution.execution_id
+        if result.kind == OK and execution.action == Action.LOAD_INSTRUCTIONS.value:
+            # Fix round 1 (m1): defense in depth - the gateway (map_instruction_response) already
+            # requires its own HTTP answer to name exactly the requested source_id/version, but
+            # a gateway result is trusted data by the time it reaches here, so re-derive what the
+            # instruction_ids the Tool Executor itself asked for (the case's own source at the
+            # moment of the call) must look like, and refuse an OK that does not match it - never
+            # silently accept instructions for a source the case did not (or no longer) hold.
+            case = sm.load(case_id)
+            expected = [f"{case.instruction_source_id}:{case.instruction_version}"]
+            if result.data.get("instruction_ids") != expected:
+                result = ToolResult(ERROR, {"error": "invalid_response"})
         if result.kind == OK:
             outcome = ExecutionOutcome(execution_id, "succeeded")
             if execution.action == Action.SEND_STATUS_UPDATE.value:

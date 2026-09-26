@@ -20,7 +20,13 @@ from .policy.temporal import TemporalMonitor
 from .state_manager import RULE_VERSION, StateManager
 
 POLICY_DIR = Path(__file__).with_name("policy")
-POLICY_FILES = ("policy.rego", "rules.pl", "flows.dl")
+# Fix round 1 (I2): the OPA bundle's own data files - the approved-sources registry and the
+# minimized-fields export - are part of the policy in force exactly as much as the three engine
+# files, so a registry change (e.g. approving a new instruction source, Task 4) must also change
+# rule_version - otherwise two audit rows could carry the same rule_version while OPA actually
+# decided under two different registries.
+POLICY_FILES = ("policy.rego", "rules.pl", "flows.dl", "data/approved_instruction_sources.json",
+                "data/minimized_fields.json")
 
 
 @cache

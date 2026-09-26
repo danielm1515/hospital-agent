@@ -311,9 +311,9 @@ def build_gateway(env: Mapping[str, str] | None = None,
                    fallback: ToolGateway | None = None) -> tuple[ToolGateway | None, str]:
     """The gateway the live server uses (design §2.2-2.3): (gateway, "mock" | "appointment-service"),
     or (None, why the Agent Orchestrator must not start). Neither value ever holds the URL or the
-    key. `fallback` (sub-project 13 design §5.1) is what every action but CheckAppointment uses -
-    typically the document-service gateway, so the two compose instead of each falling back to
-    its own mock."""
+    key. `fallback` (sub-project 13 design §5.1) is what every action but CheckAppointment and
+    LoadInstructions uses (Task 4, D8) - typically the document-service gateway, so the two
+    compose instead of each falling back to its own mock."""
     env = os.environ if env is None else env
     url = env.get("APPOINTMENT_SERVICE_URL", "").strip()
     if not url:

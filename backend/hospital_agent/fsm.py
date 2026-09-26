@@ -14,6 +14,7 @@ from enum import StrEnum
 
 from .case import CaseRecord, compute_plan_hash
 from .guards import GUARD_FAILED, GUARDS, GuardContext
+from .naming import Action
 from .naming import EscalationKind as K
 from .naming import Event as E
 from .naming import SafetyLevel
@@ -310,10 +311,17 @@ def apply_effects(case: CaseRecord, row: Transition, ctx: GuardContext) -> CaseR
                     changes["department"] = p["department"]
                 if "exam_type_label" in p:
                     changes["exam_type_label"] = p["exam_type_label"]
-                if "instruction_source_id" in p:
-                    changes["instruction_source_id"] = p["instruction_source_id"]
-                if "instruction_version" in p:
-                    changes["instruction_version"] = p["instruction_version"]
+                # Fix round 1 (m4): unlike the fields above, instruction_source_id/version are
+                # never merely "left unchanged" when this retrieval is CheckAppointment's own -
+                # they are cleared (None) when the answer carries no instruction block, so a
+                # stale source from an earlier answer (a different appointment, a retry that no
+                # longer resolves an exam type) can never survive into the next LoadInstructions
+                # (which would otherwise load an approved-but-wrong text). CheckDocuments' and
+                # LoadInstructions' own DATA_RETRIEVED never touch these two fields at all - the
+                # case's current_action distinguishes the CheckAppointment step from the others.
+                if case.current_action is Action.CHECK_APPOINTMENT:
+                    changes["instruction_source_id"] = p.get("instruction_source_id")
+                    changes["instruction_version"] = p.get("instruction_version")
                 if "upcoming_count" in p:
                     changes["upcoming_count"] = p["upcoming_count"]
                 if "safety_level" in p:  # LLM design §5: a re-check only ever raises the risk
