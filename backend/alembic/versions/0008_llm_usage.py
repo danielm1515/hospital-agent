@@ -32,6 +32,12 @@ def _in(column: str, values: tuple[str, ...]) -> str:
 
 
 def upgrade() -> None:
+    # Final review M1, as 0007: the foreign key to cases takes a lock on cases; on a live database
+    # give up after 5 s rather than queue behind a long transaction and block every case behind
+    # it. SET LOCAL lasts only for this migration's transaction. PostgreSQL only - SQLite has no
+    # lock_timeout.
+    if op.get_bind().dialect.name == "postgresql":
+        op.execute("SET LOCAL lock_timeout = '5s'")
     op.create_table(
         "llm_usage",
         sa.Column("usage_id", sa.BigInteger, sa.Identity(), primary_key=True),

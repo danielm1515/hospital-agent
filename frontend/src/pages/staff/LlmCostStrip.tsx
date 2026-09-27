@@ -38,9 +38,10 @@ export function LlmCostStrip() {
     // answer that arrives afterwards never lands (nor sets state on an unmounted component).
     let cancelled = false
     const hours = PRESETS.find((option) => option.key === preset)?.hours ?? 24 * 30
-    // The metrics presets' window - ending at the minute after now - built as instants directly.
-    // Not through presetRange's local datetime-input strings: a DST change inside the window
-    // would turn 90 days into 90 days and an hour there, and the API refuses that (422).
+    // The metrics presets' window - ending at the minute after now - built as instants directly,
+    // `hours` hours apart whatever the clock does, so it is never longer than the 90 days the API
+    // allows (a local wall-clock start could land an hour off when it falls in the repeated hour
+    // of a fall-back DST change).
     const end = new Date()
     end.setSeconds(0, 0)
     end.setMinutes(end.getMinutes() + 1)
@@ -114,6 +115,9 @@ export function LlmCostStrip() {
               <dd>{formatCount(data.calls)}</dd>
             </div>
           </dl>
+          {/* Final review M4: the average divides by the cases with a known cost, not by "פניות"
+              (docs/api.md §10), so total / cases is not the average - say so, as the metrics tile does. */}
+          <p className="llm-strip-note">הממוצע מחושב על פני הפניות שיש להן עלות ידועה.</p>
           {data.unpriced_calls > 0 && (
             <p className="llm-strip-note">
               ל־{formatCount(data.unpriced_calls)} מהקריאות אין מחיר ידוע, והן אינן נכללות בעלות.

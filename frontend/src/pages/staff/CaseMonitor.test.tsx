@@ -634,6 +634,18 @@ describe('CaseMonitor: LLM cost (sub-project 19, design D7)', () => {
     expect(screen.queryByText(/אין מחיר ידוע/)).not.toBeInTheDocument()
   })
 
+  it('says the average is over the cases with a known cost, keeping the amount in its LTR run (M4)', async () => {
+    renderMonitor()
+
+    const note = await screen.findByText('הממוצע מחושב על פני הפניות שיש להן עלות ידועה.')
+    expect(note).toHaveClass('llm-strip-note')
+    // The note is its own line, outside the average's value: the amount is still one LTR run.
+    const average = stripFact('עלות LLM ממוצעת לפנייה').querySelector('dd')
+    expect(average?.textContent).toBe('$0.0004')
+    expect(average?.querySelector('.usd')).toHaveAttribute('dir', 'ltr')
+    expect(average).not.toContainElement(note)
+  })
+
   it('shows the shared inline loader while the costs load', async () => {
     vi.mocked(api.getLlmCosts).mockReturnValue(new Promise(() => {})) // never resolves
     renderMonitor()
@@ -741,7 +753,7 @@ describe('CaseMonitor: LLM cost (sub-project 19, design D7)', () => {
   it.each([
     ['range_too_large', 422, 'הטווח ארוך מ־90 יום.'],
     ['staff_only', 403, 'אין הרשאה לצפות בעלויות.'],
-    ['server_error', 422, 'אירעה שגיאה בטעינת הנתונים.'],
+    ['server_error', 500, 'אירעה שגיאה בטעינת הנתונים.'],
   ])('explains a %s refusal in Hebrew, the code beside it', async (code, status, text) => {
     vi.mocked(api.getLlmCosts).mockRejectedValue(new api.ApiError(status, code))
     renderMonitor()

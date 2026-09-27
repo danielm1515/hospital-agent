@@ -65,7 +65,8 @@ does not know is priced only when both are given.
 ## 3. What is not counted
 
 These tokens may have been billed by OpenAI but never reach `llm_usage`. The totals are therefore
-a lower bound on the invoice, never an overstatement.
+a lower bound on the invoice, with one exception: cached input tokens are priced at the full input
+price (§1), so where the provider discounts them the totals may overstate that part.
 
 - **A document-service `503` after its call.** When the classification ran but the upload then
   failed on `storage_unavailable` or `database_unavailable`, the `503` carries no `llm_usage`, so
@@ -81,8 +82,11 @@ a lower bound on the invoice, never an overstatement.
 - **The D33 evaluation runs** (`python -m eval.d33`, and `--live`). They run outside any case, with
   no usage scope, so nothing is recorded. `obs.golden` and the tests record nothing either
   (FakeProvider, no scope).
+- **An `ok` attempt with no usable `usage`.** If a response was answered and used but carried no
+  usage, or a malformed one, the row has outcome `ok` with `NULL` tokens and cost. It adds $0 to
+  the sum and is not flagged as partial: it is not an unpriced row, since its model has a price.
 - **A failed usage write.** If the row cannot be written (the database is down, a constraint
-  refuses it), the log says `llm_usage_write_failed error=<ExceptionType>` and the case goes on.
+  refuses it, or a lock or a slow statement holds it past the write's 2 s timeout), the log says `llm_usage_write_failed error=<ExceptionType>` and the case goes on.
   See §4.
 
 ## 4. Where it is stored, and who sees it

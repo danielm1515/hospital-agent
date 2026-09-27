@@ -1,11 +1,13 @@
 """Sub-project 19, design D2-D4: llm_usage rows on Postgres - the recorder, the table's own
 checks, and the Agent Orchestrator recording every attempt against its case."""
 import logging
+import threading
+import time
 from datetime import UTC, datetime
 from decimal import Decimal
 
 import pytest
-from sqlalchemy import insert, select
+from sqlalchemy import event, insert, select, text
 from sqlalchemy.exc import IntegrityError
 
 from hospital_agent import repository
@@ -107,6 +109,57 @@ def test_the_recorder_never_raises_when_the_database_is_unreachable(app_engine, 
         recorder.record("CASE-1", "agent", "Intent", "gpt-5.6-luna", "ok", BILLED)
     assert [record.message for record in caplog.records] == ["llm_usage_write_failed error=RuntimeError"]
     assert SECRET not in caplog.text
+
+
+def test_the_recorder_bounds_its_write_with_timeouts_on_postgresql(app_engine):
+    """Final review M2: the lock and statement timeouts are set in the write's own transaction,
+    before the INSERT."""
+    case_id = _case(app_engine)
+    statements = []
+
+    def seen(conn, cursor, statement, parameters, context, executemany):
+        statements.append(statement)
+
+    event.listen(app_engine, "before_cursor_execute", seen)
+    try:
+        _recorder(app_engine).record(case_id, "agent", "Intent", "gpt-5.6-luna", "ok", BILLED)
+    finally:
+        event.remove(app_engine, "before_cursor_execute", seen)
+    assert app_engine.dialect.name == "postgresql"
+    assert statements[:2] == ["SET LOCAL lock_timeout = '2s'", "SET LOCAL statement_timeout = '2s'"]
+    assert statements[2].startswith("INSERT INTO llm_usage")
+    assert len(_rows(app_engine)) == 1
+
+
+def test_a_locked_table_ends_the_write_in_about_two_seconds_without_raising(app_engine, owner_engine, caplog):
+    """Final review M2: a lock held on llm_usage from another connection must not hold the case's
+    thread - the write gives up at its timeout and goes down llm_usage_write_failed. The write runs
+    in a thread so that, were it unbounded, the test fails at 5 s instead of waiting forever."""
+    case_id = _case(app_engine)
+    recorder = _recorder(app_engine)
+    raised = []
+
+    def write():
+        try:
+            recorder.record(case_id, "agent", "Intent", "gpt-5.6-luna", "ok", BILLED)
+        except BaseException as exc:  # record() must never raise
+            raised.append(exc)
+
+    with owner_engine.connect() as holder:
+        holder.execute(text("LOCK TABLE llm_usage IN ACCESS EXCLUSIVE MODE"))
+        writer = threading.Thread(target=write)
+        with caplog.at_level(logging.WARNING, logger="hospital_agent.llm_costs"):
+            start = time.monotonic()
+            writer.start()
+            writer.join(timeout=5)
+            elapsed = time.monotonic() - start
+            finished_while_locked = not writer.is_alive()
+            holder.rollback()  # release the lock whatever happened, so a hung write can end
+            writer.join()
+    assert finished_while_locked and elapsed < 3.5
+    assert raised == []
+    assert [record.message for record in caplog.records] == ["llm_usage_write_failed error=OperationalError"]
+    assert _rows(app_engine) == []
 
 
 # --- the table's own checks (the owner role, so only the constraints stand in the way) ---------

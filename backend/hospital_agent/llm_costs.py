@@ -21,7 +21,7 @@ from datetime import UTC, datetime
 from decimal import ROUND_HALF_UP, Decimal
 from typing import Any
 
-from sqlalchemy import func, insert, select
+from sqlalchemy import func, insert, select, text
 from sqlalchemy.engine import Connection, Engine
 
 from .db import llm_usage
@@ -31,6 +31,12 @@ from .llm.usage import LLMUsage
 logger = logging.getLogger(__name__)
 
 ZERO = Decimal(0).quantize(pricing.QUANTUM)
+
+# A usage write runs on the case's own thread (the Orchestrator, the Session Service's upload),
+# so it must never wait long: a lock or a slow database ends it in 2 s, and the timeout goes down
+# the same llm_usage_write_failed path as any other failure (final review M2). SET LOCAL lasts
+# only for the write's own transaction.
+BOUNDED_WRITE = ("SET LOCAL lock_timeout = '2s'", "SET LOCAL statement_timeout = '2s'")
 
 
 def money(value: Decimal) -> Decimal:
@@ -154,6 +160,9 @@ class UsageRecorder:
         try:
             price_input, price_output, cost_usd = pricing.cost(model, usage, self.prices)
             with self.engine.begin() as conn:
+                if conn.dialect.name == "postgresql":  # final review M2: SQLite has neither setting
+                    for statement in BOUNDED_WRITE:
+                        conn.execute(text(statement))
                 conn.execute(insert(llm_usage).values(
                     case_id=case_id, source=source, call=call, model=model, outcome=outcome,
                     input_tokens=usage.input_tokens if usage else None,
