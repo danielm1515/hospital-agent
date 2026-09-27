@@ -51,11 +51,14 @@ export function NewRequest() {
   const [choiceError, setChoiceError] = useState<string | null>(null)
   const [suggestion, setSuggestion] = useState<Appointment | null>(null)
   const formRef = useRef<HTMLFormElement>(null)
+  // Bumped by "נסה שוב" to load the list again after a failure.
+  const [loadKey, setLoadKey] = useState(0)
 
   useEffect(() => {
     // Guarded: an answer that lands after the screen is gone (or after StrictMode's
-    // throw-away first mount) never touches state.
+    // throw-away first mount, or after a newer "נסה שוב") never touches state.
     let cancelled = false
+    setChoices({ phase: 'loading' })
     const from = new Date()
     const to = new Date(from.getTime() + PICKER_DAYS * ONE_DAY_MS)
     Promise.resolve()
@@ -76,7 +79,7 @@ export function NewRequest() {
     return () => {
       cancelled = true
     }
-  }, [])
+  }, [loadKey])
 
   const appointments = choices.phase === 'ready' ? choices.appointments : []
   // "התור הקרוב ביותר" only while there is at most one upcoming appointment (design D5).
@@ -137,7 +140,7 @@ export function NewRequest() {
 
   const choiceHint =
     choices.phase === 'failed'
-      ? 'לא הצלחנו לטעון את רשימת התורים, ולכן הפנייה תתייחס לתור הקרוב ביותר.'
+      ? 'רשימת התורים לא זמינה כרגע. אפשר לשלוח את הפנייה, והיא תטופל לפי התור הקרוב ביותר או על ידי הצוות.'
       : choices.phase === 'ready' && appointments.length === 0
         ? 'לא נמצאו תורים מתוכננים ב־90 הימים הקרובים.'
         : null
@@ -196,6 +199,11 @@ export function NewRequest() {
                   <p className="hint" id="appointment-choice-hint">
                     {choiceHint}
                   </p>
+                  {choices.phase === 'failed' && (
+                    <Button variant="quiet" onClick={() => setLoadKey((key) => key + 1)}>
+                      נסה שוב
+                    </Button>
+                  )}
                 </div>
               )
             )}
