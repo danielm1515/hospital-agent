@@ -228,6 +228,8 @@ export interface CaseSummary {
    * shown is then a lower bound (§10), not the whole of it.
    */
   llm_cost_partial: boolean
+  /** The case's unpriced attempts (§10), `0` for none: tells an unpriced `null` from "no attempt". */
+  llm_unpriced_calls: number
 }
 
 /** `GET /api/staff/cases` → 200 (staff-fixes design Task 3): keyset-paginated. */
@@ -244,10 +246,12 @@ export interface PlanStep {
 
 /**
  * `GET /api/staff/cases/{case_id}`. `docs/api.md` §5 lists no `llm_cost_usd` /
- * `llm_cost_partial` on the detail (it carries the fuller `llm_usage` instead), so those
+ * `llm_cost_partial` / `llm_unpriced_calls` on the detail (it carries the fuller `llm_usage` instead), so those
  * list-only fields are left out here.
  */
-export interface CaseDetail extends Omit<CaseSummary, 'llm_cost_usd' | 'llm_cost_partial'>, CaseAppointmentFacts {
+export interface CaseDetail
+  extends Omit<CaseSummary, 'llm_cost_usd' | 'llm_cost_partial' | 'llm_unpriced_calls'>,
+    CaseAppointmentFacts {
   patient_id: string
   state_version: number
   intent: string | null

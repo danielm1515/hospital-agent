@@ -23,7 +23,8 @@ import {
   safetyLabel,
   stateLabel,
 } from './labels'
-import { formatUsd } from './metricsLabels'
+import { costText } from './metricsLabels'
+import { Usd } from './Usd'
 
 const ESCALATION_KIND_OPTIONS = Object.keys(ESCALATION_LABELS) as EscalationKind[]
 
@@ -321,8 +322,10 @@ function ExpandableRow({ row, detail, detailError, open, context, contextError, 
           <Coded label={escalationLabel(row.escalation_kind)} code={row.escalation_kind} />
         </td>
         <td className="nowrap">{formatDateTime(row.updated_at)}</td>
+        {/* Sub-project 19: a null cost is "—" with no attempt, "מחיר לא ידוע" beside an unpriced
+            one (docs/api.md §10); a partial cost is a lower bound, marked with a quiet "+". */}
         <td className="nowrap">
-          <LlmCostCell cost={row.llm_cost_usd} partial={row.llm_cost_partial} />
+          <Usd text={costText(row.llm_cost_usd, row.llm_unpriced_calls)} partial={row.llm_cost_partial} />
         </td>
       </tr>
       {open && (
@@ -378,25 +381,6 @@ function ExpandableRow({ row, detail, detailError, open, context, contextError, 
     </>
   )
 }
-
-/**
- * The "עלות LLM" cell (sub-project 19). The list carries only the money string, so a `null`
- * here is "—" (docs/api.md §5, §10) - the expanded row's `llm_usage` tells an unpriced case
- * apart. A partial cost (some calls unpriced) is a lower bound, marked with a quiet "+".
- */
-function LlmCostCell({ cost, partial }: { cost: string | null; partial: boolean }) {
-  if (cost === null || !partial) return <>{formatUsd(cost)}</>
-  return (
-    <>
-      {formatUsd(cost)}
-      <span className="llm-partial" role="img" title={PARTIAL_COST} aria-label={PARTIAL_COST}>
-        +
-      </span>
-    </>
-  )
-}
-
-const PARTIAL_COST = 'חלק מהקריאות ללא מחיר ידוע'
 
 /** A cell that reads in Hebrew and still shows the code the API returned (§12.3, D-tests). */
 function Coded({ label, code }: { label: string; code?: string | null }) {

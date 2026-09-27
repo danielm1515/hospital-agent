@@ -26,6 +26,7 @@ const DONE: CaseSummary = {
   updated_at: '2026-09-19T22:12:48.986200Z',
   llm_cost_usd: '0.00213400',
   llm_cost_partial: false,
+  llm_unpriced_calls: 0,
 }
 
 const IN_REVIEW: CaseSummary = {
@@ -40,6 +41,7 @@ const IN_REVIEW: CaseSummary = {
   updated_at: '2026-09-19T22:12:39.693277Z',
   llm_cost_usd: null,
   llm_cost_partial: false,
+  llm_unpriced_calls: 0,
 }
 
 function page(items: CaseSummary[], next_cursor: string | null = null): CaseListPage {
@@ -100,6 +102,45 @@ const COSTS: LlmCosts = {
   total_cost_usd: '0.00130360',
   avg_cost_per_case_usd: '0.00043453',
   avg_cost_per_completed_case_usd: '0.00050200',
+  unpriced_calls: 0,
+  by_call: [
+    { call: 'Evaluator', calls: 1, input_tokens: 500, output_tokens: 23, cost_usd: '0.00010000' },
+    { call: 'Intent', calls: 2, input_tokens: 3000, output_tokens: 150, cost_usd: '0.00060000' },
+    { call: 'Planner', calls: 1, input_tokens: 1000, output_tokens: 100, cost_usd: '0.00020360' },
+    { call: 'Safety', calls: 2, input_tokens: 2600, output_tokens: 60, cost_usd: '0.00040000' },
+  ],
+  by_source: [{ source: 'agent', calls: 6, cost_usd: '0.00130360' }],
+}
+
+/** A window whose only attempts are unpriced: no priced cost at all, so total and averages are null. */
+const UNPRICED_ONLY: LlmCosts = {
+  ...COSTS,
+  cases: 3,
+  cases_with_usage: 2,
+  calls: 2,
+  input_tokens: 1800,
+  cached_input_tokens: 0,
+  output_tokens: 80,
+  total_cost_usd: null,
+  avg_cost_per_case_usd: null,
+  avg_cost_per_completed_case_usd: null,
+  unpriced_calls: 2,
+  by_call: [{ call: 'DocumentClassify', calls: 2, input_tokens: 1800, output_tokens: 80, cost_usd: null }],
+  by_source: [{ source: 'document_service', calls: 2, cost_usd: null }],
+}
+
+/** A window with no attempt at all: nothing to cost, so every cost is null and nothing unpriced. */
+const NO_USAGE: LlmCosts = {
+  ...COSTS,
+  cases: 3,
+  cases_with_usage: 0,
+  calls: 0,
+  input_tokens: 0,
+  cached_input_tokens: 0,
+  output_tokens: 0,
+  total_cost_usd: null,
+  avg_cost_per_case_usd: null,
+  avg_cost_per_completed_case_usd: null,
   unpriced_calls: 0,
   by_call: [],
   by_source: [],
@@ -601,17 +642,12 @@ describe('CaseMonitor: LLM cost (sub-project 19, design D7)', () => {
     expect(status.closest('.loader')).toHaveClass('loader-inline')
   })
 
-  it('dashes a null average and notes, quietly, that some calls have no known price', async () => {
-    vi.mocked(api.getLlmCosts).mockResolvedValue({
-      ...COSTS,
-      total_cost_usd: null,
-      avg_cost_per_case_usd: null,
-      unpriced_calls: 2,
-    })
+  it('says "unknown price" for a null average and total beside unpriced calls, and notes it quietly', async () => {
+    vi.mocked(api.getLlmCosts).mockResolvedValue(UNPRICED_ONLY)
     renderMonitor()
 
-    await waitFor(() => expect(stripFact('עלות LLM ממוצעת לפנייה')).toHaveTextContent('—'))
-    // A null total beside unpriced calls is "unknown", not "nothing" (docs/api.md §10).
+    // A null cost beside unpriced calls is "unknown", not "nothing" (docs/api.md §10).
+    await waitFor(() => expect(stripFact('עלות LLM ממוצעת לפנייה')).toHaveTextContent('מחיר לא ידוע'))
     expect(stripFact('סה״כ')).toHaveTextContent('מחיר לא ידוע')
     expect(screen.getByText(/ל־2 מהקריאות אין מחיר ידוע/)).toHaveClass('llm-strip-note')
   })
@@ -624,10 +660,21 @@ describe('CaseMonitor: LLM cost (sub-project 19, design D7)', () => {
       cases: 2,
       cases_with_usage: 2,
       calls: 2,
+      input_tokens: 900,
+      cached_input_tokens: 0,
+      output_tokens: 40,
       total_cost_usd: null,
       avg_cost_per_case_usd: '0.00000000',
       avg_cost_per_completed_case_usd: '0.00000000',
       unpriced_calls: 1,
+      by_call: [
+        { call: 'DocumentClassify', calls: 1, input_tokens: 900, output_tokens: 40, cost_usd: null },
+        { call: 'Intent', calls: 1, input_tokens: 0, output_tokens: 0, cost_usd: '0.00000000' },
+      ],
+      by_source: [
+        { source: 'agent', calls: 1, cost_usd: '0.00000000' },
+        { source: 'document_service', calls: 1, cost_usd: null },
+      ],
     })
     renderMonitor()
 
@@ -635,17 +682,14 @@ describe('CaseMonitor: LLM cost (sub-project 19, design D7)', () => {
     expect(stripFact('סה״כ')).toHaveTextContent('מחיר לא ידוע')
   })
 
-  it('dashes a null total with no unpriced call beside zero averages', async () => {
-    vi.mocked(api.getLlmCosts).mockResolvedValue({
-      ...COSTS,
-      total_cost_usd: null,
-      avg_cost_per_case_usd: '0.00000000',
-      unpriced_calls: 0,
-    })
+  it('dashes a null average and total when nothing was processed yet', async () => {
+    vi.mocked(api.getLlmCosts).mockResolvedValue(NO_USAGE)
     renderMonitor()
 
-    await waitFor(() => expect(stripFact('עלות LLM ממוצעת לפנייה')).toHaveTextContent('$0.0000'))
+    await waitFor(() => expect(stripFact('פניות')).toHaveTextContent('3'))
+    expect(stripFact('עלות LLM ממוצעת לפנייה').querySelector('dd')?.textContent).toBe('—')
     expect(stripFact('סה״כ').querySelector('dd')?.textContent).toBe('—')
+    expect(screen.queryByText(/אין מחיר ידוע/)).not.toBeInTheDocument()
   })
 
   it('shows a failed load with its code, and retries the same range', async () => {
@@ -655,7 +699,8 @@ describe('CaseMonitor: LLM cost (sub-project 19, design D7)', () => {
     renderMonitor()
 
     const alert = (await screen.findByText('טעינת עלות ה־LLM נכשלה')).closest('.alert') as HTMLElement
-    expect(alert).toHaveTextContent('llm_costs_unavailable')
+    expect(alert).toHaveTextContent('חישוב העלות ארך יותר מדי. נסו טווח קצר יותר.')
+    expect(within(alert).getByText('llm_costs_unavailable')).toHaveClass('mono')
     // The case list is independent of the strip and still loads.
     expect(await screen.findByText('CASE-23FE645294B7')).toBeInTheDocument()
 
@@ -693,7 +738,20 @@ describe('CaseMonitor: LLM cost (sub-project 19, design D7)', () => {
     expect(stripFact('פניות')).toHaveTextContent('24')
   })
 
-  it('drops an answer that arrives after the screen is gone', async () => {
+  it.each([
+    ['range_too_large', 'הטווח ארוך מ־90 יום.'],
+    ['staff_only', 'אין הרשאה לצפות בעלויות.'],
+    ['server_error', 'אירעה שגיאה בטעינת הנתונים.'],
+  ])('explains a %s refusal in Hebrew, the code beside it', async (code, text) => {
+    vi.mocked(api.getLlmCosts).mockRejectedValue(new api.ApiError(422, code))
+    renderMonitor()
+
+    const alert = (await screen.findByText('טעינת עלות ה־LLM נכשלה')).closest('.alert') as HTMLElement
+    expect(alert).toHaveTextContent(text)
+    expect(within(alert).getByText(code)).toHaveClass('mono')
+  })
+
+  it('does not throw when an answer arrives after the screen is gone', async () => {
     const late = deferred<LlmCosts>()
     vi.mocked(api.getLlmCosts).mockReturnValue(late.promise)
     const errors = vi.spyOn(console, 'error').mockImplementation(() => {})
@@ -715,6 +773,7 @@ describe('CaseMonitor: LLM cost (sub-project 19, design D7)', () => {
       case_id: 'CASE-PARTIAL00001',
       llm_cost_usd: '0.00100000',
       llm_cost_partial: true,
+      llm_unpriced_calls: 1,
     }
     vi.mocked(api.listCases).mockResolvedValue(page([DONE, IN_REVIEW, PARTIAL]))
     renderMonitor()
@@ -804,5 +863,65 @@ describe('CaseMonitor: LLM cost (sub-project 19, design D7)', () => {
     expect(await screen.findByText('DocumentClassify')).toHaveClass('mono')
     expect(costOf()).toBe('מחיר לא ידוע')
     expect(screen.getByText('סיווג מסמך')).toBeInTheDocument()
+  })
+
+  it('says "unknown price" in the column for a null cost beside unpriced calls, "—" for none (I1)', async () => {
+    const UNPRICED: CaseSummary = {
+      ...DONE,
+      case_id: 'CASE-UNPRICED0001',
+      llm_cost_usd: null,
+      llm_cost_partial: false,
+      llm_unpriced_calls: 2,
+    }
+    vi.mocked(api.listCases).mockResolvedValue(page([IN_REVIEW, UNPRICED]))
+    renderMonitor()
+    await screen.findByText('CASE-UNPRICED0001')
+
+    const lastCell = (caseId: string) =>
+      within(screen.getByRole('button', { name: caseId }).closest('tr') as HTMLElement).getAllByRole('cell').at(-1) as HTMLElement
+    expect(lastCell('CASE-UNPRICED0001').textContent).toBe('מחיר לא ידוע')
+    expect(lastCell('CASE-6FFF40DFB8DA').textContent).toBe('—')
+  })
+
+  it('keeps every dollar amount in its own LTR run, the "+" and the "<" inside it (I2)', async () => {
+    const TINY: CaseSummary = { ...DONE, case_id: 'CASE-TINY00000001', llm_cost_usd: '0.00000100' }
+    const PARTIAL: CaseSummary = {
+      ...DONE,
+      case_id: 'CASE-PARTIAL00001',
+      llm_cost_usd: '0.00100000',
+      llm_cost_partial: true,
+      llm_unpriced_calls: 1,
+    }
+    vi.mocked(api.listCases).mockResolvedValue(page([DONE, TINY, PARTIAL]))
+    renderMonitor()
+    await screen.findByText('CASE-TINY00000001')
+
+    const ltrOf = (element: Element | null | undefined) => element?.closest('[dir="ltr"]')
+
+    // The table cells.
+    const lastCell = (caseId: string) =>
+      within(screen.getByRole('button', { name: caseId }).closest('tr') as HTMLElement).getAllByRole('cell').at(-1) as HTMLElement
+    for (const [caseId, amount] of [
+      ['CASE-23FE645294B7', '$0.0021'],
+      ['CASE-TINY00000001', '<$0.0001'],
+      ['CASE-PARTIAL00001', '$0.0010+'],
+    ]) {
+      const run = lastCell(caseId).querySelector('[dir="ltr"]')
+      expect(run?.textContent).toBe(amount)
+    }
+    const marker = within(lastCell('CASE-PARTIAL00001')).getByRole('img', { name: 'חלק מהקריאות ללא מחיר ידוע' })
+    expect(ltrOf(marker)?.textContent).toBe('$0.0010+')
+
+    // The strip.
+    await waitFor(() => expect(stripFact('סה״כ')).toHaveTextContent('$0.0013'))
+    expect(ltrOf(within(stripFact('סה״כ')).getByText('$0.0013'))).not.toBeNull()
+    expect(ltrOf(within(stripFact('עלות LLM ממוצעת לפנייה')).getByText('$0.0004'))).not.toBeNull()
+
+    // The expanded row's fact group and its per-call table.
+    await userEvent.click(screen.getByRole('button', { name: 'CASE-23FE645294B7' }))
+    await screen.findByText('REQUEST_SUBMITTED')
+    const group = screen.getByRole('heading', { name: 'עלות LLM', level: 3 }).closest('.fact-group') as HTMLElement
+    expect(ltrOf(within(group).getByText('$0.0008'))).not.toBeNull()
+    for (const amount of within(group).getAllByText('$0.0004')) expect(ltrOf(amount)).not.toBeNull()
   })
 })

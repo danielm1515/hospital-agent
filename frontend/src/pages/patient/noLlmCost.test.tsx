@@ -78,6 +78,9 @@ beforeEach(() => {
 
 describe('the patient UI never shows an LLM cost (sub-project 19)', () => {
   it('has no cost, token or model field on the patient view type', () => {
+    // A type-level assertion: Vitest does not check it at run time, `tsc -b` does - and
+    // `npm run build` runs `tsc -b` over `src/` (tests included), so a cost-like key on
+    // `PatientView` fails the build.
     type CostLike = Extract<keyof PatientView, `${string}cost${string}` | `${string}llm${string}` | `${string}token${string}`>
     expectTypeOf<CostLike>().toEqualTypeOf<never>()
   })

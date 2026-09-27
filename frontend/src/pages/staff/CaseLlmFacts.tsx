@@ -8,6 +8,7 @@
 import type { ReactNode } from 'react'
 import type { CaseLlmUsage } from '../../api/types'
 import { LLM_CALL_LABELS, costText, entryCostText, formatCount, labelOf } from './metricsLabels'
+import { Usd } from './Usd'
 
 function Fact({ label, code, value }: { label: string; code: string; value: ReactNode }) {
   return (
@@ -30,7 +31,7 @@ export function CaseLlmFacts({ usage }: { usage: CaseLlmUsage }) {
         <Fact label="טוקני קלט" code="input_tokens" value={formatCount(usage.input_tokens)} />
         <Fact label="מתוכם מהמטמון" code="cached_input_tokens" value={formatCount(usage.cached_input_tokens)} />
         <Fact label="טוקני פלט" code="output_tokens" value={formatCount(usage.output_tokens)} />
-        <Fact label="עלות" code="cost_usd" value={costText(usage.cost_usd, usage.unpriced_calls)} />
+        <Fact label="עלות" code="cost_usd" value={<Usd text={costText(usage.cost_usd, usage.unpriced_calls)} />} />
         <Fact label="קריאות ללא מחיר ידוע" code="unpriced_calls" value={formatCount(usage.unpriced_calls)} />
       </dl>
       {usage.unpriced_calls > 0 && usage.cost_usd !== null && (
@@ -65,7 +66,9 @@ export function CaseLlmFacts({ usage }: { usage: CaseLlmUsage }) {
                     <td>{formatCount(entry.calls)}</td>
                     <td>{formatCount(entry.input_tokens)}</td>
                     <td>{formatCount(entry.output_tokens)}</td>
-                    <td className="nowrap">{entryCostText(entry)}</td>
+                    <td className="nowrap">
+                      <Usd text={entryCostText(entry)} />
+                    </td>
                   </tr>
                 )
               })}

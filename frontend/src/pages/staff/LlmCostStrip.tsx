@@ -11,11 +11,20 @@ import type { LlmCosts } from '../../api/types'
 import { Alert } from '../../components/Alert'
 import { Loading } from '../../components/Loading'
 import { detailOf } from './labels'
-import { PRESETS, costText, formatCount, formatUsd, fromLocalInput, presetRange } from './metricsLabels'
+import { PRESETS, costText, formatCount } from './metricsLabels'
+import { Usd } from './Usd'
 
 type PresetKey = (typeof PRESETS)[number]['key']
 
 const DEFAULT_PRESET: PresetKey = '30d'
+
+/** What the strip says for the route's own refusals (`docs/api.md` §10); any other code gets
+ * the generic sentence, the code itself always beside it. */
+const ERROR_TEXT: Record<string, string> = {
+  llm_costs_unavailable: 'חישוב העלות ארך יותר מדי. נסו טווח קצר יותר.',
+  range_too_large: 'הטווח ארוך מ־90 יום.',
+  staff_only: 'אין הרשאה לצפות בעלויות.',
+}
 
 export function LlmCostStrip() {
   const [preset, setPreset] = useState<PresetKey>(DEFAULT_PRESET)
@@ -29,11 +38,13 @@ export function LlmCostStrip() {
     // answer that arrives afterwards never lands (nor sets state on an unmounted component).
     let cancelled = false
     const hours = PRESETS.find((option) => option.key === preset)?.hours ?? 24 * 30
-    // The metrics screen's own preset window (ending at the minute after now), read back the
-    // way that screen reads it; a preset's two inputs are always well-formed.
-    const range = presetRange(hours, new Date())
-    const start = fromLocalInput(range.from) as Date
-    const end = fromLocalInput(range.to) as Date
+    // The metrics presets' window - ending at the minute after now - built as instants directly.
+    // Not through presetRange's local datetime-input strings: a DST change inside the window
+    // would turn 90 days into 90 days and an hour there, and the API refuses that (422).
+    const end = new Date()
+    end.setSeconds(0, 0)
+    end.setMinutes(end.getMinutes() + 1)
+    const start = new Date(end.getTime() - hours * 3600_000)
     setData(null)
     setError(null)
     api
@@ -72,7 +83,7 @@ export function LlmCostStrip() {
 
       {error ? (
         <Alert variant="error" title="טעינת עלות ה־LLM נכשלה">
-          <span className="mono">{error}</span>{' '}
+          {ERROR_TEXT[error] ?? 'אירעה שגיאה בטעינת הנתונים.'} <span className="mono">{error}</span>{' '}
           <button type="button" className="linkbtn" onClick={() => setAttempt((count) => count + 1)}>
             נסה שוב
           </button>
@@ -84,11 +95,15 @@ export function LlmCostStrip() {
           <dl className="llm-strip-facts">
             <div className="llm-strip-fact llm-strip-main">
               <dt>עלות LLM ממוצעת לפנייה</dt>
-              <dd>{formatUsd(data.avg_cost_per_case_usd)}</dd>
+              <dd>
+                <Usd text={costText(data.avg_cost_per_case_usd, data.unpriced_calls)} />
+              </dd>
             </div>
             <div className="llm-strip-fact">
               <dt>סה״כ</dt>
-              <dd>{costText(data.total_cost_usd, data.unpriced_calls)}</dd>
+              <dd>
+                <Usd text={costText(data.total_cost_usd, data.unpriced_calls)} />
+              </dd>
             </div>
             <div className="llm-strip-fact">
               <dt>פניות</dt>

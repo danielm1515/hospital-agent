@@ -284,10 +284,24 @@ describe('Metrics', () => {
       ...FIXTURE,
       llm: {
         ...FIXTURE.llm,
+        cases: 2,
+        cases_with_usage: 2,
+        calls: 2,
+        input_tokens: 900,
+        cached_input_tokens: 0,
+        output_tokens: 40,
         total_cost_usd: null,
         avg_cost_per_case_usd: '0.00000000',
         avg_cost_per_completed_case_usd: null,
         unpriced_calls: 1,
+        by_call: [
+          { call: 'DocumentClassify', calls: 1, input_tokens: 900, output_tokens: 40, cost_usd: null },
+          { call: 'Intent', calls: 1, input_tokens: 0, output_tokens: 0, cost_usd: '0.00000000' },
+        ],
+        by_source: [
+          { source: 'agent', calls: 1, cost_usd: '0.00000000' },
+          { source: 'document_service', calls: 1, cost_usd: null },
+        ],
       },
     })
     render(<Metrics />)
@@ -323,5 +337,46 @@ describe('Metrics', () => {
 
     expect(tile('עלות כוללת').querySelector('.metrics-tile-v')?.textContent).toBe('—')
     expect(within(group).getAllByText('אין קריאות בטווח.')).toHaveLength(2)
+  })
+
+  it('keeps every dollar amount in its own LTR run (I2)', async () => {
+    vi.mocked(api.getMetrics).mockResolvedValue(FIXTURE)
+    render(<Metrics />)
+    const group = (await screen.findByRole('heading', { name: 'עלות LLM' })).closest('.metrics-group') as HTMLElement
+
+    const ltr = (element: HTMLElement) => element.closest('[dir="ltr"]')
+    expect(ltr(within(tile('עלות כוללת')).getByText('$0.0013'))).not.toBeNull()
+    expect(ltr(within(tile('ממוצע לפנייה')).getByText('$0.0004'))).not.toBeNull()
+    expect(ltr(within(tile('ממוצע לפנייה שהושלמה')).getByText('$0.0005'))).not.toBeNull()
+    expect(ltr(within(group).getByText('$0.0010'))).not.toBeNull()
+    for (const amount of within(group).getAllByText('$0.0013')) expect(ltr(amount)).not.toBeNull()
+    // A Hebrew text is left in the page's own direction.
+    for (const unknown of within(group).getAllByText('מחיר לא ידוע')) expect(ltr(unknown)).toBeNull()
+  })
+
+  it('says "unknown price" for a null average beside unpriced calls, "—" for one per completed case', async () => {
+    vi.mocked(api.getMetrics).mockResolvedValue({
+      ...FIXTURE,
+      llm: {
+        ...FIXTURE.llm,
+        cases: 2,
+        cases_with_usage: 1,
+        calls: 1,
+        input_tokens: 900,
+        cached_input_tokens: 0,
+        output_tokens: 40,
+        total_cost_usd: null,
+        avg_cost_per_case_usd: null,
+        avg_cost_per_completed_case_usd: null,
+        unpriced_calls: 1,
+        by_call: [{ call: 'DocumentClassify', calls: 1, input_tokens: 900, output_tokens: 40, cost_usd: null }],
+        by_source: [{ source: 'document_service', calls: 1, cost_usd: null }],
+      },
+    })
+    render(<Metrics />)
+    await screen.findByRole('heading', { name: 'עלות LLM' })
+
+    expect(tile('ממוצע לפנייה').querySelector('.metrics-tile-v')?.textContent).toBe('מחיר לא ידוע')
+    expect(tile('ממוצע לפנייה שהושלמה').querySelector('.metrics-tile-v')?.textContent).toBe('—')
   })
 })

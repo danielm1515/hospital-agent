@@ -31,6 +31,7 @@ import {
 } from './metricsLabels'
 import type { LocalRange } from './metricsLabels'
 import { Bars, Coded, Meter, Tile } from './MetricsParts'
+import { Usd } from './Usd'
 
 const event = (code: string) => labelOf(EVENT_LABELS, code)
 
@@ -344,13 +345,17 @@ function LlmGroup({ llm }: { llm: MetricsData['llm'] }) {
   return (
     <Group id="metrics-llm" title="עלות LLM" scope="הפניות שנפתחו בטווח, עם כל השימוש שלהן">
       <div className="metrics-tiles">
-        <Tile label="עלות כוללת" value={costText(llm.total_cost_usd, llm.unpriced_calls)} note={unpricedNote} />
+        <Tile
+          label="עלות כוללת"
+          value={<Usd text={costText(llm.total_cost_usd, llm.unpriced_calls)} />}
+          note={unpricedNote}
+        />
         <Tile
           label="ממוצע לפנייה"
-          value={formatUsd(llm.avg_cost_per_case_usd)}
+          value={<Usd text={costText(llm.avg_cost_per_case_usd, llm.unpriced_calls)} />}
           note="על פני הפניות שיש להן עלות ידועה"
         />
-        <Tile label="ממוצע לפנייה שהושלמה" value={formatUsd(llm.avg_cost_per_completed_case_usd)} />
+        <Tile label="ממוצע לפנייה שהושלמה" value={<Usd text={formatUsd(llm.avg_cost_per_completed_case_usd)} />} />
         <Tile label="פניות" value={formatCount(llm.cases)} note={`${formatCount(llm.cases_with_usage)} מהן עם שימוש`} />
         <Tile label="קריאות" value={formatCount(llm.calls)} />
         <Tile label="קריאות ללא מחיר ידוע" value={formatCount(llm.unpriced_calls)} />
@@ -381,7 +386,9 @@ function LlmGroup({ llm }: { llm: MetricsData['llm'] }) {
                   <td>{formatCount(entry.calls)}</td>
                   <td>{formatCount(entry.input_tokens)}</td>
                   <td>{formatCount(entry.output_tokens)}</td>
-                  <td>{entryCostText(entry)}</td>
+                  <td>
+                    <Usd text={entryCostText(entry)} />
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -399,7 +406,7 @@ function LlmGroup({ llm }: { llm: MetricsData['llm'] }) {
                 <Coded label={labelOf(LLM_SOURCE_LABELS, entry.source)} code={entry.source} />
               </dt>
               <dd>
-                {formatCount(entry.calls)} קריאות · {entryCostText(entry)}
+                {formatCount(entry.calls)} קריאות · <Usd text={entryCostText(entry)} />
               </dd>
             </div>
           ))}
