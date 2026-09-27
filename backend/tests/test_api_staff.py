@@ -81,7 +81,7 @@ def test_cases_list_and_filter_by_state(client, staff, sm, app_engine):
     assert {c["case_id"] for c in page["items"]} == {classified.case_id, received.case_id}
     assert set(page["items"][0]) == {"case_id", "patient_id", "state", "intent", "safety_level",
                                      "escalation_kind", "escalated_from_state", "created_at", "updated_at",
-                                     "llm_cost_usd", "llm_cost_partial"}
+                                     "llm_cost_usd", "llm_cost_partial", "llm_unpriced_calls"}
     assert page["next_cursor"] is None
 
     only_received = client.get("/api/staff/cases", params={"state": "Received"}, headers=staff).json()

@@ -39,6 +39,8 @@ class CaseSummary(BaseModel):
     llm_cost_usd: Money | None = None
     # true when llm_cost_usd is known but a lower bound: the case also has unpriced attempts.
     llm_cost_partial: bool = False
+    # the case's unpriced attempts (price_input_per_mtok IS NULL); 0 with no row at all.
+    llm_unpriced_calls: int = 0
 
 
 class LlmCallView(BaseModel):

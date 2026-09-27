@@ -85,11 +85,12 @@ def test_case_costs_follow_the_null_rule(seeded):
     with seeded.connect() as conn:
         costs = llm_costs.case_costs(conn, ["C-PRICED", "C-UNPRICED", "C-MIXED", "C-ERRORS", "C-NONE"])
     assert costs == {
-        "C-PRICED": llm_costs.CaseCost(Decimal("0.00078000"), partial=False),
-        "C-UNPRICED": llm_costs.CaseCost(None, partial=False),  # nothing priced: unknown, not partial
-        "C-MIXED": llm_costs.CaseCost(Decimal("0.00011200"), partial=True),  # a lower bound
-        "C-ERRORS": llm_costs.CaseCost(Decimal("0"), partial=False),
-        "C-NONE": llm_costs.CaseCost(None, partial=False),
+        "C-PRICED": llm_costs.CaseCost(Decimal("0.00078000"), partial=False, unpriced_calls=0),
+        # nothing priced: unknown ("מחיר לא ידוע"), not partial
+        "C-UNPRICED": llm_costs.CaseCost(None, partial=False, unpriced_calls=1),
+        "C-MIXED": llm_costs.CaseCost(Decimal("0.00011200"), partial=True, unpriced_calls=1),  # a lower bound
+        "C-ERRORS": llm_costs.CaseCost(Decimal("0"), partial=False, unpriced_calls=0),
+        "C-NONE": llm_costs.CaseCost(None, partial=False, unpriced_calls=0),  # nothing yet ("—")
     }
 
 
@@ -99,7 +100,8 @@ def test_priced_api_errors_beside_an_unpriced_row_are_unknown_not_partial(app_en
         api_error(conn, "C-1")
         unpriced(conn, "C-1", source="document_service", call="DocumentClassify")
     with app_engine.connect() as conn:
-        assert llm_costs.case_costs(conn, ["C-1"]) == {"C-1": llm_costs.CaseCost(None, partial=False)}
+        assert llm_costs.case_costs(conn, ["C-1"]) == {
+            "C-1": llm_costs.CaseCost(None, partial=False, unpriced_calls=1)}
 
 
 def test_case_costs_of_no_case_asks_nothing(app_engine):
@@ -162,9 +164,11 @@ def test_the_case_list_carries_each_cost_from_one_grouped_query(client, seeded):
         page = client.get("/api/staff/cases", params={"limit": 10}, headers=headers(client)).json()
     finally:
         stop()
-    costs = {item["case_id"]: (item["llm_cost_usd"], item["llm_cost_partial"]) for item in page["items"]}
-    assert costs == {"C-PRICED": ("0.00078000", False), "C-UNPRICED": (None, False),
-                     "C-MIXED": ("0.00011200", True), "C-ERRORS": ("0.00000000", False), "C-NONE": (None, False)}
+    costs = {item["case_id"]: (item["llm_cost_usd"], item["llm_cost_partial"], item["llm_unpriced_calls"])
+             for item in page["items"]}
+    assert costs == {"C-PRICED": ("0.00078000", False, 0), "C-UNPRICED": (None, False, 1),
+                     "C-MIXED": ("0.00011200", True, 1), "C-ERRORS": ("0.00000000", False, 0),
+                     "C-NONE": (None, False, 0)}
     assert len(seen) == 1
 
 
@@ -177,7 +181,8 @@ def test_a_page_with_no_usage_at_all_is_null_everywhere_still_one_query(client, 
         page = client.get("/api/staff/cases", headers=headers(client)).json()
     finally:
         stop()
-    assert [(item["llm_cost_usd"], item["llm_cost_partial"]) for item in page["items"]] == [(None, False)] * 3
+    assert [(item["llm_cost_usd"], item["llm_cost_partial"], item["llm_unpriced_calls"])
+            for item in page["items"]] == [(None, False, 0)] * 3
     assert len(seen) == 1
 
 

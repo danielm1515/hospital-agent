@@ -89,13 +89,15 @@ def _tokens(column: Any, name: str) -> Any:
 @dataclass(frozen=True)
 class CaseCost:
     """One case's cost on the Case Monitor list. `partial`: the case has an unpriced row AND a
-    known (non-null) cost - the cost shown is a lower bound, the unpriced attempts are not in it."""
+    known (non-null) cost - the cost shown is a lower bound, the unpriced attempts are not in it.
+    `unpriced_calls` tells a null cost's two meanings apart: no row at all (0) or nothing priced (> 0)."""
 
     cost_usd: Decimal | None
     partial: bool
+    unpriced_calls: int
 
 
-NO_COST = CaseCost(None, partial=False)
+NO_COST = CaseCost(None, partial=False, unpriced_calls=0)
 
 
 def case_costs(conn: Connection, case_ids: Sequence[str]) -> dict[str, CaseCost]:
@@ -108,7 +110,8 @@ def case_costs(conn: Connection, case_ids: Sequence[str]) -> dict[str, CaseCost]
              .where(llm_usage.c.case_id.in_(list(case_ids))).group_by(llm_usage.c.case_id))
     for row in conn.execute(query):
         cost = total_cost(row.cost, row.calls, row.unpriced)
-        costs[row.case_id] = CaseCost(cost, partial=row.unpriced > 0 and cost is not None)
+        costs[row.case_id] = CaseCost(cost, partial=row.unpriced > 0 and cost is not None,
+                                      unpriced_calls=int(row.unpriced))
     return costs
 
 

@@ -443,7 +443,8 @@ never combined into a narrower one.
       "created_at": "2026-09-19T22:12:38.560531Z",
       "updated_at": "2026-09-19T22:12:48.986200Z",
       "llm_cost_usd": "0.00213400",
-      "llm_cost_partial": false
+      "llm_cost_partial": false,
+      "llm_unpriced_calls": 0
     }
   ],
   "next_cursor": null
@@ -454,8 +455,11 @@ never combined into a narrower one.
 §10's NULL rule. `llm_cost_partial` is `true` when the case has at least one unpriced attempt
 (`price_input_per_mtok IS NULL`) **and** a non-null `llm_cost_usd`: the cost shown is then a
 lower bound, since the unpriced attempts are not in it. It is `false` otherwise - including when
-`llm_cost_usd` is `null` (no attempt at all, or nothing priced). Both come from the one grouped
-query over the page's case ids, never one per row.
+`llm_cost_usd` is `null` (no attempt at all, or nothing priced). `llm_unpriced_calls` is the
+number of the case's attempts with no price (`price_input_per_mtok IS NULL`), `0` when it has no
+attempt at all - it tells the two nulls apart. **UI rule:** a `null` cost with
+`llm_unpriced_calls > 0` shows "מחיר לא ידוע"; a `null` cost with `llm_unpriced_calls` 0 shows
+"—". All three come from the one grouped query over the page's case ids, never one per row.
 
 The items are ordered `updated_at` descending, `case_id` descending (a tie-break, since
 `updated_at` alone is not unique). `next_cursor` is an opaque string (a `c|` kind prefix
