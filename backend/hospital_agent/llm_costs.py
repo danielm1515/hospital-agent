@@ -86,16 +86,29 @@ def _tokens(column: Any, name: str) -> Any:
     return func.coalesce(func.sum(column), 0).label(name)
 
 
-def case_costs(conn: Connection, case_ids: Sequence[str]) -> dict[str, Decimal | None]:
+@dataclass(frozen=True)
+class CaseCost:
+    """One case's cost on the Case Monitor list. `partial`: the case has an unpriced row AND a
+    known (non-null) cost - the cost shown is a lower bound, the unpriced attempts are not in it."""
+
+    cost_usd: Decimal | None
+    partial: bool
+
+
+NO_COST = CaseCost(None, partial=False)
+
+
+def case_costs(conn: Connection, case_ids: Sequence[str]) -> dict[str, CaseCost]:
     """Each case's cost, in ONE grouped query for the whole page (never one per case); a case
-    with no row is None."""
+    with no row is NO_COST."""
     if not case_ids:
         return {}
-    costs: dict[str, Decimal | None] = dict.fromkeys(case_ids)
+    costs: dict[str, CaseCost] = dict.fromkeys(case_ids, NO_COST)
     query = (select(llm_usage.c.case_id, _CALLS, _COST, _UNPRICED)
              .where(llm_usage.c.case_id.in_(list(case_ids))).group_by(llm_usage.c.case_id))
     for row in conn.execute(query):
-        costs[row.case_id] = total_cost(row.cost, row.calls, row.unpriced)
+        cost = total_cost(row.cost, row.calls, row.unpriced)
+        costs[row.case_id] = CaseCost(cost, partial=row.unpriced > 0 and cost is not None)
     return costs
 
 

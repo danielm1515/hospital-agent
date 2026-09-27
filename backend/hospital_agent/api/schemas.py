@@ -37,6 +37,8 @@ class CaseSummary(BaseModel):
     updated_at: datetime
     # Sub-project 19 (design D6): the case's LLM cost so far (docs/api.md for the NULL rule).
     llm_cost_usd: Money | None = None
+    # true when llm_cost_usd is known but a lower bound: the case also has unpriced attempts.
+    llm_cost_partial: bool = False
 
 
 class LlmCallView(BaseModel):

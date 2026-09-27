@@ -442,7 +442,8 @@ never combined into a narrower one.
       "escalated_from_state": null,
       "created_at": "2026-09-19T22:12:38.560531Z",
       "updated_at": "2026-09-19T22:12:48.986200Z",
-      "llm_cost_usd": "0.00213400"
+      "llm_cost_usd": "0.00213400",
+      "llm_cost_partial": false
     }
   ],
   "next_cursor": null
@@ -450,8 +451,11 @@ never combined into a narrower one.
 ```
 
 `llm_cost_usd` (sub-project 19) is the case's LLM cost so far, a money string or `null` under
-§10's NULL rule. The page's costs are read in one grouped query over its case ids, never one
-per row.
+§10's NULL rule. `llm_cost_partial` is `true` when the case has at least one unpriced attempt
+(`price_input_per_mtok IS NULL`) **and** a non-null `llm_cost_usd`: the cost shown is then a
+lower bound, since the unpriced attempts are not in it. It is `false` otherwise - including when
+`llm_cost_usd` is `null` (no attempt at all, or nothing priced). Both come from the one grouped
+query over the page's case ids, never one per row.
 
 The items are ordered `updated_at` descending, `case_id` descending (a tie-break, since
 `updated_at` alone is not unique). `next_cursor` is an opaque string (a `c|` kind prefix
@@ -885,12 +889,31 @@ in one read-only snapshot with a 5 s statement timeout; past it the answer is
   "policy": {
     "decisions": {"POLICY_ALLOWED": 11, "POLICY_DENIED": 0, "POLICY_HUMAN_REVIEW_REQUIRED": 0},
     "blocked": 0, "blocked_by_reason": {}, "blocked_by_event": {}
+  },
+  "llm": {
+    "cases": 3,
+    "cases_with_usage": 3,
+    "calls": 10,
+    "input_tokens": 17100,
+    "cached_input_tokens": 0,
+    "output_tokens": 380,
+    "total_cost_usd": "0.00387600",
+    "avg_cost_per_case_usd": "0.00129200",
+    "avg_cost_per_completed_case_usd": "0.00129200",
+    "unpriced_calls": 0,
+    "by_call": [
+      {"call": "Evaluator", "calls": 2, "input_tokens": 2600, "output_tokens": 20, "cost_usd": "0.00054400"},
+      {"call": "Intent", "calls": 3, "input_tokens": 5400, "output_tokens": 120, "cost_usd": "0.00122400"},
+      {"call": "Planner", "calls": 2, "input_tokens": 4000, "output_tokens": 180, "cost_usd": "0.00101600"},
+      {"call": "Safety", "calls": 3, "input_tokens": 5100, "output_tokens": 60, "cost_usd": "0.00109200"}
+    ],
+    "by_source": [{"source": "agent", "calls": 10, "cost_usd": "0.00387600"}]
   }
 }
 ```
 
-`flow` counts the cases **opened** in the window, in their current state; every other group
-counts what **happened** in it. Durations are seconds; `p50` / `p95` / `max` are `null` when
+`flow` and `llm` count the cases **opened** in the window (`flow` in their current state); every
+other group counts what **happened** in it. Durations are seconds; `p50` / `p95` / `max` are `null` when
 `count` is 0. `by_outcome` is one of `MedicalQuestion`, `EscalatedAtClassification`,
 `AppointmentPreparation`, `Unsupported`, `NotClassified`. `open_by_kind`, `open_now` and
 `oldest_open_seconds` describe the review queue **now**, whatever the window. `sources` is
@@ -1376,4 +1399,8 @@ past it `503 llm_costs_unavailable`, never a partial answer. `200`:
 - **`avg_cost_per_completed_case_usd`** = the same average over the cohort cases now in
   `Completed`.
 - Either average is `null` when its denominator is 0. Averages are rounded half-up to 8 places.
+- The averages cover **priced cases only**, while `total_cost_usd` follows the NULL rule over
+  every row. So an average can be `"0.00000000"` while `total_cost_usd` is `null`: e.g. one case
+  whose only attempts were priced API errors (cost 0) and one with only unpriced rows (cost
+  unknown) - the total is unknown, the average over the one priced case is 0.
 - The answer carries no `case_id`, `patient_id` or model name.

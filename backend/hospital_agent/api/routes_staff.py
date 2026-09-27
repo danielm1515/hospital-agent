@@ -93,7 +93,9 @@ def list_cases(state: State | None = None, group: str | None = None, escalation_
         # Sub-project 19 (design D6): the page's costs in one grouped query, never one per row.
         costs = llm_costs.case_costs(conn, [row.case_id for row in rows])
     next_cursor = repository.encode_cases_cursor(rows[-1].updated_at, rows[-1].case_id) if has_more and rows else None
-    items = [CaseSummary.model_validate(row).model_copy(update={"llm_cost_usd": costs[row.case_id]}) for row in rows]
+    items = [CaseSummary.model_validate(row).model_copy(update={"llm_cost_usd": costs[row.case_id].cost_usd,
+                                                                "llm_cost_partial": costs[row.case_id].partial})
+             for row in rows]
     return CaseListPage(items=items, next_cursor=next_cursor)
 
 

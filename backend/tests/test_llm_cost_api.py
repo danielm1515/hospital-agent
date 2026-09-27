@@ -84,8 +84,22 @@ def seeded(app_engine):
 def test_case_costs_follow_the_null_rule(seeded):
     with seeded.connect() as conn:
         costs = llm_costs.case_costs(conn, ["C-PRICED", "C-UNPRICED", "C-MIXED", "C-ERRORS", "C-NONE"])
-    assert costs == {"C-PRICED": Decimal("0.00078000"), "C-UNPRICED": None, "C-MIXED": Decimal("0.00011200"),
-                     "C-ERRORS": Decimal("0"), "C-NONE": None}
+    assert costs == {
+        "C-PRICED": llm_costs.CaseCost(Decimal("0.00078000"), partial=False),
+        "C-UNPRICED": llm_costs.CaseCost(None, partial=False),  # nothing priced: unknown, not partial
+        "C-MIXED": llm_costs.CaseCost(Decimal("0.00011200"), partial=True),  # a lower bound
+        "C-ERRORS": llm_costs.CaseCost(Decimal("0"), partial=False),
+        "C-NONE": llm_costs.CaseCost(None, partial=False),
+    }
+
+
+def test_priced_api_errors_beside_an_unpriced_row_are_unknown_not_partial(app_engine):
+    with app_engine.begin() as conn:
+        add_case(conn, "C-1", created_at=at(1))
+        api_error(conn, "C-1")
+        unpriced(conn, "C-1", source="document_service", call="DocumentClassify")
+    with app_engine.connect() as conn:
+        assert llm_costs.case_costs(conn, ["C-1"]) == {"C-1": llm_costs.CaseCost(None, partial=False)}
 
 
 def test_case_costs_of_no_case_asks_nothing(app_engine):
@@ -148,9 +162,9 @@ def test_the_case_list_carries_each_cost_from_one_grouped_query(client, seeded):
         page = client.get("/api/staff/cases", params={"limit": 10}, headers=headers(client)).json()
     finally:
         stop()
-    costs = {item["case_id"]: item["llm_cost_usd"] for item in page["items"]}
-    assert costs == {"C-PRICED": "0.00078000", "C-UNPRICED": None, "C-MIXED": "0.00011200",
-                     "C-ERRORS": "0.00000000", "C-NONE": None}
+    costs = {item["case_id"]: (item["llm_cost_usd"], item["llm_cost_partial"]) for item in page["items"]}
+    assert costs == {"C-PRICED": ("0.00078000", False), "C-UNPRICED": (None, False),
+                     "C-MIXED": ("0.00011200", True), "C-ERRORS": ("0.00000000", False), "C-NONE": (None, False)}
     assert len(seen) == 1
 
 
@@ -163,7 +177,7 @@ def test_a_page_with_no_usage_at_all_is_null_everywhere_still_one_query(client, 
         page = client.get("/api/staff/cases", headers=headers(client)).json()
     finally:
         stop()
-    assert [item["llm_cost_usd"] for item in page["items"]] == [None, None, None]
+    assert [(item["llm_cost_usd"], item["llm_cost_partial"]) for item in page["items"]] == [(None, False)] * 3
     assert len(seen) == 1
 
 
@@ -294,6 +308,22 @@ def test_a_window_with_cases_but_no_priced_row_has_null_averages(client, app_eng
     assert (body["cases"], body["cases_with_usage"], body["calls"], body["unpriced_calls"]) == (2, 1, 1, 1)
     assert (body["total_cost_usd"], body["avg_cost_per_case_usd"], body["avg_cost_per_completed_case_usd"]) == (
         None, None, None)
+
+
+def test_the_averages_cover_priced_cases_only_so_zero_beside_a_null_total(client, app_engine):
+    """docs/api.md §10: one case with only priced API errors (cost 0) and one with only unpriced
+    rows (cost unknown). The total is unknown (null), but the averages are over the priced case
+    alone, which cost 0."""
+    with app_engine.begin() as conn:
+        add_case(conn, "C-ERR", created_at=at(1), state="Completed")
+        api_error(conn, "C-ERR")
+        add_case(conn, "C-FAKE", created_at=at(2), state="Completed")
+        unpriced(conn, "C-FAKE", source="document_service", call="DocumentClassify")
+    body = llm_costs_of(client).json()
+    assert (body["cases"], body["cases_with_usage"], body["calls"], body["unpriced_calls"]) == (2, 2, 2, 1)
+    assert body["total_cost_usd"] is None
+    assert body["avg_cost_per_case_usd"] == "0.00000000"
+    assert body["avg_cost_per_completed_case_usd"] == "0.00000000"
 
 
 def test_no_completed_priced_case_is_a_null_completed_average_only(client, app_engine):
