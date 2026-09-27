@@ -20,6 +20,7 @@ from hospital_agent.llm.usage import LLMUsage
 from hospital_agent.llm_costs import UsageRecorder
 from hospital_agent.naming import State
 from hospital_agent.scripted import ScriptedAgents
+from obs.golden import SCENARIOS
 
 from .fakes import UsageFakeProvider
 
@@ -216,3 +217,48 @@ def test_a_failing_usage_write_never_changes_the_case(agent, app_engine, caplog)
     assert _rows(app_engine) == []
     assert "llm_usage_write_failed error=RuntimeError" in caplog.text
     assert SECRET not in caplog.text
+
+
+# --- the §0 golden scenarios' call counts (docs/llm-costs.md's estimate, sub-project 19 Task 5) --
+
+def _call_kind(call: Call, user_input: dict) -> str:
+    """The measured kind (design D9) an in-process attempt belongs to, from what it was sent."""
+    if call is Call.PLANNER:
+        return f"Planner {user_input['task']}"
+    if "content" in user_input:  # the Tool Executor's re-check of retrieved content (§3)
+        return "Safety instructions re-check"
+    return f"{call.value.capitalize()} {'with document' if user_input['documents'] else 'request'}"
+
+
+@pytest.mark.parametrize("number, expected", [
+    (1, {"Intent request": 1, "Safety request": 1, "Intent with document": 1, "Safety with document": 1,
+         "Safety instructions re-check": 1, "Planner plan": 1, "Planner propose": 4, "Evaluator": 1}),
+    (2, {"Intent request": 1, "Safety request": 1}),
+    (3, {"Intent request": 1, "Safety request": 1, "Intent with document": 1, "Safety with document": 1,
+         "Safety instructions re-check": 1, "Planner plan": 1, "Planner propose": 7, "Evaluator": 1}),
+])
+def test_the_golden_scenarios_llm_calls_per_kind(sm, app_engine, number, expected):
+    """Every llm_usage row of each §0 scenario, by the kind docs/llm-costs.md prices it as."""
+    _title, gateway, play = SCENARIOS[number]
+    provider = FakeProvider()
+    patient = ScriptedAgents(sm, app_engine)
+    orchestrator = Orchestrator(sm, provider, gateway(), recorder=UsageRecorder(app_engine))
+    try:
+        play(patient, orchestrator)
+    finally:
+        orchestrator.close()
+    rows = _rows(app_engine)
+    assert {(row["case_id"], row["outcome"]) for row in rows} == {(patient.case_id, "ok")}
+    kinds: dict[str, int] = {}
+    for call, user_input in provider.calls:  # the Evaluator runs in its own process: counted from its rows
+        kind = _call_kind(call, user_input)
+        kinds[kind] = kinds.get(kind, 0) + 1
+    evaluations = sum(row["call"] == "Evaluator" for row in rows)
+    if evaluations:
+        kinds["Evaluator"] = evaluations
+    assert kinds == expected
+    # the split accounts for every row, and every row for one attempt
+    by_call = {call: sum(row["call"] == call for row in rows) for call in ("Intent", "Safety", "Planner", "Evaluator")}
+    assert by_call == {call: sum(n for kind, n in expected.items() if kind.startswith(call)) for call in by_call}
+    assert len(rows) == sum(expected.values())
+    assert (patient.state, len(patient.trace())) == (State.COMPLETED, {1: 35, 2: 4, 3: 54}[number])  # the golden run

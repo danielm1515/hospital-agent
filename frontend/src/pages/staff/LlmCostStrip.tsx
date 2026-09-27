@@ -3,7 +3,7 @@
  * LLM cost per case, with the total, the number of cases and the number of calls beside it, for
  * the cases opened in a range (default the last 30 days). It reads `GET /api/staff/llm-costs`,
  * which any staff member may call; the range presets are the metrics screen's own
- * (`metricsLabels.PRESETS` / `presetRange`), in a compact control.
+ * (`metricsLabels.PRESETS`), in a compact control.
  */
 import { useEffect, useState } from 'react'
 import * as api from '../../api/client'

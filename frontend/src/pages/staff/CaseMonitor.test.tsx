@@ -739,11 +739,11 @@ describe('CaseMonitor: LLM cost (sub-project 19, design D7)', () => {
   })
 
   it.each([
-    ['range_too_large', 'הטווח ארוך מ־90 יום.'],
-    ['staff_only', 'אין הרשאה לצפות בעלויות.'],
-    ['server_error', 'אירעה שגיאה בטעינת הנתונים.'],
-  ])('explains a %s refusal in Hebrew, the code beside it', async (code, text) => {
-    vi.mocked(api.getLlmCosts).mockRejectedValue(new api.ApiError(422, code))
+    ['range_too_large', 422, 'הטווח ארוך מ־90 יום.'],
+    ['staff_only', 403, 'אין הרשאה לצפות בעלויות.'],
+    ['server_error', 422, 'אירעה שגיאה בטעינת הנתונים.'],
+  ])('explains a %s refusal in Hebrew, the code beside it', async (code, status, text) => {
+    vi.mocked(api.getLlmCosts).mockRejectedValue(new api.ApiError(status, code))
     renderMonitor()
 
     const alert = (await screen.findByText('טעינת עלות ה־LLM נכשלה')).closest('.alert') as HTMLElement
