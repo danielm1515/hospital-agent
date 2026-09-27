@@ -204,7 +204,7 @@ describe('NewRequest: which appointment (sub-project 18, design D5)', () => {
     renderNew()
 
     const note = await screen.findByText(
-      'לא הצלחנו לטעון את רשימת התורים, ולכן הפנייה תתייחס לתור הקרוב ביותר.',
+      'רשימת התורים לא זמינה כרגע. אפשר לשלוח את הפנייה, והיא תטופל לפי התור הקרוב ביותר או על ידי הצוות.',
     )
     expect(note).toHaveClass('hint')
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
@@ -216,11 +216,36 @@ describe('NewRequest: which appointment (sub-project 18, design D5)', () => {
     expect(createRequest).toHaveBeenCalledWith('מה להביא?', undefined)
   })
 
+  it('loads the list again from "נסה שוב" after a failure, and then offers the appointments', async () => {
+    const user = userEvent.setup()
+    listMyAppointments
+      .mockRejectedValueOnce(new ApiError(503, 'appointments_unavailable'))
+      .mockResolvedValueOnce(list([neuro, stress]))
+    renderNew()
+
+    await screen.findByText(
+      'רשימת התורים לא זמינה כרגע. אפשר לשלוח את הפנייה, והיא תטופל לפי התור הקרוב ביותר או על ידי הצוות.',
+    )
+    await user.click(screen.getByRole('button', { name: 'נסה שוב' }))
+
+    await waitFor(() => expect(optionTexts()).toHaveLength(3))
+    expect(listMyAppointments).toHaveBeenCalledTimes(2)
+    expect(picker().value).toBe('')
+    expect(screen.queryByRole('button', { name: 'נסה שוב' })).not.toBeInTheDocument()
+  })
+
+  it('offers no "נסה שוב" when the list loaded', async () => {
+    listMyAppointments.mockResolvedValue(list([neuro]))
+    renderNew()
+    await waitFor(() => expect(picker().value).toBe('APT-8391'))
+    expect(screen.queryByRole('button', { name: 'נסה שוב' })).not.toBeInTheDocument()
+  })
+
   it('treats appointments_not_enabled like any failed load', async () => {
     listMyAppointments.mockRejectedValue(new ApiError(404, 'appointments_not_enabled'))
     renderNew()
     expect(
-      await screen.findByText('לא הצלחנו לטעון את רשימת התורים, ולכן הפנייה תתייחס לתור הקרוב ביותר.'),
+      await screen.findByText('רשימת התורים לא זמינה כרגע. אפשר לשלוח את הפנייה, והיא תטופל לפי התור הקרוב ביותר או על ידי הצוות.'),
     ).toBeInTheDocument()
     expect(optionTexts()).toEqual(['התור הקרוב ביותר'])
   })
