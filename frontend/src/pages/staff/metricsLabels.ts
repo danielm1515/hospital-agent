@@ -160,3 +160,69 @@ export function presetRange(hours: number, now: Date): LocalRange {
   const start = new Date(end.getTime() - hours * 3600_000)
   return { from: toLocalInput(start), to: toLocalInput(end) }
 }
+
+// ---- LLM cost (sub-project 19, docs/api.md §10) ------------------------------------------
+
+/** The LLM call codes (`docs/api.md` §10), a Hebrew label beside each; an unknown one is itself. */
+export const LLM_CALL_LABELS: Record<string, string> = {
+  Intent: 'סיווג כוונה',
+  Safety: 'סיווג סיכון',
+  Planner: 'תכנון',
+  Evaluator: 'בודק תגובה',
+  DocumentClassify: 'סיווג מסמך',
+  DocumentVision: 'קריאת מסמך סרוק',
+}
+
+/** Where an LLM call was made (`by_source`). */
+export const LLM_SOURCE_LABELS: Record<string, string> = {
+  agent: 'הסוכן',
+  document_service: 'מערכת המסמכים',
+}
+
+/** §10's NULL rule: a `null` cost beside at least one unpriced attempt. */
+export const UNKNOWN_PRICE = 'מחיר לא ידוע'
+
+const MONEY = /^(\d+)(?:\.(\d+))?$/
+
+/**
+ * A money string of the API (`docs/api.md` §10: a decimal string with 8 places, never a JSON
+ * number) as dollars with 4 decimals: `"0.00213400"` → `$0.0021`.
+ *
+ * - a non-zero amount under a ten-thousandth → `<$0.0001` (it would otherwise read as free);
+ * - `"0.00000000"` → `$0.0000` (priced attempts that billed nothing, §10);
+ * - `null` → `—` (no attempt at all), or "מחיר לא ידוע" when `unpriced` says the `null` is
+ *   §10's other case: an unpriced attempt and no priced cost. The caller decides which, from
+ *   the fields beside the cost (`unpriced_calls`, or a `by_call` entry's own `calls`).
+ *
+ * No float is involved: the string is split into its digits and rounded half-up (the rule
+ * the backend itself rounds by) with `BigInt`, so `"0.00005000"` can never become
+ * `0.00004999…` on the way. A string that is not a plain non-negative decimal is shown as is
+ * rather than guessed at.
+ */
+export function formatUsd(value: string | null, { unpriced = false }: { unpriced?: boolean } = {}): string {
+  if (value === null) return unpriced ? UNKNOWN_PRICE : '—'
+  const match = MONEY.exec(value.trim())
+  if (!match) return value
+  const whole = match[1]
+  const fraction = match[2] ?? ''
+  const kept = fraction.slice(0, 4).padEnd(4, '0')
+  const rest = fraction.slice(4)
+  const isZero = /^0*$/.test(whole) && /^0*$/.test(fraction)
+  if (isZero) return '$0.0000'
+  if (/^0*$/.test(whole) && kept === '0000') return '<$0.0001'
+  let scaled = BigInt(whole + kept)
+  if (rest !== '' && rest[0] >= '5') scaled += 1n
+  const dollars = (scaled / 10000n).toString().replace(/\B(?=(\d{3})+(?!\d))/g, ',')
+  const cents = (scaled % 10000n).toString().padStart(4, '0')
+  return `$${dollars}.${cents}`
+}
+
+/** A cost that has an `unpriced_calls` beside it: `null` is "unknown" only when one is unpriced. */
+export function costText(cost: string | null, unpricedCalls: number): string {
+  return formatUsd(cost, { unpriced: unpricedCalls > 0 })
+}
+
+/** A `by_call` / `by_source` entry exists only for rows that exist, so its `null` is unpriced. */
+export function entryCostText(entry: { calls: number; cost_usd: string | null }): string {
+  return formatUsd(entry.cost_usd, { unpriced: entry.calls > 0 })
+}

@@ -3,11 +3,12 @@
  * and a meter. No chart library - the project keeps no UI dependency beyond React and the
  * router.
  */
+import type { ReactNode } from 'react'
 import { formatCount, formatPercent } from './metricsLabels'
 import type { BarRow } from './metricsLabels'
 
 /** Value, label, optional note. The value keeps proportional figures (not the mono `.num`). */
-export function Tile({ label, value, note }: { label: string; value: string; note?: string }) {
+export function Tile({ label, value, note }: { label: string; value: ReactNode; note?: string }) {
   return (
     <div className="metrics-tile">
       <span className="metrics-tile-v">{value}</span>

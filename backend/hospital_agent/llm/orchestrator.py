@@ -31,6 +31,11 @@ its content_hash is on a committed DOCUMENT_UPLOADED row that moved the case to 
 
 Only the Tool Executor calls an external system; LLM calls change nothing outside, so a
 step interrupted by a crash is simply done again.
+
+Sub-project 19 (design D2): run_case() runs a case's steps inside that case's usage scope,
+so every LLM attempt made for it - in this thread, in the Classifier's two threads, or in
+the Response Evaluator's process - is recorded against it by the recorder (llm_costs.py),
+when one is given. Recording never changes the case's path.
 """
 from __future__ import annotations
 
@@ -53,6 +58,7 @@ from .evaluator import ResponseEvaluator
 from .message import status_message
 from .planner import Planner
 from .provider import LLMFailed, LLMProvider
+from .usage import UsageSink, usage_scope
 
 logger = logging.getLogger(__name__)
 
@@ -75,8 +81,10 @@ def orchestrator_interval_seconds() -> float:
 
 
 class Orchestrator:
-    def __init__(self, state_manager: StateManager, provider: LLMProvider, gateway: ToolGateway) -> None:
+    def __init__(self, state_manager: StateManager, provider: LLMProvider, gateway: ToolGateway, *,
+                 recorder: UsageSink | None = None) -> None:
         self.sm = state_manager
+        self.recorder = recorder  # None: no usage is recorded (obs.golden, most tests)
         self.classifier = Classifier(provider)
         self.planner = Planner(provider)
         self.evaluator = ResponseEvaluator(provider)
@@ -116,7 +124,14 @@ class Orchestrator:
         return None
 
     def run_case(self, case_id: str, max_steps: int = 100) -> State:
-        """Step the case until it waits for someone else or is final."""
+        """Step the case until it waits for someone else or is final, inside the case's
+        usage scope when a recorder is configured."""
+        if self.recorder is None:
+            return self._run_case(case_id, max_steps)
+        with usage_scope(case_id, self.recorder):
+            return self._run_case(case_id, max_steps)
+
+    def _run_case(self, case_id: str, max_steps: int) -> State:
         for _ in range(max_steps):
             if self.step(case_id) is None:
                 break

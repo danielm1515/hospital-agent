@@ -16,6 +16,7 @@ from sqlalchemy import (
     Identity,
     Integer,
     MetaData,
+    Numeric,
     Table,
     Text,
     create_engine,
@@ -155,6 +156,26 @@ patients = Table(
     Column("patient_id", Text, primary_key=True),
     Column("full_name", Text, nullable=False),
     Column("phone", Text, nullable=False),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+)
+
+
+# Migration 0008 (sub-project 19, design D4): one row per LLM attempt, append-only like audit_log.
+llm_usage = Table(
+    "llm_usage",
+    metadata,
+    Column("usage_id", BigInteger, Identity(), primary_key=True),
+    Column("case_id", Text, ForeignKey("cases.case_id"), nullable=False),
+    Column("source", Text, nullable=False),
+    Column("call", Text, nullable=False),
+    Column("model", Text, nullable=False),
+    Column("outcome", Text, nullable=False),
+    Column("input_tokens", Integer),
+    Column("cached_input_tokens", Integer),
+    Column("output_tokens", Integer),
+    Column("price_input_per_mtok", Numeric),
+    Column("price_output_per_mtok", Numeric),
+    Column("cost_usd", Numeric),
     Column("created_at", DateTime(timezone=True), nullable=False),
 )
 

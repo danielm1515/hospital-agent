@@ -7,21 +7,29 @@ runs every group in one REPEATABLE READ, READ ONLY transaction: all groups see t
 snapshot, and a slow query ends the whole answer (MetricsUnavailable), never a partial one
 (design §5).
 
-Two kinds of window (design §4.0): the cohort group (flow) counts the cases *opened* in
-[start, end); the event groups count what *happened* in it. Durations are seconds; a
-percentile over no rows is None, never 0.
+Two kinds of window (design §4.0): the cohort groups (flow, and sub-project 19's llm) count
+the cases *opened* in [start, end); the event groups count what *happened* in it. Durations are
+seconds; a percentile over no rows is None, never 0.
+
+Sub-project 19 (design D6) adds the `llm` group - the LLM cost of the cohort, all of its
+llm_usage rows whenever they were written - which compute() reads inside the same snapshot and
+compute_llm() reads alone, for any staff member's GET /api/staff/llm-costs.
 """
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterator, Mapping, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
+from decimal import Decimal
 from typing import Any
 
 from psycopg import errors as pg_errors
 from sqlalchemy import text
 from sqlalchemy.engine import Connection, Engine
 from sqlalchemy.exc import OperationalError
+
+from .llm_costs import CallUsage, SourceUsage, money, total_cost
 
 MAX_WINDOW = timedelta(days=90)
 STATEMENT_TIMEOUT = "5s"
@@ -49,6 +57,15 @@ class Window:
             raise InvalidWindow("invalid_range")
         if self.end - self.start > MAX_WINDOW:
             raise InvalidWindow("range_too_large")
+
+    @classmethod
+    def parse(cls, start: str, end: str) -> Window:
+        """The API's `from`/`to` query values: ISO-8601 instants, else InvalidWindow."""
+        try:
+            start_at, end_at = datetime.fromisoformat(start), datetime.fromisoformat(end)
+        except ValueError:
+            raise InvalidWindow("invalid_range") from None
+        return cls(start_at, end_at)
 
     @property
     def params(self) -> dict[str, datetime]:
@@ -337,6 +354,77 @@ def policy(conn: Connection, window: Window) -> Policy:
     return Policy(decisions, sum(blocked_by_event.values()), blocked_by_reason, blocked_by_event)
 
 
+# --- F: LLM cost (cohort - the cases opened in the window, all their usage; sub-project 19) --
+
+
+@dataclass(frozen=True)
+class LlmCosts:
+    """Sub-project 19, design D6. Money follows llm_costs.total_cost's NULL rule. The averages
+    divide by the cohort cases with at least one priced row (price_input_per_mtok IS NOT NULL):
+    a case with no usage yet (not processed), or only an unknown model's, would otherwise pull
+    the average down with a cost that is not 0 but unknown. None when there is no such case."""
+
+    window: Window
+    cases: int
+    cases_with_usage: int
+    calls: int
+    input_tokens: int
+    cached_input_tokens: int
+    output_tokens: int
+    total_cost_usd: Decimal | None
+    avg_cost_per_case_usd: Decimal | None
+    avg_cost_per_completed_case_usd: Decimal | None
+    unpriced_calls: int
+    by_call: list[CallUsage]
+    by_source: list[SourceUsage]
+
+
+_USAGE_TOTALS = """count(*) AS calls, sum(u.cost_usd) AS cost,
+    count(*) FILTER (WHERE u.price_input_per_mtok IS NULL) AS unpriced,
+    coalesce(sum(u.input_tokens), 0) AS input_tokens,
+    coalesce(sum(u.cached_input_tokens), 0) AS cached_input_tokens,
+    coalesce(sum(u.output_tokens), 0) AS output_tokens"""
+_COHORT_USAGE = f"FROM llm_usage u JOIN cases c ON c.case_id = u.case_id WHERE {_COHORT}"
+
+
+def _average(total: Decimal, count: int) -> Decimal | None:
+    return money(total / count) if count else None
+
+
+def llm(conn: Connection, window: Window) -> LlmCosts:
+    params = window.params
+    # One row per cohort case (usage or not), then counted: every case, the ones with any row,
+    # and the ones with a priced row - overall and among the Completed.
+    cases, with_usage, priced_cases, priced_cost, priced_completed, completed_cost = conn.execute(text(f"""
+        WITH per_case AS (
+            SELECT c.state, count(u.usage_id) AS calls,
+                   count(u.usage_id) FILTER (WHERE u.price_input_per_mtok IS NOT NULL) AS priced,
+                   sum(u.cost_usd) AS cost
+            FROM cases c LEFT JOIN llm_usage u ON u.case_id = c.case_id
+            WHERE {_COHORT} GROUP BY c.case_id, c.state)
+        SELECT count(*), count(*) FILTER (WHERE calls > 0),
+               count(*) FILTER (WHERE priced > 0), coalesce(sum(cost) FILTER (WHERE priced > 0), 0),
+               count(*) FILTER (WHERE priced > 0 AND state = 'Completed'),
+               coalesce(sum(cost) FILTER (WHERE priced > 0 AND state = 'Completed'), 0)
+        FROM per_case"""), params).one()
+    totals = conn.execute(text(f"SELECT {_USAGE_TOTALS} {_COHORT_USAGE}"), params).one()
+    by_call = [CallUsage(row.call, row.calls, row.input_tokens, row.output_tokens,
+                         total_cost(row.cost, row.calls, row.unpriced))
+               for row in conn.execute(text(f"SELECT u.call, {_USAGE_TOTALS} {_COHORT_USAGE} GROUP BY 1 ORDER BY 1"),
+                                       params)]
+    by_source = [SourceUsage(row.source, row.calls, total_cost(row.cost, row.calls, row.unpriced))
+                 for row in conn.execute(text(f"SELECT u.source, {_USAGE_TOTALS} {_COHORT_USAGE} "
+                                              "GROUP BY 1 ORDER BY 1"), params)]
+    return LlmCosts(
+        window=window, cases=int(cases), cases_with_usage=int(with_usage), calls=int(totals.calls),
+        input_tokens=int(totals.input_tokens), cached_input_tokens=int(totals.cached_input_tokens),
+        output_tokens=int(totals.output_tokens),
+        total_cost_usd=total_cost(totals.cost, totals.calls, totals.unpriced),
+        avg_cost_per_case_usd=_average(priced_cost, priced_cases),
+        avg_cost_per_completed_case_usd=_average(completed_cost, priced_completed),
+        unpriced_calls=int(totals.unpriced), by_call=by_call, by_source=by_source)
+
+
 # --- compute: every group, one snapshot (design §5) --------------------------------------
 
 
@@ -349,31 +437,46 @@ class Metrics:
     tools: Tools
     patient_sla: PatientSla
     policy: Policy
+    llm: LlmCosts
 
 
-def compute(engine: Engine, window: Window, sources: Mapping[str, str | None]) -> Metrics:
-    """All five groups in one REPEATABLE READ, READ ONLY transaction, so they agree with each
-    other; STATEMENT_TIMEOUT bounds every query, and a timeout refuses the whole answer."""
+@contextmanager
+def _snapshot(engine: Engine) -> Iterator[Connection]:
+    """One REPEATABLE READ, READ ONLY transaction with STATEMENT_TIMEOUT on every query; a
+    timeout is MetricsUnavailable - the whole answer is refused, never a partial one."""
     try:
         with engine.connect() as raw:
             conn = raw.execution_options(isolation_level="REPEATABLE READ", postgresql_readonly=True)
             with conn.begin():
-                # Per statement, not per transaction - compute() runs about 14 of them, so the
+                # Per statement, not per transaction - compute() runs about 18 of them, so the
                 # whole call can take longer than STATEMENT_TIMEOUT while still bounding each
                 # query individually. Postgres SET takes no bind parameters, which is why
                 # STATEMENT_TIMEOUT (a module constant, never request input) is interpolated here.
                 conn.execute(text(f"SET LOCAL statement_timeout = '{STATEMENT_TIMEOUT}'"))
-                generated_at = conn.execute(text("SELECT now()")).scalar_one()
-                return Metrics(
-                    window=window,
-                    generated_at=generated_at,
-                    flow=flow(conn, window),
-                    human_load=human_load(conn, window),
-                    tools=replace(tools(conn, window), sources=dict(sources)),
-                    patient_sla=patient_sla(conn, window),
-                    policy=policy(conn, window),
-                )
+                yield conn
     except OperationalError as exc:
         if isinstance(exc.orig, pg_errors.QueryCanceled):
             raise MetricsUnavailable("statement_timeout") from None
         raise
+
+
+def compute(engine: Engine, window: Window, sources: Mapping[str, str | None]) -> Metrics:
+    """All six groups in one snapshot (_snapshot), so they agree with each other."""
+    with _snapshot(engine) as conn:
+        generated_at = conn.execute(text("SELECT now()")).scalar_one()
+        return Metrics(
+            window=window,
+            generated_at=generated_at,
+            flow=flow(conn, window),
+            human_load=human_load(conn, window),
+            tools=replace(tools(conn, window), sources=dict(sources)),
+            patient_sla=patient_sla(conn, window),
+            policy=policy(conn, window),
+            llm=llm(conn, window),
+        )
+
+
+def compute_llm(engine: Engine, window: Window) -> LlmCosts:
+    """The llm group alone (GET /api/staff/llm-costs, any staff), in the same kind of snapshot."""
+    with _snapshot(engine) as conn:
+        return llm(conn, window)

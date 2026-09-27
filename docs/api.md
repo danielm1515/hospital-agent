@@ -87,6 +87,7 @@ methods: `GET`, `POST`, `DELETE`, `OPTIONS`. Allowed headers: `Authorization`,
 | POST | `/api/staff/cases/{case_id}/request` | staff | Ask the patient a question or for a document (sub-project 15) |
 | DELETE | `/api/staff/cases/{case_id}/data/{entry_id}` | staff | Delete one Data Log entry |
 | GET | `/api/staff/system-status` | staff | Whether the Agent Orchestrator runs and the LLM's last outcome (staff-fixes design Task 1) |
+| GET | `/api/staff/llm-costs` | staff | The LLM cost of the cases opened in a window (`?from=&to=`, sub-project 19, §10) |
 | GET | `/api/admin/metrics` | admin_staff | System metrics over a window (sub-project 14) |
 
 Codes used everywhere: `401 not_authenticated` (no token, a malformed token, an expired or
@@ -440,12 +441,25 @@ never combined into a narrower one.
       "escalation_kind": null,
       "escalated_from_state": null,
       "created_at": "2026-09-19T22:12:38.560531Z",
-      "updated_at": "2026-09-19T22:12:48.986200Z"
+      "updated_at": "2026-09-19T22:12:48.986200Z",
+      "llm_cost_usd": "0.00213400",
+      "llm_cost_partial": false,
+      "llm_unpriced_calls": 0
     }
   ],
   "next_cursor": null
 }
 ```
+
+`llm_cost_usd` (sub-project 19) is the case's LLM cost so far, a money string or `null` under
+§10's NULL rule. `llm_cost_partial` is `true` when the case has at least one unpriced attempt
+(`price_input_per_mtok IS NULL`) **and** a non-null `llm_cost_usd`: the cost shown is then a
+lower bound, since the unpriced attempts are not in it. It is `false` otherwise - including when
+`llm_cost_usd` is `null` (no attempt at all, or nothing priced). `llm_unpriced_calls` is the
+number of the case's attempts with no price (`price_input_per_mtok IS NULL`), `0` when it has no
+attempt at all - it tells the two nulls apart. **UI rule:** a `null` cost with
+`llm_unpriced_calls > 0` shows "מחיר לא ידוע"; a `null` cost with `llm_unpriced_calls` 0 shows
+"—". All three come from the one grouped query over the page's case ids, never one per row.
 
 The items are ordered `updated_at` descending, `case_id` descending (a tie-break, since
 `updated_at` alone is not unique). `next_cursor` is an opaque string (a `c|` kind prefix
@@ -494,12 +508,26 @@ the counters the list above does not carry. `200`:
   "department": "Cardiology",
   "exam_type_label": "מבחן מאמץ",
   "instruction_source_id": "INSTR-CARD-STRESS",
-  "instruction_version": "1"
+  "instruction_version": "1",
+  "llm_usage": {
+    "calls": 2, "input_tokens": 3600, "cached_input_tokens": 0, "output_tokens": 52,
+    "cost_usd": "0.00078240", "unpriced_calls": 0,
+    "by_call": [
+      {"call": "Intent", "calls": 1, "input_tokens": 1800, "output_tokens": 40, "cost_usd": "0.00040800"},
+      {"call": "Safety", "calls": 1, "input_tokens": 1800, "output_tokens": 12, "cost_usd": "0.00037440"}
+    ]
+  }
 }
 ```
 
 `intent` is `AppointmentPreparation`, `MedicalQuestion` or `Unsupported`; `safety_level` is
 `LowRisk`, `MediumRisk`, `HighRisk` or `CriticalRisk`. `404 case_not_found`.
+
+`llm_usage` (sub-project 19) is always an object: the case's LLM attempts (`calls`), their
+summed tokens, `cost_usd` under §10's NULL rule, `unpriced_calls` and `by_call` (one entry per
+call code, ordered by code; `[]` for a case with no attempt). It is deliberately **not** part of
+`GET /api/staff/cases/{case_id}/context`: that `shown` is hashed into `shown_context_ref`, and
+bookkeeping written while a reviewer reads must never refuse their decision as `context_changed`.
 
 `appointment_id`, `answered_appointment_id`, `department`, `exam_type_label`,
 `instruction_source_id` and `instruction_version` (sub-project 18, design D13) are read-only
@@ -865,17 +893,39 @@ in one read-only snapshot with a 5 s statement timeout; past it the answer is
   "policy": {
     "decisions": {"POLICY_ALLOWED": 11, "POLICY_DENIED": 0, "POLICY_HUMAN_REVIEW_REQUIRED": 0},
     "blocked": 0, "blocked_by_reason": {}, "blocked_by_event": {}
+  },
+  "llm": {
+    "cases": 3,
+    "cases_with_usage": 3,
+    "calls": 10,
+    "input_tokens": 17100,
+    "cached_input_tokens": 0,
+    "output_tokens": 380,
+    "total_cost_usd": "0.00387600",
+    "avg_cost_per_case_usd": "0.00129200",
+    "avg_cost_per_completed_case_usd": "0.00129200",
+    "unpriced_calls": 0,
+    "by_call": [
+      {"call": "Evaluator", "calls": 2, "input_tokens": 2600, "output_tokens": 20, "cost_usd": "0.00054400"},
+      {"call": "Intent", "calls": 3, "input_tokens": 5400, "output_tokens": 120, "cost_usd": "0.00122400"},
+      {"call": "Planner", "calls": 2, "input_tokens": 4000, "output_tokens": 180, "cost_usd": "0.00101600"},
+      {"call": "Safety", "calls": 3, "input_tokens": 5100, "output_tokens": 60, "cost_usd": "0.00109200"}
+    ],
+    "by_source": [{"source": "agent", "calls": 10, "cost_usd": "0.00387600"}]
   }
 }
 ```
 
-`flow` counts the cases **opened** in the window, in their current state; every other group
-counts what **happened** in it. Durations are seconds; `p50` / `p95` / `max` are `null` when
+`flow` and `llm` count the cases **opened** in the window (`flow` in their current state); every
+other group counts what **happened** in it. Durations are seconds; `p50` / `p95` / `max` are `null` when
 `count` is 0. `by_outcome` is one of `MedicalQuestion`, `EscalatedAtClassification`,
 `AppointmentPreparation`, `Unsupported`, `NotClassified`. `open_by_kind`, `open_now` and
 `oldest_open_seconds` describe the review queue **now**, whatever the window. `sources` is
 `null` for each system while the Agent Orchestrator is not running. The answer carries no
 `patient_id`, `case_id` or request text.
+
+`llm` (sub-project 19) is the LLM cost of the same window's cohort, read inside the same
+snapshot: exactly the body of `GET /api/staff/llm-costs` (§10) without its `window`.
 
 ## 8. Staff requests to the patient (sub-project 15)
 
@@ -1274,3 +1324,87 @@ The answer is exactly the requested `source_id` + `version`, with a non-empty `t
   `client_error` (the client's defensive `ValueError`), or `policy_unavailable` (OPA itself
   could not be asked, so the appointment-service was not either) - never the source_id, the
   title or the text (§12.3).
+
+## 10. LLM cost (sub-project 19)
+
+`docs/superpowers/specs/2026-09-27-llm-costs-design.md` (D5, D6). Staff only: no patient route
+carries a cost, a token count or a model.
+
+**What is counted.** One `llm_usage` row per LLM *attempt*, ok or failed: the agent's four
+calls (`Intent`, `Safety`, `Planner`, `Evaluator`, `source` `agent`) and the document-service's
+one call per upload (`DocumentClassify` for a text classification, `DocumentVision` for an
+image or a scanned PDF, `source` `document_service`, reported on its 201 answer as
+`llm_usage` and recorded by the Session Service with outcome `ok`). A document-service report
+that is not the documented shape is dropped (logged `llm_usage_invalid`, code only) and the
+upload goes on unchanged.
+
+**Money** is a decimal string with exactly 8 places, never a JSON number: `"0.00213400"`,
+`"0.00000000"`. Costs are in USD, `input_tokens × input price + output_tokens × output price`
+per 1M tokens, rounded half-up to 8 places; cached input tokens are billed at the full input
+price (design D3).
+
+**The NULL rule** - for a case's `llm_cost_usd` / `llm_usage.cost_usd`, and for every
+`total_cost_usd` and `cost_usd` below:
+- the cost is the **sum of the non-null costs** of the rows;
+- a row is **unpriced** when its model has no price (`price_input_per_mtok IS NULL`, e.g. the
+  document-service's `fake` classifier) - not merely when its cost is NULL: an API error on a
+  priced model keeps its price, has NULL tokens and a NULL cost, and billed nothing;
+- the cost is `null` when there is **no row at all** (nothing processed yet; the UI shows "—",
+  not "unknown"), or when there is **an unpriced row and no priced cost at all** (the UI shows
+  "מחיר לא ידוע");
+- rows that are all priced API errors cost `"0.00000000"`, not `null`;
+- a cost beside `unpriced_calls > 0` is a lower bound: the unpriced attempts are not in it.
+
+### GET /api/staff/llm-costs
+
+`?from=<ISO-8601>&to=<ISO-8601>` - the admin metrics' window rules (§7): `from` inclusive, `to`
+exclusive, both with a time zone, at most 90 days apart; a missing parameter is
+`422 invalid_body`, an unparsable, zone-less, empty or reversed window `422 invalid_range`, a
+longer one `422 range_too_large`. Any staff member (`clinical_staff` or `admin_staff`); a patient
+token is `403 staff_only`. One read-only `REPEATABLE READ` snapshot with a 5 s statement timeout;
+past it `503 llm_costs_unavailable`, never a partial answer. `200`:
+
+```json
+{
+  "window": {"start": "2026-09-01T00:00:00Z", "end": "2026-09-02T00:00:00Z"},
+  "cases": 5,
+  "cases_with_usage": 4,
+  "calls": 6,
+  "input_tokens": 7100,
+  "cached_input_tokens": 1000,
+  "output_tokens": 333,
+  "total_cost_usd": "0.00130360",
+  "avg_cost_per_case_usd": "0.00043453",
+  "avg_cost_per_completed_case_usd": "0.00050200",
+  "unpriced_calls": 2,
+  "by_call": [
+    {"call": "DocumentClassify", "calls": 1, "input_tokens": 900, "output_tokens": 40, "cost_usd": null},
+    {"call": "DocumentVision", "calls": 1, "input_tokens": 1200, "output_tokens": 40, "cost_usd": null},
+    {"call": "Intent", "calls": 2, "input_tokens": 4000, "output_tokens": 183, "cost_usd": "0.00101960"},
+    {"call": "Planner", "calls": 1, "input_tokens": 1000, "output_tokens": 70, "cost_usd": "0.00028400"},
+    {"call": "Safety", "calls": 1, "input_tokens": 0, "output_tokens": 0, "cost_usd": "0.00000000"}
+  ],
+  "by_source": [
+    {"source": "agent", "calls": 4, "cost_usd": "0.00130360"},
+    {"source": "document_service", "calls": 2, "cost_usd": null}
+  ]
+}
+```
+
+- **The cohort** is the cases **opened** in the window (`cases.created_at`), with **all** of
+  their usage, whenever it was written - so a case's cost is counted once, in the window it was
+  opened in. `cases` counts the cohort; `cases_with_usage` the cohort cases with at least one
+  row; `calls`, the token sums and `unpriced_calls` count the cohort's rows (token sums count
+  the attempts that reported usage).
+- `by_call` / `by_source` hold one entry per call code / source present, ordered by code.
+- **`avg_cost_per_case_usd`** = the cohort's priced cost / the number of cohort cases with **at
+  least one priced row**. A case with no usage yet (not processed), or with only an unknown
+  model's rows, has no known cost - counting it as 0 would drag the average down.
+- **`avg_cost_per_completed_case_usd`** = the same average over the cohort cases now in
+  `Completed`.
+- Either average is `null` when its denominator is 0. Averages are rounded half-up to 8 places.
+- The averages cover **priced cases only**, while `total_cost_usd` follows the NULL rule over
+  every row. So an average can be `"0.00000000"` while `total_cost_usd` is `null`: e.g. one case
+  whose only attempts were priced API errors (cost 0) and one with only unpriced rows (cost
+  unknown) - the total is unknown, the average over the one priced case is 0.
+- The answer carries no `case_id`, `patient_id` or model name.

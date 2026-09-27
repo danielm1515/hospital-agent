@@ -53,3 +53,31 @@ def test_optimistic_lock_rejects_a_stale_version(app_engine):
         repository.insert_case(conn, case)
         assert repository.update_case(conn, case, expected_version=1) == 1
         assert repository.update_case(conn, case, expected_version=0) == 0
+
+
+# Sub-project 19 (design D4): llm_usage is append-only for the application, like audit_log.
+
+def _seed_usage(app_engine) -> None:
+    now = datetime.now(UTC)
+    with app_engine.begin() as conn:
+        repository.insert_case(conn, new_case("CASE-1", "P-1", now))
+        conn.execute(text("INSERT INTO llm_usage (case_id, source, call, model, outcome, created_at) "
+                          "VALUES ('CASE-1', 'agent', 'Intent', 'fake', 'ok', now())"))
+
+
+def test_app_role_can_append_and_read_usage_rows(app_engine):
+    _seed_usage(app_engine)
+    with app_engine.connect() as conn:
+        assert conn.execute(text("SELECT count(*) FROM llm_usage")).scalar() == 1
+
+
+@pytest.mark.parametrize("statement", [
+    "UPDATE llm_usage SET cost_usd = 0",
+    "DELETE FROM llm_usage",
+    "TRUNCATE llm_usage",
+])
+def test_app_role_cannot_change_or_delete_usage_rows(app_engine, statement):
+    _seed_usage(app_engine)
+    with pytest.raises(ProgrammingError, match="permission denied"):
+        with app_engine.begin() as conn:
+            conn.execute(text(statement))

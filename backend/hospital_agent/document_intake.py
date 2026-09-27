@@ -11,6 +11,10 @@ and the caller records nothing. A `503 classifier_unavailable` body is reported 
 code rather than the generic `status_503`, so the application log names the real cause (Task 2
 decision 1).
 
+Sub-project 19 (design D5): a 201 answer also reports the document-service's own LLM call as
+`llm_usage` - read strictly here, and bookkeeping only: an invalid one is dropped (`None`, a
+code-only WARNING `llm_usage_invalid`) and the upload goes on exactly as it would have.
+
 Standard library only, over the shared transport in `execution.http` (no redirect, no proxy,
 a bounded body). The URL and the key never reach a repr, an exception or a log line.
 """
@@ -18,6 +22,7 @@ from __future__ import annotations
 
 import http.client as http_client
 import json
+import logging
 import os
 import re
 import urllib.parse
@@ -27,6 +32,9 @@ from dataclasses import dataclass
 
 from .execution import http
 from .execution.http import HttpResponse
+from .llm.usage import DOCUMENT_CALL_CODES, LLMUsage
+
+logger = logging.getLogger(__name__)
 
 # The document-service's documented worst case is 30 s of PDF parsing + 40 s of classification
 # = 70 s (its README); the client must wait longer than that, or an accepted upload would look
@@ -70,6 +78,22 @@ def sniff_kind(data: bytes) -> str:
     return "pdf"
 
 
+# design D5: the model name as the document-service reports it - a code, never free text.
+_MODEL = re.compile(r"[A-Za-z0-9._:-]{1,64}")
+_USAGE_COUNTS = ("input_tokens", "cached_input_tokens", "output_tokens")
+
+
+@dataclass(frozen=True)
+class DocumentUsage:
+    """The document-service's one LLM call for an upload (design D5): its call code
+    (`DocumentClassify` / `DocumentVision`), its model, and its billed tokens - `None` when the
+    provider gave no usable usage (the call was made; what it cost is unknown)."""
+
+    call: str
+    model: str
+    usage: LLMUsage | None
+
+
 class IntakeUnavailable(Exception):
     """The document-service could not be asked, or did not answer with its contract. The
     message is a short code (no URL, no key, no patient data)."""
@@ -85,6 +109,9 @@ class IntakeAnswer:
     # `DUPLICATE_DOCUMENT`, `NON_MEDICAL_DOCUMENT`, `PATIENT_MISMATCH`, an answer with no
     # `reason` at all (an older document-service), or one this version does not recognise.
     reason: str | None = None
+    # Sub-project 19 (design D5): the document-service's LLM call, or None - no call made
+    # (a duplicate, an early rejection), an older document-service, or an invalid report.
+    llm_usage: DocumentUsage | None = None
 
 
 def _urllib_transport(method: str, url: str, headers: Mapping[str, str], body: bytes | None,
@@ -132,6 +159,38 @@ def _optional_reason(body: dict) -> str | None:
     return value if isinstance(value, str) and value in _REASONS else None
 
 
+def _document_usage(value: object) -> DocumentUsage:
+    """Strict (design D5): ValueError on anything but the documented object. Counts are three
+    ints in 0..MAX_TOKENS (never a bool) with cached <= input - LLMUsage's own checks - or all
+    three null. Keys beyond the documented five are ignored, like the answer's own."""
+    if not isinstance(value, dict):
+        raise ValueError("not_an_object")
+    call, model = value.get("call"), value.get("model")
+    if not isinstance(call, str) or call not in DOCUMENT_CALL_CODES:
+        raise ValueError("call")
+    if not isinstance(model, str) or not _MODEL.fullmatch(model):
+        raise ValueError("model")
+    if not all(key in value for key in _USAGE_COUNTS):
+        raise ValueError("counts_missing")
+    counts = [value[key] for key in _USAGE_COUNTS]
+    if all(count is None for count in counts):
+        return DocumentUsage(DOCUMENT_CALL_CODES[call], model, None)
+    return DocumentUsage(DOCUMENT_CALL_CODES[call], model, LLMUsage(*counts))  # ValueError when invalid
+
+
+def _optional_usage(body: dict) -> DocumentUsage | None:
+    """`null` or no field at all is no call; anything invalid is dropped with a code-only
+    WARNING - bookkeeping never rejects an upload (design D5)."""
+    value = body.get("llm_usage")
+    if value is None:
+        return None
+    try:
+        return _document_usage(value)
+    except ValueError:
+        logger.warning("llm_usage_invalid")
+        return None
+
+
 def map_answer(response: HttpResponse) -> IntakeAnswer:
     """The 201 answer of design §4.1, or IntakeUnavailable.
 
@@ -161,7 +220,8 @@ def map_answer(response: HttpResponse) -> IntakeAnswer:
     if not (isinstance(result, str) and result and isinstance(document_id, str) and _ID.match(document_id)
             and type_ok and duplicate_ok):
         raise IntakeUnavailable("invalid_response")
-    return IntakeAnswer(result, document_id, document_type, duplicate_of, _optional_reason(body))
+    return IntakeAnswer(result, document_id, document_type, duplicate_of, _optional_reason(body),
+                        _optional_usage(body))
 
 
 class DocumentIntakeClient:

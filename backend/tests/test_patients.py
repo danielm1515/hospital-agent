@@ -10,7 +10,7 @@ from sqlalchemy.exc import IntegrityError, ProgrammingError
 from hospital_agent.auth import DEMO_USERS, PATIENT
 
 READER = "hospital_reader"
-OTHER_TABLES = ["cases", "audit_log", "data_log", "approvals", "executions"]
+OTHER_TABLES = ["cases", "audit_log", "data_log", "approvals", "executions", "llm_usage"]
 # The three statements migration 0004's REVOKE cannot reach on a managed Postgres.
 LARGE_OBJECT_CREATORS_SQL = {
     "SELECT lo_creat(-1)",

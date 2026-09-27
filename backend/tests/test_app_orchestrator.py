@@ -6,6 +6,7 @@ from fastapi.testclient import TestClient
 from hospital_agent.api import app as app_module
 from hospital_agent.llm.orchestrator import Orchestrator
 from hospital_agent.llm.provider import FakeProvider
+from hospital_agent.llm_costs import UsageRecorder
 
 
 def test_the_server_starts_the_orchestrator_only_with_a_provider(monkeypatch, app_engine):
@@ -67,6 +68,9 @@ def test_the_app_exposes_the_running_orchestrator(monkeypatch, app_engine):
     monkeypatch.setattr(app_module, "select_provider", FakeProvider)
     with TestClient(app_module.create_app()) as client:
         assert isinstance(client.app.state.orchestrator, Orchestrator)
+        # Sub-project 19: the running orchestrator records usage on the app's own engine
+        recorder = client.app.state.orchestrator.recorder
+        assert isinstance(recorder, UsageRecorder) and recorder.engine is client.app.state.engine
 
 
 def test_the_server_uses_the_appointment_service_when_configured(monkeypatch, app_engine):

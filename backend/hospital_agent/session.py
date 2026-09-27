@@ -28,6 +28,7 @@ from . import auth, data_log, naming, patient_messages, repository
 from .case import CaseRecord
 from .document_intake import IntakeAnswer, IntakeUnavailable, sniff_kind
 from .documents import CATALOG_LABELS, document_label
+from .llm.usage import SOURCE_DOCUMENT_SERVICE, UsageSink
 from .naming import Component, Event, SafetyLevel, State
 from .state_manager import CaseNotFound as _UnknownCase
 from .state_manager import StateManager, TransitionResult
@@ -255,11 +256,14 @@ def status_history(trace: list[repository.AuditEntry], delivered: bool) -> list[
 
 class SessionService:
     def __init__(self, state_manager: StateManager, *, wake: Callable[[], None] = lambda: None,
-                 document_intake: DocumentIntake | None = None) -> None:
+                 document_intake: DocumentIntake | None = None, usage_recorder: UsageSink | None = None) -> None:
         self.sm = state_manager
         self.engine = state_manager.engine
         self.wake = wake
         self.document_intake = document_intake
+        # Sub-project 19 (design D5): where the document-service's LLM call is recorded; None
+        # records nothing (the tests' default - the server passes its UsageRecorder).
+        self.usage_recorder = usage_recorder
 
     # --- events --------------------------------------------------------------------------
 
@@ -371,6 +375,7 @@ class SessionService:
             # can tell a 400 from a 5xx - never a patient id, a file name or a document id.
             logger.info("pdf upload: document_service_unavailable (%s)", unavailable)
             raise
+        self._record_usage(case_id, answer)  # billed whatever the answer says next
         document_type, document_ref = _effective(answer)  # rule 4
         if document_type is None or document_ref is None:  # rule 6
             outcome = UploadOutcome(_rejection_code(answer), None)
@@ -390,6 +395,20 @@ class SessionService:
                 outcome = UploadOutcome("accepted", document_type)
         _log_upload_outcome("pdf upload", outcome, answer.reason)  # rule 7: codes, nothing else
         return outcome
+
+    def _record_usage(self, case_id: str, answer: IntakeAnswer) -> None:
+        """Sub-project 19 (design D5): the document-service's LLM call for this upload, against
+        the case, as soon as it answered - the call was billed whether or not the document then
+        counts, and even if the case moved on meanwhile. Outcome `ok`: an answer came back (a
+        call that did not answer is a 503 with no usage to report). Bookkeeping only: nothing
+        here can change the upload (the recorder never raises; this is the second fence)."""
+        called = answer.llm_usage
+        if called is None or self.usage_recorder is None:
+            return
+        try:
+            self.usage_recorder.record(case_id, SOURCE_DOCUMENT_SERVICE, called.call, called.model, "ok", called.usage)
+        except Exception as exc:
+            logger.warning("llm_usage_write_failed error=%s", type(exc).__name__)
 
     def _waiting_case(self, patient_id: str, case_id: str) -> CaseRecord:
         case = self.case_for_patient(patient_id, case_id)
@@ -421,6 +440,7 @@ class SessionService:
         except IntakeUnavailable as unavailable:
             logger.info("pdf reply: document_service_unavailable (%s)", unavailable)
             raise
+        self._record_usage(case_id, answer)
         document_type, document_ref = _effective(answer)
         if document_type is None or document_ref is None:
             outcome = UploadOutcome(_rejection_code(answer), None)
