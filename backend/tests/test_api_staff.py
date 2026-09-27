@@ -80,7 +80,8 @@ def test_cases_list_and_filter_by_state(client, staff, sm, app_engine):
     page = client.get("/api/staff/cases", headers=staff).json()
     assert {c["case_id"] for c in page["items"]} == {classified.case_id, received.case_id}
     assert set(page["items"][0]) == {"case_id", "patient_id", "state", "intent", "safety_level",
-                                     "escalation_kind", "escalated_from_state", "created_at", "updated_at"}
+                                     "escalation_kind", "escalated_from_state", "created_at", "updated_at",
+                                     "llm_cost_usd"}
     assert page["next_cursor"] is None
 
     only_received = client.get("/api/staff/cases", params={"state": "Received"}, headers=staff).json()
@@ -251,7 +252,8 @@ def test_cases_list_runs_one_sql_statement_regardless_of_row_count(client, staff
     """Staff-fixes design Task 3: before, the Case Monitor's N+1 was in the browser (one
     `getCase` per row); the list route itself was always one `SELECT`. This pins that it
     stays exactly one statement as the row count grows, so a future change cannot
-    reintroduce a per-row query here either."""
+    reintroduce a per-row query here either. Sub-project 19 adds exactly one more: the page's
+    LLM costs, one grouped query for all of its case ids (design D6) - still constant."""
     from sqlalchemy import event
 
     for i in range(5):
@@ -270,7 +272,8 @@ def test_cases_list_runs_one_sql_statement_regardless_of_row_count(client, staff
 
     assert response.status_code == 200
     assert len(response.json()["items"]) == 5
-    assert len(statements) == 1
+    assert len(statements) == 2
+    assert "llm_usage" not in statements[0] and "GROUP BY llm_usage.case_id" in statements[1]
 
 
 def test_cases_list_rejects_a_bad_cursor(client, staff):

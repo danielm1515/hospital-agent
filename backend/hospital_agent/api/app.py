@@ -39,6 +39,7 @@ from ..instruction_client import InstructionClient, build_instruction_client
 from ..llm import telemetry
 from ..llm.model_selector import llm_version, select_provider
 from ..llm.orchestrator import Orchestrator, orchestrator_interval_seconds
+from ..llm.usage import UsageSink
 from ..llm_costs import UsageRecorder
 from ..session import DocumentIntake, SessionService
 from ..wiring import build_state_manager
@@ -98,7 +99,8 @@ class UploadSizeLimit:
 def create_app(engine: Engine | None = None, orchestrator: Orchestrator | None = None,
                document_intake: DocumentIntake | None = None,
                appointment_list: AppointmentListClient | None = None,
-               instructions_client: InstructionClient | None = None) -> FastAPI:
+               instructions_client: InstructionClient | None = None,
+               usage_recorder: UsageSink | None = None) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         owned = engine is None
@@ -125,10 +127,14 @@ def create_app(engine: Engine | None = None, orchestrator: Orchestrator | None =
 
         provider = select_provider() if owned else None
         sm = build_state_manager(app.state.engine, llm_version(provider) if provider else None)
+        # Sub-project 19: one recorder on the app's own engine, for the agent's LLM attempts and
+        # the document-service's call per upload alike; a test injects its own (or none).
+        recorder = UsageRecorder(app.state.engine) if owned else usage_recorder
         # Sub-project 13: the patient's PDF goes to the document-service when it is configured;
         # a test injects its own client (or none) the way it injects the Orchestrator.
         app.state.session = SessionService(
-            sm, wake=_wake, document_intake=build_intake_client() if owned else document_intake)
+            sm, wake=_wake, document_intake=build_intake_client() if owned else document_intake,
+            usage_recorder=recorder)
         app.state.reviews = HumanReviewService(sm, app.state.session, wake=_wake)
 
         stops, started = [], None
@@ -151,8 +157,7 @@ def create_app(engine: Engine | None = None, orchestrator: Orchestrator | None =
                     app.state.appointments_source = source
                     app.state.documents_source = documents_source
                     # Sub-project 19: every LLM attempt is recorded against its case, on the same engine.
-                    started = app.state.orchestrator = Orchestrator(sm, provider, gateway,
-                                                                    recorder=UsageRecorder(app.state.engine))
+                    started = app.state.orchestrator = Orchestrator(sm, provider, gateway, recorder=recorder)
                     stops.append(started.run_in_background(orchestrator_interval_seconds()))
                     app.state.orchestrator_status = "running"
         yield

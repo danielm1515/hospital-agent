@@ -6,11 +6,17 @@ request model is the only shape the server accepts - it never carries an identit
 from __future__ import annotations
 
 from datetime import datetime
+from decimal import Decimal
 from typing import Annotated, Any, Literal
 
-from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, StringConstraints
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, PlainSerializer, StringConstraints
 
+from ..llm_costs import money
 from ..naming import EscalationKind, SafetyLevel, State
+
+# Sub-project 19 (design D6): money is a Decimal here and a decimal string with exactly 8
+# places in JSON ("0.00213400") - never a float, which would drift.
+Money = Annotated[Decimal, PlainSerializer(lambda value: format(money(value), "f"), return_type=str)]
 
 
 class CaseSummary(BaseModel):
@@ -29,6 +35,42 @@ class CaseSummary(BaseModel):
     escalated_from_state: State | None
     created_at: datetime
     updated_at: datetime
+    # Sub-project 19 (design D6): the case's LLM cost so far (docs/api.md for the NULL rule).
+    llm_cost_usd: Money | None = None
+
+
+class LlmCallView(BaseModel):
+    """Sub-project 19 (design D6): one call code's attempts and their cost."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    call: str
+    calls: int
+    input_tokens: int
+    output_tokens: int
+    cost_usd: Money | None
+
+
+class LlmSourceView(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    source: str
+    calls: int
+    cost_usd: Money | None
+
+
+class CaseLlmUsageView(BaseModel):
+    """`CaseDetail.llm_usage` (llm_costs.CaseUsage)."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    calls: int
+    input_tokens: int
+    cached_input_tokens: int
+    output_tokens: int
+    cost_usd: Money | None
+    unpriced_calls: int
+    by_call: list[LlmCallView]
 
 
 class CaseListPage(BaseModel):
@@ -68,6 +110,9 @@ class CaseDetail(BaseModel):
     exam_type_label: str | None = None
     instruction_source_id: str | None = None
     instruction_version: str | None = None
+    # Sub-project 19 (design D6): staff-only, and deliberately not in ReviewContext - its
+    # `shown` is hashed into shown_context_ref, and bookkeeping must never refuse a decision.
+    llm_usage: CaseLlmUsageView | None = None
 
 
 class AuditRecord(BaseModel):
@@ -381,6 +426,29 @@ class PolicyView(_FromMetrics):
     blocked_by_event: dict[str, int]
 
 
+class LlmCostsView(_FromMetrics):
+    """Sub-project 19 (design D6): metrics.LlmCosts - the admin metrics' `llm` group."""
+
+    cases: int
+    cases_with_usage: int
+    calls: int
+    input_tokens: int
+    cached_input_tokens: int
+    output_tokens: int
+    total_cost_usd: Money | None
+    avg_cost_per_case_usd: Money | None
+    avg_cost_per_completed_case_usd: Money | None
+    unpriced_calls: int
+    by_call: list[LlmCallView]
+    by_source: list[LlmSourceView]
+
+
+class LlmCostsResponse(LlmCostsView):
+    """`GET /api/staff/llm-costs`: the same numbers, with their window."""
+
+    window: MetricsWindow
+
+
 class MetricsResponse(_FromMetrics):
     window: MetricsWindow
     generated_at: datetime
@@ -389,6 +457,7 @@ class MetricsResponse(_FromMetrics):
     tools: ToolsView
     patient_sla: PatientSlaView
     policy: PolicyView
+    llm: LlmCostsView
 
 
 # --- sub-project 16: the patient's appointments (design D5, D6) ---------------------------

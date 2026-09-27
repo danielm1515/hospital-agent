@@ -27,13 +27,19 @@ from .schemas import Call
 logger = logging.getLogger(__name__)
 
 SOURCE_AGENT = "agent"
+SOURCE_DOCUMENT_SERVICE = "document_service"
 
-# The `call` code stored per row (design D4); Task 3 adds the document-service's two.
+# The `call` code stored per row (design D4): the agent's four calls ...
 CALL_CODES: dict[Call, str] = {
     Call.INTENT: "Intent",
     Call.SAFETY: "Safety",
     Call.PLANNER: "Planner",
     Call.EVALUATOR: "Evaluator",
+}
+# ... and the document-service's one call per upload, by the `call` its answer names (design D5).
+DOCUMENT_CALL_CODES: dict[str, str] = {
+    "classify": "DocumentClassify",
+    "vision": "DocumentVision",
 }
 
 

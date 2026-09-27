@@ -7,10 +7,12 @@ reason code the Human Review Service gives - the API never decides that itself.
 """
 from __future__ import annotations
 
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from sqlalchemy.engine import Engine
 
-from .. import repository
+from .. import llm_costs, metrics, repository
 from ..auth import Principal
 from ..human_review import AnswerRejected, ContextChanged, DecisionRejected, HumanReviewService, NotInReview
 from ..llm import telemetry
@@ -25,10 +27,12 @@ from .schemas import (
     AuditRecord,
     CaseDetail,
     CaseListPage,
+    CaseLlmUsageView,
     CaseSummary,
     DecisionRequest,
     DecisionResponse,
     InstructionView,
+    LlmCostsResponse,
     MessageTemplateView,
     PatientRequestBody,
     ReviewContext,
@@ -38,6 +42,7 @@ from .schemas import (
 )
 
 router = APIRouter(prefix="/api/staff", tags=["staff"], dependencies=[Depends(require_staff)])
+logger = logging.getLogger(__name__)
 
 MAX_LIST_LIMIT = 200
 DEFAULT_LIST_LIMIT = 50
@@ -85,17 +90,38 @@ def list_cases(state: State | None = None, group: str | None = None, escalation_
             raise HTTPException(status_code=422, detail="invalid_cursor") from None
     with db.connect() as conn:
         rows, has_more = repository.list_cases_page(conn, states, limit, parsed_cursor, escalation_kind=parsed_kind)
+        # Sub-project 19 (design D6): the page's costs in one grouped query, never one per row.
+        costs = llm_costs.case_costs(conn, [row.case_id for row in rows])
     next_cursor = repository.encode_cases_cursor(rows[-1].updated_at, rows[-1].case_id) if has_more and rows else None
-    return CaseListPage(items=[CaseSummary.model_validate(row) for row in rows], next_cursor=next_cursor)
+    items = [CaseSummary.model_validate(row).model_copy(update={"llm_cost_usd": costs[row.case_id]}) for row in rows]
+    return CaseListPage(items=items, next_cursor=next_cursor)
 
 
 @router.get("/cases/{case_id}", response_model=CaseDetail)
 def get_case(case_id: str, db: Engine = Depends(get_engine)) -> CaseDetail:
     with db.connect() as conn:
         case = repository.load_case(conn, case_id)
+        usage = llm_costs.case_usage(conn, case_id) if case is not None else None
     if case is None:
         raise HTTPException(status_code=404, detail="case_not_found")
-    return CaseDetail.model_validate(case)
+    return CaseDetail.model_validate(case).model_copy(update={"llm_usage": CaseLlmUsageView.model_validate(usage)})
+
+
+@router.get("/llm-costs", response_model=LlmCostsResponse)
+def get_llm_costs(start: str = Query(alias="from"), end: str = Query(alias="to"),
+                  db: Engine = Depends(get_engine)) -> LlmCostsResponse:
+    """Sub-project 19 (design D6): the LLM cost of the cases opened in [from, to) - the admin
+    metrics' window rules (ISO-8601 with a time zone, at most 90 days) and snapshot, for any
+    staff member. Aggregates only: no case id, patient id or model name leaves here."""
+    try:
+        window = metrics.Window.parse(start, end)
+    except metrics.InvalidWindow as invalid:
+        raise HTTPException(status_code=422, detail=invalid.code) from None
+    try:
+        return LlmCostsResponse.model_validate(metrics.compute_llm(db, window))
+    except metrics.MetricsUnavailable:
+        logger.warning("llm costs unavailable: statement timeout")
+        raise HTTPException(status_code=503, detail="llm_costs_unavailable") from None
 
 
 @router.get("/cases/{case_id}/appointments", response_model=AppointmentsView)
