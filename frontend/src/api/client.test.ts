@@ -334,6 +334,18 @@ describe('getMetrics', () => {
   })
 })
 
+describe('getLlmCosts (sub-project 19)', () => {
+  it('asks the staff route for the window as ISO instants, URL-encoded', async () => {
+    mockOnce(200, {})
+    await api.getLlmCosts(new Date('2026-08-28T00:00:00Z'), new Date('2026-09-27T00:00:00Z'))
+    const [url, init] = lastCall()
+    expect(url).toBe(
+      '/api/staff/llm-costs?from=2026-08-28T00%3A00%3A00.000Z&to=2026-09-27T00%3A00%3A00.000Z',
+    )
+    expect(init.method).toBe('GET')
+  })
+})
+
 describe('appointments (sub-project 16)', () => {
   beforeEach(() => api.setToken('tok-1'))
 

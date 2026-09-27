@@ -2504,3 +2504,141 @@ img {
   border-radius: var(--radius-md);
   background: var(--surface-000);
 }
+
+/* ---- Sub-project 19 (design D7): LLM cost, staff only ----------------------------------- */
+/* The Case Monitor's strip: the average cost per case first, then the total, the cases and
+   the calls, for a preset range chosen in a compact segmented control. */
+.llm-strip {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-4) var(--space-5);
+}
+
+.llm-strip-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.llm-strip-h {
+  margin: 0;
+  font-size: 15px;
+  line-height: 22px;
+  font-weight: 600;
+  color: var(--ink-900);
+}
+
+.llm-strip-range {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--line-300);
+  border-radius: var(--radius-md);
+}
+
+.llm-range-btn {
+  font: inherit;
+  font-size: 13px;
+  line-height: 20px;
+  padding-block: 2px;
+  padding-inline: var(--space-3);
+  color: var(--ink-700);
+  background: transparent;
+  border: 0;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.llm-range-btn:hover {
+  background: var(--surface-100);
+}
+
+.llm-range-btn[aria-pressed='true'] {
+  color: var(--brand-700);
+  background: var(--brand-100);
+  font-weight: 600;
+}
+
+.llm-range-btn:focus-visible {
+  outline: 2px solid var(--focus-500);
+  outline-offset: 1px;
+}
+
+.llm-strip-facts {
+  margin: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2) var(--space-6);
+}
+
+.llm-strip-fact {
+  display: flex;
+  flex-direction: column-reverse;
+  gap: 2px;
+}
+
+.llm-strip-fact dt {
+  font-size: 13px;
+  line-height: 18px;
+  color: var(--ink-700);
+}
+
+.llm-strip-fact dd {
+  margin: 0;
+  font-size: 18px;
+  line-height: 26px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-900);
+}
+
+.llm-strip-main dd {
+  font-size: 26px;
+  line-height: 32px;
+}
+
+.llm-strip-note,
+.llm-note {
+  margin: 0;
+  font-size: 13px;
+  line-height: 20px;
+  color: var(--ink-500);
+}
+
+.llm-note {
+  margin-block-start: var(--space-2);
+}
+
+/* The expanded row's per-call breakdown: the table of the list, tightened to a fact group. */
+.llm-calls {
+  margin-block-start: var(--space-2);
+  font-size: 13px;
+  line-height: 20px;
+  font-variant-numeric: tabular-nums;
+}
+
+.llm-calls th,
+.llm-calls td {
+  padding-block: var(--space-1);
+  padding-inline: var(--space-2);
+}
+
+.llm-calls-caption {
+  caption-side: top;
+  text-align: start;
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--ink-500);
+}
+
+/* A lower-bound cost in the Case Monitor's list: some calls have no known price. */
+.llm-partial {
+  margin-inline-start: 1px;
+  color: var(--ink-500);
+  cursor: help;
+}

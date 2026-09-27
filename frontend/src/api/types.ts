@@ -218,6 +218,16 @@ export interface CaseSummary {
   escalated_from_state: State | null
   created_at: IsoDateTime
   updated_at: IsoDateTime
+  /**
+   * Sub-project 19 (`docs/api.md` §5, §10): the case's LLM cost so far, a money string or
+   * `null` under §10's NULL rule. Only the list carries it; the detail has `llm_usage`.
+   */
+  llm_cost_usd: Money | null
+  /**
+   * True when the case has at least one unpriced call and a non-null `llm_cost_usd`: the cost
+   * shown is then a lower bound (§10), not the whole of it.
+   */
+  llm_cost_partial: boolean
 }
 
 /** `GET /api/staff/cases` → 200 (staff-fixes design Task 3): keyset-paginated. */
@@ -232,8 +242,12 @@ export interface PlanStep {
   action: string
 }
 
-/** `GET /api/staff/cases/{case_id}`. */
-export interface CaseDetail extends CaseSummary, CaseAppointmentFacts {
+/**
+ * `GET /api/staff/cases/{case_id}`. `docs/api.md` §5 lists no `llm_cost_usd` /
+ * `llm_cost_partial` on the detail (it carries the fuller `llm_usage` instead), so those
+ * list-only fields are left out here.
+ */
+export interface CaseDetail extends Omit<CaseSummary, 'llm_cost_usd' | 'llm_cost_partial'>, CaseAppointmentFacts {
   patient_id: string
   state_version: number
   intent: string | null
@@ -249,6 +263,8 @@ export interface CaseDetail extends CaseSummary, CaseAppointmentFacts {
   escalated_from_state: State | null
   patient_deadline: IsoDateTime | null
   created_at: IsoDateTime
+  /** Sub-project 19 (`docs/api.md` §5): always an object, `by_call` is `[]` with no attempt. */
+  llm_usage: CaseLlmUsage
 }
 
 /**
@@ -510,6 +526,68 @@ export interface Metrics {
   tools: MetricsTools
   patient_sla: MetricsPatientSla
   policy: MetricsPolicy
+  /** Sub-project 19: exactly `GET /api/staff/llm-costs`'s body without its `window` (§7, §10). */
+  llm: LlmCostSummary
+}
+
+// ---- LLM cost (sub-project 19, docs/api.md §10) ------------------------------
+// Staff only: no patient type carries a cost, a token count or a model.
+
+/**
+ * Money: a decimal string with exactly 8 places, never a JSON number (`"0.00213400"`,
+ * `"0.00000000"`), in USD. `null` wherever it appears follows §10's NULL rule.
+ */
+export type Money = string
+
+/** One `by_call` entry: one per call code present, ordered by code. */
+export interface LlmCallCost {
+  /** `Intent`, `Safety`, `Planner`, `Evaluator`, `DocumentClassify` or `DocumentVision`. */
+  call: string
+  calls: number
+  input_tokens: number
+  output_tokens: number
+  cost_usd: Money | null
+}
+
+/** One `by_source` entry: `agent` or `document_service`. */
+export interface LlmSourceCost {
+  source: string
+  calls: number
+  cost_usd: Money | null
+}
+
+/** `CaseDetail.llm_usage` (`docs/api.md` §5). */
+export interface CaseLlmUsage {
+  calls: number
+  input_tokens: number
+  cached_input_tokens: number
+  output_tokens: number
+  cost_usd: Money | null
+  unpriced_calls: number
+  by_call: LlmCallCost[]
+}
+
+/** The cohort of the cases opened in a window, with all of their usage (`docs/api.md` §10). */
+export interface LlmCostSummary {
+  cases: number
+  cases_with_usage: number
+  calls: number
+  input_tokens: number
+  cached_input_tokens: number
+  output_tokens: number
+  total_cost_usd: Money | null
+  /** `null` when no cohort case has a priced row. */
+  avg_cost_per_case_usd: Money | null
+  /** `null` when no cohort case now in `Completed` has a priced row. */
+  avg_cost_per_completed_case_usd: Money | null
+  unpriced_calls: number
+  by_call: LlmCallCost[]
+  by_source: LlmSourceCost[]
+}
+
+/** `GET /api/staff/llm-costs?from=&to=` → 200 (`docs/api.md` §10). */
+export interface LlmCosts extends LlmCostSummary {
+  window: { start: IsoDateTime; end: IsoDateTime }
 }
 
 // ---- Appointments (sub-project 16, docs/api.md §9) --------------------------

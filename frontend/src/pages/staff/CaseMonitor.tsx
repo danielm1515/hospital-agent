@@ -8,6 +8,8 @@ import { Loading } from '../../components/Loading'
 import { StatusPill } from '../../components/StatusPill'
 import { AuditTimeline } from './AuditTimeline'
 import { CaseAppointmentFacts } from './CaseAppointmentFacts'
+import { CaseLlmFacts } from './CaseLlmFacts'
+import { LlmCostStrip } from './LlmCostStrip'
 import { PatientThread } from './PatientThread'
 import {
   DOCUMENT_LABELS,
@@ -21,6 +23,7 @@ import {
   safetyLabel,
   stateLabel,
 } from './labels'
+import { formatUsd } from './metricsLabels'
 
 const ESCALATION_KIND_OPTIONS = Object.keys(ESCALATION_LABELS) as EscalationKind[]
 
@@ -33,6 +36,10 @@ const ESCALATION_KIND_OPTIONS = Object.keys(ESCALATION_LABELS) as EscalationKind
  * per-row follow-up call; only expanding a row fetches its plan/document detail
  * (`GET /api/staff/cases/{id}`) and its correspondence (`GET /api/staff/cases/{id}/context`).
  * The list is keyset-paginated: "טעינת עוד" asks for the page after `next_cursor`.
+ *
+ * Sub-project 19 (design D7): an LLM cost strip above the filters (`LlmCostStrip`, its own
+ * `GET /api/staff/llm-costs` call), an "עלות LLM" column from the list's `llm_cost_usd`, and
+ * the expanded row's LLM usage group (`CaseLlmFacts`, from the detail's `llm_usage`).
  *
  * An expanded row's context answers for a case in any State (`docs/api.md` §5) and
  * carries the Data Log and the trace together. Nothing here decides anything, so its
@@ -163,6 +170,8 @@ export function CaseMonitor() {
         </p>
       </header>
 
+      <LlmCostStrip />
+
       <div className="filter-row">
         <div className="field filter-field">
           <label className="label" htmlFor="group-filter">
@@ -231,6 +240,7 @@ export function CaseMonitor() {
                 <th scope="col">רמת בטיחות</th>
                 <th scope="col">הסלמה</th>
                 <th scope="col">עדכון אחרון</th>
+                <th scope="col">עלות LLM</th>
               </tr>
             </thead>
             <tbody>
@@ -311,10 +321,13 @@ function ExpandableRow({ row, detail, detailError, open, context, contextError, 
           <Coded label={escalationLabel(row.escalation_kind)} code={row.escalation_kind} />
         </td>
         <td className="nowrap">{formatDateTime(row.updated_at)}</td>
+        <td className="nowrap">
+          <LlmCostCell cost={row.llm_cost_usd} partial={row.llm_cost_partial} />
+        </td>
       </tr>
       {open && (
         <tr className="detail-row">
-          <td colSpan={7}>
+          <td colSpan={8}>
             <div className="case-detail">
               {detail ? (
                 <CaseFacts detail={detail} />
@@ -366,6 +379,25 @@ function ExpandableRow({ row, detail, detailError, open, context, contextError, 
   )
 }
 
+/**
+ * The "עלות LLM" cell (sub-project 19). The list carries only the money string, so a `null`
+ * here is "—" (docs/api.md §5, §10) - the expanded row's `llm_usage` tells an unpriced case
+ * apart. A partial cost (some calls unpriced) is a lower bound, marked with a quiet "+".
+ */
+function LlmCostCell({ cost, partial }: { cost: string | null; partial: boolean }) {
+  if (cost === null || !partial) return <>{formatUsd(cost)}</>
+  return (
+    <>
+      {formatUsd(cost)}
+      <span className="llm-partial" role="img" title={PARTIAL_COST} aria-label={PARTIAL_COST}>
+        +
+      </span>
+    </>
+  )
+}
+
+const PARTIAL_COST = 'חלק מהקריאות ללא מחיר ידוע'
+
 /** A cell that reads in Hebrew and still shows the code the API returned (§12.3, D-tests). */
 function Coded({ label, code }: { label: string; code?: string | null }) {
   if (!code) return <>—</>
@@ -391,8 +423,9 @@ function planStepLabel(step: number, current: number | null): string {
 }
 
 /**
- * The case as a person reads it: five groups (the fifth, sub-project 18's appointment and
- * instruction source, is `CaseAppointmentFacts`), each fact with a Hebrew label and,
+ * The case as a person reads it: six groups (the fifth, sub-project 18's appointment and
+ * instruction source, is `CaseAppointmentFacts`; the sixth, sub-project 19's LLM usage, is
+ * `CaseLlmFacts`), each fact with a Hebrew label and,
  * beside it, the field name from `docs/api.md` §5 - the raw name stays visible
  * because it is what the spec, the guards and the Audit all use.
  */
@@ -471,6 +504,8 @@ function CaseFacts({ detail }: { detail: CaseDetail }) {
       </section>
 
       <CaseAppointmentFacts facts={detail} />
+
+      <CaseLlmFacts usage={detail.llm_usage} />
     </div>
   )
 }

@@ -10,15 +10,20 @@ import {
   ERROR_TEXT,
   EVENT_LABELS,
   FORMAL_KINDS,
+  LLM_CALL_LABELS,
+  LLM_SOURCE_LABELS,
   OUTCOME_LABELS,
   PRESETS,
   REASON_LABELS,
   SOURCE_LABELS,
+  costText,
   durationsText,
+  entryCostText,
   failureRow,
   formatCount,
   formatPercent,
   formatSeconds,
+  formatUsd,
   fromLocalInput,
   labelOf,
   presetRange,
@@ -145,6 +150,7 @@ export function Metrics() {
           <ToolsGroup tools={data.tools} />
           <PatientSlaGroup sla={data.patient_sla} />
           <PolicyGroup policy={data.policy} decidedByKind={data.human_load.decided_by_kind} />
+          <LlmGroup llm={data.llm} />
         </div>
       )}
     </section>
@@ -323,6 +329,82 @@ function PolicyGroup({ policy, decidedByKind }: { policy: MetricsData['policy'];
       <Bars rows={toRows(policy.blocked_by_event, (code) => code)} empty="אין חסימות בטווח." />
       <h3 className="metrics-sub">הסלמות של השכבות הפורמליות שהוכרעו בטווח</h3>
       <Bars rows={toRows(formal, escalationLabel)} empty="—" />
+    </Group>
+  )
+}
+
+/**
+ * Sub-project 19 (design D7, `docs/api.md` §7, §10): the LLM cost of the window's cohort - the
+ * cases opened in it, with all of their usage. Costs follow §10's NULL rule (`formatUsd`): "—"
+ * where nothing was measured, "מחיר לא ידוע" where only unpriced attempts left a cost `null`.
+ */
+function LlmGroup({ llm }: { llm: MetricsData['llm'] }) {
+  const unpricedNote =
+    llm.unpriced_calls > 0 && llm.total_cost_usd !== null ? 'לא כולל קריאות ללא מחיר ידוע' : undefined
+  return (
+    <Group id="metrics-llm" title="עלות LLM" scope="הפניות שנפתחו בטווח, עם כל השימוש שלהן">
+      <div className="metrics-tiles">
+        <Tile label="עלות כוללת" value={costText(llm.total_cost_usd, llm.unpriced_calls)} note={unpricedNote} />
+        <Tile
+          label="ממוצע לפנייה"
+          value={formatUsd(llm.avg_cost_per_case_usd)}
+          note="על פני הפניות שיש להן עלות ידועה"
+        />
+        <Tile label="ממוצע לפנייה שהושלמה" value={formatUsd(llm.avg_cost_per_completed_case_usd)} />
+        <Tile label="פניות" value={formatCount(llm.cases)} note={`${formatCount(llm.cases_with_usage)} מהן עם שימוש`} />
+        <Tile label="קריאות" value={formatCount(llm.calls)} />
+        <Tile label="קריאות ללא מחיר ידוע" value={formatCount(llm.unpriced_calls)} />
+        <Tile label="טוקני קלט" value={formatCount(llm.input_tokens)} note={`${formatCount(llm.cached_input_tokens)} מהמטמון`} />
+        <Tile label="טוקני פלט" value={formatCount(llm.output_tokens)} />
+      </div>
+      <h3 className="metrics-sub">לפי קריאה</h3>
+      {llm.by_call.length === 0 ? (
+        <p className="metrics-empty">אין קריאות בטווח.</p>
+      ) : (
+        <div className="table-wrap">
+          <table className="data-table metrics-table">
+            <thead>
+              <tr>
+                <th scope="col">קריאה</th>
+                <th scope="col">קריאות</th>
+                <th scope="col">טוקני קלט</th>
+                <th scope="col">טוקני פלט</th>
+                <th scope="col">עלות</th>
+              </tr>
+            </thead>
+            <tbody>
+              {llm.by_call.map((entry) => (
+                <tr key={entry.call}>
+                  <td>
+                    <Coded label={labelOf(LLM_CALL_LABELS, entry.call)} code={entry.call} />
+                  </td>
+                  <td>{formatCount(entry.calls)}</td>
+                  <td>{formatCount(entry.input_tokens)}</td>
+                  <td>{formatCount(entry.output_tokens)}</td>
+                  <td>{entryCostText(entry)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      <h3 className="metrics-sub">לפי מקור</h3>
+      {llm.by_source.length === 0 ? (
+        <p className="metrics-empty">אין קריאות בטווח.</p>
+      ) : (
+        <dl className="metrics-facts">
+          {llm.by_source.map((entry) => (
+            <div key={entry.source} className="metrics-fact">
+              <dt>
+                <Coded label={labelOf(LLM_SOURCE_LABELS, entry.source)} code={entry.source} />
+              </dt>
+              <dd>
+                {formatCount(entry.calls)} קריאות · {entryCostText(entry)}
+              </dd>
+            </div>
+          ))}
+        </dl>
+      )}
     </Group>
   )
 }

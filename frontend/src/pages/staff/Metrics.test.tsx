@@ -56,6 +56,29 @@ const FIXTURE: MetricsData = {
     blocked_by_reason: { guard_failed: 2 },
     blocked_by_event: { HUMAN_APPROVED: 2 },
   },
+  llm: {
+    cases: 5,
+    cases_with_usage: 4,
+    calls: 6,
+    input_tokens: 7100,
+    cached_input_tokens: 1000,
+    output_tokens: 333,
+    total_cost_usd: '0.00130360',
+    avg_cost_per_case_usd: '0.00043453',
+    avg_cost_per_completed_case_usd: '0.00050200',
+    unpriced_calls: 2,
+    by_call: [
+      { call: 'DocumentClassify', calls: 1, input_tokens: 900, output_tokens: 40, cost_usd: null },
+      { call: 'DocumentVision', calls: 1, input_tokens: 1200, output_tokens: 40, cost_usd: null },
+      { call: 'Intent', calls: 2, input_tokens: 4000, output_tokens: 183, cost_usd: '0.00101960' },
+      { call: 'Planner', calls: 1, input_tokens: 1000, output_tokens: 70, cost_usd: '0.00028400' },
+      { call: 'Safety', calls: 1, input_tokens: 0, output_tokens: 0, cost_usd: '0.00000000' },
+    ],
+    by_source: [
+      { source: 'agent', calls: 4, cost_usd: '0.00130360' },
+      { source: 'document_service', calls: 2, cost_usd: null },
+    ],
+  },
 }
 
 function tile(label: string): HTMLElement {
@@ -95,7 +118,7 @@ describe('Metrics', () => {
 
     expect(await screen.findByRole('heading', { name: 'זרימת פניות' })).toBeInTheDocument()
     expect(spanOf(0)).toBe(7 * 24 * 3600_000)
-    for (const heading of ['עומס על הצוות', 'כלים חיצוניים', 'SLA מטופל', 'מדיניות']) {
+    for (const heading of ['עומס על הצוות', 'כלים חיצוניים', 'SLA מטופל', 'מדיניות', 'עלות LLM']) {
       expect(screen.getByRole('heading', { name: heading })).toBeInTheDocument()
     }
     expect(tile('נפתחו')).toHaveTextContent('13')
@@ -217,5 +240,88 @@ describe('Metrics', () => {
     await userEvent.click(within(alert).getByRole('button', { name: 'נסה שוב' }))
     expect(await screen.findByRole('heading', { name: 'זרימת פניות' })).toBeInTheDocument()
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  })
+
+  it('shows the LLM cost of the window: totals, averages, tokens and the splits by call and by source', async () => {
+    vi.mocked(api.getMetrics).mockResolvedValue(FIXTURE)
+    render(<Metrics />)
+    const group = (await screen.findByRole('heading', { name: 'עלות LLM' })).closest('.metrics-group') as HTMLElement
+
+    expect(tile('עלות כוללת')).toHaveTextContent('$0.0013')
+    // A cost beside unpriced calls is a lower bound (docs/api.md §10).
+    expect(tile('עלות כוללת')).toHaveTextContent('לא כולל קריאות ללא מחיר ידוע')
+    expect(tile('ממוצע לפנייה')).toHaveTextContent('$0.0004')
+    expect(tile('ממוצע לפנייה שהושלמה')).toHaveTextContent('$0.0005')
+    expect(tile('קריאות')).toHaveTextContent('6')
+    expect(tile('קריאות ללא מחיר ידוע')).toHaveTextContent('2')
+    expect(tile('טוקני קלט')).toHaveTextContent('7,100')
+    expect(tile('טוקני קלט')).toHaveTextContent('1,000 מהמטמון')
+    expect(tile('טוקני פלט')).toHaveTextContent('333')
+
+    const rows = within(group).getAllByRole('row').slice(1)
+    const cells = (row: HTMLElement) => within(row).getAllByRole('cell').map((cell) => cell.textContent?.replace(/\s+/g, ' ').trim())
+    expect(rows.map(cells)).toEqual([
+      ['סיווג מסמך DocumentClassify', '1', '900', '40', 'מחיר לא ידוע'],
+      ['קריאת מסמך סרוק DocumentVision', '1', '1,200', '40', 'מחיר לא ידוע'],
+      ['סיווג כוונה Intent', '2', '4,000', '183', '$0.0010'],
+      ['תכנון Planner', '1', '1,000', '70', '$0.0003'],
+      ['סיווג סיכון Safety', '1', '0', '0', '$0.0000'],
+    ])
+    expect(within(group).getByText('Intent')).toHaveClass('mono')
+
+    const source = (code: string) => within(group).getByText(code).closest('.metrics-fact') as HTMLElement
+    expect(within(group).getByText('agent')).toHaveClass('mono')
+    expect(source('agent')).toHaveTextContent('הסוכן')
+    expect(source('agent')).toHaveTextContent('4 קריאות · $0.0013')
+    expect(source('document_service')).toHaveTextContent('מערכת המסמכים')
+    expect(source('document_service')).toHaveTextContent('2 קריאות · מחיר לא ידוע')
+  })
+
+  it('renders a null total beside zero averages, and dashes what nothing was measured for', async () => {
+    // One case with only priced API errors and one with only unpriced rows: the averages cover
+    // the priced case only ("0.00000000"), the total is null with an unpriced call beside it.
+    vi.mocked(api.getMetrics).mockResolvedValue({
+      ...FIXTURE,
+      llm: {
+        ...FIXTURE.llm,
+        total_cost_usd: null,
+        avg_cost_per_case_usd: '0.00000000',
+        avg_cost_per_completed_case_usd: null,
+        unpriced_calls: 1,
+      },
+    })
+    render(<Metrics />)
+    await screen.findByRole('heading', { name: 'עלות LLM' })
+
+    expect(tile('עלות כוללת')).toHaveTextContent('מחיר לא ידוע')
+    expect(tile('עלות כוללת')).not.toHaveTextContent('לא כולל')
+    expect(tile('ממוצע לפנייה')).toHaveTextContent('$0.0000')
+    expect(tile('ממוצע לפנייה שהושלמה').querySelector('.metrics-tile-v')?.textContent).toBe('—')
+  })
+
+  it('says so when no LLM call was made in the window', async () => {
+    vi.mocked(api.getMetrics).mockResolvedValue({
+      ...FIXTURE,
+      llm: {
+        ...FIXTURE.llm,
+        cases: 0,
+        cases_with_usage: 0,
+        calls: 0,
+        input_tokens: 0,
+        cached_input_tokens: 0,
+        output_tokens: 0,
+        total_cost_usd: null,
+        avg_cost_per_case_usd: null,
+        avg_cost_per_completed_case_usd: null,
+        unpriced_calls: 0,
+        by_call: [],
+        by_source: [],
+      },
+    })
+    render(<Metrics />)
+    const group = (await screen.findByRole('heading', { name: 'עלות LLM' })).closest('.metrics-group') as HTMLElement
+
+    expect(tile('עלות כוללת').querySelector('.metrics-tile-v')?.textContent).toBe('—')
+    expect(within(group).getAllByText('אין קריאות בטווח.')).toHaveLength(2)
   })
 })

@@ -19,6 +19,7 @@ import type {
   DecisionResult,
   EscalationKind,
   InstructionText,
+  LlmCosts,
   LoginResponse,
   Me,
   Metrics,
@@ -351,6 +352,14 @@ export function replyWithFile(caseId: string, file: File): Promise<PdfUploadResp
 export function getMetrics(from: Date, to: Date): Promise<Metrics> {
   const query = new URLSearchParams({ from: from.toISOString(), to: to.toISOString() })
   return request<Metrics>('GET', `/admin/metrics?${query.toString()}`)
+}
+
+// ---- LLM cost (sub-project 19, docs/api.md §10) --------------------------------
+
+/** `GET /api/staff/llm-costs` - any staff member. `from` inclusive, `to` exclusive. */
+export function getLlmCosts(from: Date, to: Date): Promise<LlmCosts> {
+  const query = new URLSearchParams({ from: from.toISOString(), to: to.toISOString() })
+  return request<LlmCosts>('GET', `/staff/llm-costs?${query.toString()}`)
 }
 
 // ---- Appointments (sub-project 16) -------------------------------------------
