@@ -660,3 +660,17 @@ export interface SystemStatus {
   orchestrator: string | null
   llm: LlmStatus
 }
+
+/** `GET /api/admin/consistency` (docs/api.md §7). */
+export interface ConsistencyQuery {
+  property: string
+  description: string
+  result: 'unsat' | 'sat' | 'unknown' | string
+  proved: boolean
+}
+
+export interface Consistency {
+  engine: string
+  all_proved: boolean
+  queries: ConsistencyQuery[]
+}

@@ -938,6 +938,27 @@ other group counts what **happened** in it. Durations are seconds; `p50` / `p95`
 `llm` (sub-project 19) is the LLM cost of the same window's cohort, read inside the same
 snapshot: exactly the body of `GET /api/staff/llm-costs` (§10) without its `window`.
 
+### GET /api/admin/consistency
+
+`admin_staff` only (`401` / `403 admin_only` as `/metrics`). Runs the spec §9.2 cross-layer
+consistency proofs now - seven abstract properties in nine Z3 queries over the layers' encodings
+(`policy/consistency.py`, the same check as `python -m hospital_agent.policy.consistency`).
+A query holds when Z3 finds no counterexample (`unsat`). They are about the system, not a case,
+so no case's Audit carries them. `200`:
+
+```json
+{
+  "engine": "z3",
+  "all_proved": true,
+  "queries": [
+    {"property": "P1", "description": "OPA allows what Prolog blocks", "result": "unsat", "proved": true}
+  ]
+}
+```
+
+- `queries` is always the nine, in `QUERIES` order (P1 three times, then P2-P7).
+- `result` is Z3's answer: `unsat`, `sat` (a counterexample - the property fails) or `unknown`.
+
 ## 8. Staff requests to the patient (sub-project 15)
 
 While a case is in `AwaitingHumanReview`, a reviewer may ask the patient a question or for one

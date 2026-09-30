@@ -6,6 +6,7 @@ import {
   eventLabel,
   guardLabel,
   isEvidence,
+  opaRulesOf,
   outcomeLabel,
   phaseOf,
   policyResultLabel,
@@ -142,17 +143,36 @@ function Summary({ rows }: { rows: TraceRow[] }) {
 /** Which engine decided the row (derived in `enginesOf`, from the row alone). */
 function Engines({ row }: { row: TraceRow }) {
   const engines = enginesOf(row)
+  const rules = opaRulesOf(row)
   if (engines.length === 0) return null
+  const passed = rules?.filter((rule) => rule.passed).length ?? 0
   return (
-    <div className="audit-gates-group audit-engines">
-      <span className="audit-gates-label">מנועים</span>
-      <ul>
-        {engines.map((engine) => (
-          <li className={`audit-engine tone-${engine.tone}`} key={engine.engine}>
-            <span className="audit-engine-name">{engine.engine}</span> {engine.verdict}
-          </li>
-        ))}
-      </ul>
+    <div className="audit-engines">
+      <div className="audit-gates-group">
+        <span className="audit-gates-label">מנועים</span>
+        <ul>
+          {engines.map((engine) => (
+            <li className={`audit-engine tone-${engine.tone}`} key={engine.engine}>
+              <span className="audit-engine-name">{engine.engine}</span> {engine.verdict}
+            </li>
+          ))}
+        </ul>
+      </div>
+      {rules && (
+        <details className="audit-opa-rules">
+          <summary>
+            OPA: {passed}/{rules.length} כללי deny עברו
+          </summary>
+          <ul>
+            {rules.map((rule) => (
+              <li className={`audit-gate ${rule.passed ? 'pass' : 'fail'}`} key={rule.code}>
+                <span aria-hidden="true">{rule.passed ? '✓' : '✗'}</span> {rule.label}{' '}
+                <span className="mono">{rule.code}</span>
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
     </div>
   )
 }

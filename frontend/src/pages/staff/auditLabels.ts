@@ -190,6 +190,46 @@ export function outcomeLabel(outcome: string): string {
   return OUTCOME_LABELS[outcome] ?? outcome
 }
 
+/**
+ * Every `deny` rule of `policy/policy.rego`, in file order, with what it guarantees. OPA
+ * evaluates all of them on every policy decision (`data.hospital_agent.policy.decision`);
+ * a Deny's reasons are exactly the rules that fired, so every other one passed.
+ * `AuditTimeline.test.tsx` fails if this list drifts from the Rego file.
+ */
+export const OPA_DENY_RULES: Record<string, string> = {
+  invalid_safety_level: 'רמת הבטיחות תקינה',
+  identity_not_verified: 'זהות המטופל אומתה',
+  patient_verification_failed: 'אימות המטופל לא נכשל',
+  missing_patient_context: 'פרטי המטופל והפנייה קיימים',
+  action_not_in_plan: 'הפעולה היא הצעד הנוכחי בתוכנית',
+  action_not_supported: 'הפעולה מוכרת',
+  plan_modified: 'התוכנית לא שונתה',
+  invalid_attempt_budget: 'תקציב הניסיונות תקין',
+  attempts_exhausted: 'הניסיונות לא מוצו',
+  message_not_evaluated: 'הודעה למטופל עברה הערכה',
+  medical_answer_attempt: 'אין תשובה רפואית בלי אישור תוכן',
+  approval_is_workflow_only: 'אישור זרימה אינו משמש כאישור תוכן',
+  invalid_patient_fields: 'שדות המטופל תקינים',
+  field_not_minimized: 'נשלחים רק שדות מותרים (מזעור, Datalog)',
+  unknown_target_system: 'מערכת היעד מוכרת',
+  unapproved_instruction_source: 'מקור ההוראות מאושר',
+  instruction_source_expired: 'מקור ההוראות לא פג תוקף',
+  instruction_source_not_yet_valid: 'מקור ההוראות כבר בתוקף',
+}
+
+/**
+ * The OPA rules on a policy row, each passed or fired - or `null` when OPA did not rule
+ * (not a policy row, or OPA failed closed with `policy_engine_unavailable`).
+ */
+export function opaRulesOf(row: { policy_result: string | null; policy_reasons: string[] }):
+  | Array<{ code: string; label: string; passed: boolean }>
+  | null {
+  if (!row.policy_result) return null
+  if (row.policy_result === 'Deny' && row.policy_reasons.includes('policy_engine_unavailable')) return null
+  const fired = new Set(row.policy_result === 'Deny' ? row.policy_reasons : [])
+  return Object.entries(OPA_DENY_RULES).map(([code, label]) => ({ code, label, passed: !fired.has(code) }))
+}
+
 export interface EngineVerdict {
   engine: 'OPA' | 'Prolog' | 'Z3'
   verdict: string
@@ -288,6 +328,7 @@ const REASON_LABELS: Record<string, string> = {
  */
 export function reasonLabel(reason: string): string | null {
   if (REASON_LABELS[reason]) return REASON_LABELS[reason]
+  if (OPA_DENY_RULES[reason]) return `כלל OPA נכשל: ${OPA_DENY_RULES[reason]}`
   const [prefix, ...rest] = reason.split(':')
   const detail = rest.join(':')
   switch (prefix) {

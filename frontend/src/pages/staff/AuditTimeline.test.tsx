@@ -1,8 +1,10 @@
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import { render, screen, within } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
 import type { TraceRow } from '../../api/types'
 import { AuditTimeline, formatDuration } from './AuditTimeline'
-import { enginesOf, guardLabel, reasonLabel } from './auditLabels'
+import { OPA_DENY_RULES, enginesOf, guardLabel, opaRulesOf, reasonLabel } from './auditLabels'
 
 let nextId = 1
 function row(overrides: Partial<TraceRow>): TraceRow {
@@ -187,6 +189,27 @@ describe('AuditTimeline', () => {
     )
     const summary = screen.getByLabelText('סיכום יומן המעקב')
     expect(within(summary).getByText('בדיקות Z3').closest('.audit-stat')).toHaveTextContent('1')
+  })
+
+  it('lists every deny rule of policy.rego, in file order', () => {
+    // Paths are relative to the Vitest root, i.e. `frontend/`.
+    const rego = readFileSync(resolve(process.cwd(), '../backend/hospital_agent/policy/policy.rego'), 'utf-8')
+    const rules = [...rego.matchAll(/deny contains "([a-z_]+)"/g)].map((match) => match[1])
+    expect(Object.keys(OPA_DENY_RULES)).toEqual(rules)
+  })
+
+  it('shows all OPA rules as passed on an allowed step, and marks the ones a denial fired', () => {
+    const { container } = render(<AuditTimeline rows={TRACE} />)
+    const policy = container.querySelectorAll('.audit-timeline-item')[3] as HTMLElement
+    const total = Object.keys(OPA_DENY_RULES).length
+    expect(within(policy).getByText(`OPA: ${total}/${total} כללי deny עברו`)).toBeInTheDocument()
+    expect(policy.querySelectorAll('.audit-opa-rules .audit-gate.pass')).toHaveLength(total)
+
+    const denied = opaRulesOf({ policy_result: 'Deny', policy_reasons: ['attempts_exhausted', 'prolog:x'] })
+    expect(denied?.filter((rule) => !rule.passed).map((rule) => rule.code)).toEqual(['attempts_exhausted'])
+    expect(opaRulesOf({ policy_result: 'Deny', policy_reasons: ['policy_engine_unavailable'] })).toBeNull()
+    expect(opaRulesOf({ policy_result: null, policy_reasons: [] })).toBeNull()
+    expect(reasonLabel('field_not_minimized')).toBe('כלל OPA נכשל: נשלחים רק שדות מותרים (מזעור, Datalog)')
   })
 
   it('says so when there are no rows', () => {

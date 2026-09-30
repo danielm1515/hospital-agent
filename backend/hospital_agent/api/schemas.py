@@ -541,3 +541,17 @@ class LlmStatusView(BaseModel):
 class SystemStatusView(BaseModel):
     orchestrator: str | None
     llm: LlmStatusView
+
+
+class ConsistencyQuery(BaseModel):
+    property: str
+    description: str
+    result: str  # unsat | sat | unknown
+    proved: bool
+
+
+class ConsistencyResponse(BaseModel):
+    """`GET /api/admin/consistency`: the spec §9.2 proofs (`policy/consistency.py`)."""
+    engine: str
+    all_proved: bool
+    queries: list[ConsistencyQuery]

@@ -30,6 +30,7 @@ import {
   toRows,
 } from './metricsLabels'
 import type { LocalRange } from './metricsLabels'
+import { ConsistencyGroup } from './ConsistencyGroup'
 import { Bars, Coded, Meter, Tile } from './MetricsParts'
 import { Usd } from './Usd'
 
@@ -154,6 +155,7 @@ export function Metrics() {
           <LlmGroup llm={data.llm} />
         </div>
       )}
+      <ConsistencyGroup />
     </section>
   )
 }

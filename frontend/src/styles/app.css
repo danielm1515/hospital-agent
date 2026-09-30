@@ -2388,6 +2388,103 @@ img {
   background: color-mix(in srgb, var(--warning-500) 10%, var(--surface-000));
 }
 
+.audit-engines {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.audit-opa-rules summary {
+  cursor: pointer;
+  inline-size: fit-content;
+  font-size: 12px;
+  line-height: 18px;
+  font-weight: 600;
+  color: var(--brand-700);
+}
+
+.audit-opa-rules summary:focus-visible {
+  outline: 2px solid var(--focus-500);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+
+.audit-opa-rules ul {
+  margin: var(--space-2) 0 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+}
+
+.consistency-verdict {
+  margin: 0 0 var(--space-3);
+  font-weight: 700;
+}
+
+.consistency-verdict.proved {
+  color: var(--success-500);
+}
+
+.consistency-verdict.failed {
+  color: var(--danger-500);
+}
+
+.consistency-list {
+  margin: 0 0 var(--space-3);
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.consistency-item {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: baseline;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--line-200);
+  border-radius: var(--radius-sm);
+  background: var(--surface-000);
+}
+
+.consistency-item.failed {
+  border-color: color-mix(in srgb, var(--danger-500) 45%, var(--line-200));
+  background: color-mix(in srgb, var(--danger-500) 6%, var(--surface-000));
+}
+
+.consistency-prop {
+  font-weight: 700;
+  color: var(--brand-700);
+}
+
+.consistency-text {
+  display: flex;
+  flex-direction: column;
+  color: var(--ink-900);
+}
+
+.consistency-code {
+  font-size: 11px;
+  line-height: 16px;
+  color: var(--ink-500);
+  direction: ltr;
+  unicode-bidi: isolate;
+  text-align: start;
+}
+
+.consistency-result {
+  font-weight: 700;
+  color: var(--success-500);
+}
+
+.consistency-item.failed .consistency-result {
+  color: var(--danger-500);
+}
+
 .audit-legend {
   margin: 0;
   padding: var(--space-2) var(--space-3);
