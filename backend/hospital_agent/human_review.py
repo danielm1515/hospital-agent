@@ -232,7 +232,11 @@ class HumanReviewService:
         rows = [
             {"audit_id": r.audit_id, "record_type": r.record_type, "event": r.event, "state_before": r.state_before,
              "state_after": r.state_after, "action": r.action, "policy_result": r.policy_result,
-             "policy_reasons": list(r.policy_reasons), "recorded_at": r.recorded_at}
+             "policy_reasons": list(r.policy_reasons), "recorded_at": r.recorded_at,
+             # The gates each row passed and the execution facts, for the staff timeline -
+             # still content-free: guard results, codes and ids only (§12.3).
+             "guards": dict(r.guards), "outcome": r.outcome, "attempt_number": r.attempt_number,
+             "retry_cycle": r.retry_cycle, "execution_id": r.execution_id, "approval_id": r.approval_id}
             for r in trace
         ]
         shown = {

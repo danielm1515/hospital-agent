@@ -388,6 +388,26 @@ def test_the_context_shows_the_data_log_and_the_trace(client, staff, sm, app_eng
     assert client.get("/api/staff/cases/CASE-NOPE/context", headers=staff).status_code == 404
 
 
+def test_the_context_trace_carries_the_gates_and_the_execution_facts(client, staff, sm, app_engine):
+    """The audit timeline shows which guards each row passed and each execution's attempt and
+    outcome - fields `audit_log` already holds, now part of the content-free trace subset."""
+    d = Driver(sm, app_engine)
+    d.to_classified()
+    d.plan()
+    d.run_step()  # the real Policy Service and Tool Executor: a STARTED row and its outcome
+    trace = client.get(f"/api/staff/cases/{d.case_id}/context", headers=staff).json()["trace"]
+    assert set(trace[0]) == {"audit_id", "record_type", "event", "state_before", "state_after", "action",
+                             "policy_result", "policy_reasons", "recorded_at", "guards", "outcome",
+                             "attempt_number", "retry_cycle", "execution_id", "approval_id"}
+    validated = next(row for row in trace if row["event"] == "REQUEST_VALIDATED")
+    assert validated["guards"] == {"RequestValid": True, "IdentityVerified": True}
+    started = [row for row in trace if row["event"] == "TOOL_EXECUTION_STARTED"]
+    assert started and started[0]["guards"]["IdentityVerified"] is True and started[0]["execution_id"]
+    succeeded = next(row for row in trace if row["record_type"] == "ExecutionSucceeded")
+    assert (succeeded["outcome"], succeeded["attempt_number"], succeeded["execution_id"]) == (
+        "success", 1, started[0]["execution_id"])
+
+
 def test_the_context_carries_the_chosen_appointment_and_instruction_source(client, staff, sm, app_engine):
     """Sub-project 18 (design D13): staff see the chosen appointment, its exam type/department
     and the instruction source on the case."""

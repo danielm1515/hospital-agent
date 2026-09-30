@@ -666,7 +666,13 @@ Everything the reviewer is shown, plus the reference that binds the decision to 
       "action": null,
       "policy_result": null,
       "policy_reasons": [],
-      "recorded_at": "2026-09-19T22:12:39.678380Z"
+      "recorded_at": "2026-09-19T22:12:39.678380Z",
+      "guards": {"PatientIdentified": true},
+      "outcome": null,
+      "attempt_number": null,
+      "retry_cycle": null,
+      "execution_id": null,
+      "approval_id": null
     }
   ],
   "shown_context_ref": "ctx-ba3e0652b0ea355663db57e7d19550c61ee1d156fea64c91c2cacd539bbc7d83",
@@ -687,7 +693,12 @@ Everything the reviewer is shown, plus the reference that binds the decision to 
   `uploaded_document`, `instructions`, `outgoing_message`, `staff_message` or `patient_reply`
   (the last two, sub-project 15, §8). Deleted entries and uploads the case never accepted
   are not listed at all.
-- `trace` is the same audit rows as `/audit`, with the content-free subset above.
+- `trace` is the same audit rows as `/audit`, with the content-free subset above. `guards`
+  is the row's guard results and policy evidence (`{name: bool}`; `{}` on a `Blocked` row),
+  and `outcome` (`success` | `failed` | `unknown`), `attempt_number`, `retry_cycle`,
+  `execution_id` and `approval_id` are the execution facts - the staff audit timeline shows
+  the gates each row passed and each attempt from them. They are part of what is shown, so
+  part of `shown_context_ref`.
 - `shown_context_ref` **must be sent back with the decision**. Fetch the context, show it,
   and post the decision with the `shown_context_ref` that came with what the reviewer read.
   Any change in between (a new audit row, a deleted entry) makes the decision
