@@ -359,6 +359,13 @@ export interface TraceRow {
   policy_result: string | null
   policy_reasons: string[]
   recorded_at: IsoDateTime
+  /** Guard results and policy evidence of the row (`{}` on a Blocked row). */
+  guards: Record<string, boolean>
+  outcome: 'success' | 'failed' | 'unknown' | null
+  attempt_number: number | null
+  retry_cycle: number | null
+  execution_id: string | null
+  approval_id: string | null
 }
 
 /** `GET /api/staff/cases/{case_id}/context`. */

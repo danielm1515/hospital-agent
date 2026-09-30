@@ -1,0 +1,196 @@
+import { render, screen, within } from '@testing-library/react'
+import { describe, expect, it } from 'vitest'
+import type { TraceRow } from '../../api/types'
+import { AuditTimeline, formatDuration } from './AuditTimeline'
+import { enginesOf, guardLabel, reasonLabel } from './auditLabels'
+
+let nextId = 1
+function row(overrides: Partial<TraceRow>): TraceRow {
+  const id = nextId++
+  return {
+    audit_id: id,
+    record_type: 'Transition',
+    event: 'REQUEST_SUBMITTED',
+    state_before: null,
+    state_after: 'Received',
+    action: null,
+    policy_result: null,
+    policy_reasons: [],
+    recorded_at: `2026-09-19T22:12:39.${String(100 + id).padStart(3, '0')}Z`,
+    guards: {},
+    outcome: null,
+    attempt_number: null,
+    retry_cycle: null,
+    execution_id: null,
+    approval_id: null,
+    ...overrides,
+  }
+}
+
+const TRACE: TraceRow[] = [
+  row({ event: 'REQUEST_SUBMITTED', guards: { PatientIdentified: true } }),
+  row({
+    event: 'REQUEST_VALIDATED',
+    state_before: 'Received',
+    state_after: 'Classifying',
+    guards: { RequestValid: true, IdentityVerified: true },
+  }),
+  row({ event: 'INTENT_CLASSIFIED', state_before: 'Classifying', state_after: 'Classified' }),
+  row({
+    event: 'POLICY_ALLOWED',
+    state_before: 'Planning',
+    state_after: 'RetrievingData',
+    action: 'CheckAppointment',
+    policy_result: 'Allow',
+    guards: { InPlan: true, medical_content_flag: false },
+  }),
+  row({
+    record_type: 'ExecutionStarted',
+    event: 'TOOL_EXECUTION_STARTED',
+    state_before: null,
+    state_after: null,
+    action: 'CheckAppointment',
+    attempt_number: 1,
+    execution_id: 'EXEC-1',
+    guards: { IdentityVerified: true, AttemptsAvailable: true },
+  }),
+  row({
+    record_type: 'ExecutionFailed',
+    event: 'TOOL_TRANSIENT_FAILURE',
+    state_before: null,
+    state_after: null,
+    action: 'CheckAppointment',
+    attempt_number: 1,
+    outcome: 'failed',
+    policy_reasons: ['tool:transient_failure:unavailable'],
+  }),
+  row({
+    record_type: 'Blocked',
+    event: 'HUMAN_REVIEW_REQUIRED',
+    state_before: 'RetrievingData',
+    state_after: 'RetrievingData',
+    policy_reasons: ['temporal_violation:T3'],
+  }),
+]
+
+describe('AuditTimeline', () => {
+  it('sums up the gates passed, policy decisions, blocks and execution attempts', () => {
+    render(<AuditTimeline rows={TRACE} />)
+    const summary = screen.getByLabelText('סיכום יומן המעקב')
+    const stat = (label: string) => within(summary).getByText(label).closest('.audit-stat') as HTMLElement
+    // PatientIdentified + RequestValid + IdentityVerified + InPlan + IdentityVerified + AttemptsAvailable;
+    // medical_content_flag is evidence, not a gate.
+    expect(stat('שערים שעברו')).toHaveTextContent('6')
+    expect(stat('החלטות מדיניות (OPA + Prolog)')).toHaveTextContent('1 אושרו · 0 לא אושרו')
+    expect(stat('חסימות')).toHaveTextContent('1')
+    expect(stat('ניסיונות ביצוע')).toHaveTextContent('0 הצליחו · 1 נכשלו')
+  })
+
+  it('groups consecutive rows into the phase of the flow, keeping one running index', () => {
+    const { container } = render(<AuditTimeline rows={TRACE} />)
+    const phases = [...container.querySelectorAll('.audit-phase-title')].map((title) => title.textContent)
+    expect(phases).toEqual(['קליטה וזיהוי', 'סיווג', 'תכנון ומדיניות', 'ביצוע', 'בקרה אנושית'])
+    const indexes = [...container.querySelectorAll('.audit-timeline-index')].map((index) => index.textContent)
+    expect(indexes).toEqual(['1.', '2.', '3.', '4.', '5.', '6.', '7.'])
+    expect(screen.getByText(/7 רשומות/)).toBeInTheDocument()
+  })
+
+  it('labels each event in Hebrew beside its code', () => {
+    render(<AuditTimeline rows={TRACE} />)
+    expect(screen.getByText('הפנייה אומתה')).toBeInTheDocument()
+    expect(screen.getByText('REQUEST_VALIDATED')).toBeInTheDocument()
+  })
+
+  it('shows the gates a row passed, and the policy evidence as a yes/no check', () => {
+    const { container } = render(<AuditTimeline rows={TRACE} />)
+    const validated = container.querySelectorAll('.audit-timeline-item')[1] as HTMLElement
+    const gates = [...validated.querySelectorAll('.audit-gate.pass')].map((gate) => gate.textContent)
+    expect(gates).toEqual(['✓ הפנייה תקינה RequestValid', '✓ הזהות אומתה IdentityVerified'])
+
+    const policy = container.querySelectorAll('.audit-timeline-item')[3] as HTMLElement
+    expect(policy.querySelector('.audit-gate.check')).toHaveTextContent('תוכן רפואי: לא medical_content_flag')
+    expect(within(policy).getByText('אושר')).toHaveClass('audit-badge', 'policy-Allow')
+  })
+
+  it('shows an execution attempt with its number and outcome, and colours the failure', () => {
+    const { container } = render(<AuditTimeline rows={TRACE} />)
+    const failed = container.querySelectorAll('.audit-timeline-item')[5] as HTMLElement
+    expect(failed).toHaveClass('tone-bad')
+    expect(failed).toHaveTextContent('פעולה: בדיקת התור CheckAppointment · ניסיון 1')
+    expect(within(failed).getByText('נכשל')).toHaveClass('outcome-failed')
+    expect(within(failed).getByText('tool:transient_failure:unavailable')).toBeInTheDocument()
+    expect(
+      within(failed).getByText('כשל זמני במערכת החיצונית', { selector: '.audit-reason-label' }),
+    ).toBeInTheDocument()
+  })
+
+  it('names a block and explains its reason, keeping the code', () => {
+    const { container } = render(<AuditTimeline rows={TRACE} />)
+    const blocked = container.querySelectorAll('.audit-timeline-item')[6] as HTMLElement
+    expect(within(blocked).getByText('סיבת החסימה')).toBeInTheDocument()
+    expect(within(blocked).getByText('temporal_violation:T3')).toBeInTheDocument()
+    expect(within(blocked).getByText('הפרת כלל זמן T3: אין ביצוע על מטופל לא מאומת')).toBeInTheDocument()
+  })
+
+  it('shows a reason or a guard it does not know as the code alone', () => {
+    expect(reasonLabel('something_new')).toBeNull()
+    expect(guardLabel('BrandNewGuard')).toBe('BrandNewGuard')
+    expect(guardLabel('!ReadinessComplete')).toBe('לא: כל מסמכי החובה קיימים')
+  })
+
+  it('formats the total span from milliseconds up to days', () => {
+    expect(formatDuration(1842)).toBe('1.842 שנ׳')
+    expect(formatDuration(192_000)).toBe('3 דק׳ 12 שנ׳')
+    expect(formatDuration(26 * 3600_000)).toBe('1 ימים 2 שע׳')
+  })
+
+  it('names OPA and Prolog on a policy row, and explains the engines in a legend', () => {
+    const { container } = render(<AuditTimeline rows={TRACE} />)
+    const policy = container.querySelectorAll('.audit-timeline-item')[3] as HTMLElement
+    const engines = [...policy.querySelectorAll('.audit-engine')].map((engine) => engine.textContent)
+    expect(engines).toEqual(['OPA אישר', 'Prolog אישר'])
+    const legend = screen.getByLabelText('מקרא מנועי ההחלטה')
+    expect(legend).toHaveTextContent('Datalog')
+    expect(legend).toHaveTextContent('Temporal Monitor')
+  })
+
+  it('tells which engine blocked a denied step from its reasons', () => {
+    const verdicts = (reasons: string[]) =>
+      enginesOf({ event: 'POLICY_DENIED', policy_result: 'Deny', policy_reasons: reasons }).map(
+        (e) => `${e.engine}:${e.verdict}`,
+      )
+    expect(verdicts(['prolog:not_in_plan'])).toEqual(['OPA:לא חסם', 'Prolog:חסם'])
+    expect(verdicts(['minimization_violation'])).toEqual(['OPA:חסם', 'Prolog:אישר'])
+    expect(verdicts(['policy_engine_unavailable'])).toEqual(['OPA:לא זמין (נכשל סגור)', 'Prolog:אישר'])
+    expect(
+      enginesOf({ event: 'POLICY_HUMAN_REVIEW_REQUIRED', policy_result: 'RequireHumanReview', policy_reasons: [] }).map(
+        (e) => `${e.engine}:${e.verdict}`,
+      ),
+    ).toEqual(['OPA:דרש בקרה אנושית', 'Prolog:אישר'])
+  })
+
+  it('shows Z3 only where it ran: UNSAT on a missing document, SAT on a counterexample, not on readiness passed', () => {
+    const z3 = (event: string, reasons: string[], guards: Record<string, boolean> = {}) =>
+      enginesOf({ event, policy_result: null, policy_reasons: reasons, guards }).map((e) => e.verdict)
+    expect(z3('MISSING_INFORMATION_DETECTED', [], { AskPatientSafe: true })).toEqual(['UNSAT · בטוח לבקש מהמטופל'])
+    expect(z3('HUMAN_REVIEW_REQUIRED', ['z3:sat', 'z3_detail:[h = 2]'])).toEqual(['SAT · נמצאה דוגמה נגדית'])
+    expect(z3('READINESS_PASSED', [])).toEqual(['לא נדרש · כל המסמכים קיימים'])
+    expect(z3('REQUEST_VALIDATED', [])).toEqual([])
+
+    render(
+      <AuditTimeline
+        rows={[
+          row({ event: 'MISSING_INFORMATION_DETECTED', guards: { AskPatientSafe: true } }),
+          row({ event: 'READINESS_PASSED' }),
+        ]}
+      />,
+    )
+    const summary = screen.getByLabelText('סיכום יומן המעקב')
+    expect(within(summary).getByText('בדיקות Z3').closest('.audit-stat')).toHaveTextContent('1')
+  })
+
+  it('says so when there are no rows', () => {
+    render(<AuditTimeline rows={[]} />)
+    expect(screen.getByText('אין רשומות ביומן הביקורת לפנייה הזו.')).toBeInTheDocument()
+  })
+})
