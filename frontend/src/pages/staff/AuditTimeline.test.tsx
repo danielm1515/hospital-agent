@@ -150,7 +150,7 @@ describe('AuditTimeline', () => {
     const { container } = render(<AuditTimeline rows={TRACE} />)
     const policy = container.querySelectorAll('.audit-timeline-item')[3] as HTMLElement
     const engines = [...policy.querySelectorAll('.audit-engine')].map((engine) => engine.textContent)
-    expect(engines).toEqual(['OPA אישר', 'Prolog אישר'])
+    expect(engines).toEqual(['OPA אישר', 'Prolog אישר', 'Datalog המזעור נשמר'])
     const legend = screen.getByLabelText('מקרא מנועי ההחלטה')
     expect(legend).toHaveTextContent('Datalog')
     expect(legend).toHaveTextContent('Temporal Monitor')
@@ -210,6 +210,26 @@ describe('AuditTimeline', () => {
     expect(opaRulesOf({ policy_result: 'Deny', policy_reasons: ['policy_engine_unavailable'] })).toBeNull()
     expect(opaRulesOf({ policy_result: null, policy_reasons: [] })).toBeNull()
     expect(reasonLabel('field_not_minimized')).toBe('כלל OPA נכשל: נשלחים רק שדות מותרים (מזעור, Datalog)')
+  })
+
+  it('opens a check list per engine on a policy row: OPA, Prolog and Datalog', () => {
+    const { container } = render(<AuditTimeline rows={TRACE} />)
+    const policy = container.querySelectorAll('.audit-timeline-item')[3] as HTMLElement
+    const summaries = [...policy.querySelectorAll('.audit-rule-list summary')].map((summary) => summary.textContent)
+    expect(summaries).toEqual([
+      `OPA: ${Object.keys(OPA_DENY_RULES).length}/${Object.keys(OPA_DENY_RULES).length} כללי deny עברו`,
+      'Prolog: 4/4 בדיקות עברו',
+      'Datalog: appointment_system · המזעור נשמר',
+    ])
+    expect(within(policy).getByText('לסוכן יש התפקיד שהפעולה דורשת (automation)')).toBeInTheDocument()
+  })
+
+  it('opens the Z3 model on the row where the readiness check asked it', () => {
+    const { container } = render(
+      <AuditTimeline rows={[row({ event: 'MISSING_INFORMATION_DETECTED', guards: { AskPatientSafe: true } })]} />,
+    )
+    expect(container.querySelector('.audit-rule-list summary')).toHaveTextContent('Z3: 3 אילוצים · תוצאה UNSAT')
+    expect(screen.getByText('upload_h + verify_h + review_h > hours_until')).toBeInTheDocument()
   })
 
   it('says so when there are no rows', () => {

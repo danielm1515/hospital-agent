@@ -231,7 +231,7 @@ export function opaRulesOf(row: { policy_result: string | null; policy_reasons: 
 }
 
 export interface EngineVerdict {
-  engine: 'OPA' | 'Prolog' | 'Z3'
+  engine: 'OPA' | 'Prolog' | 'Datalog' | 'Z3'
   verdict: string
   tone: 'good' | 'bad' | 'warn' | 'neutral'
 }

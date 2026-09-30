@@ -2394,7 +2394,7 @@ img {
   gap: var(--space-1);
 }
 
-.audit-opa-rules summary {
+.audit-rule-list summary {
   cursor: pointer;
   inline-size: fit-content;
   font-size: 12px;
@@ -2403,13 +2403,13 @@ img {
   color: var(--brand-700);
 }
 
-.audit-opa-rules summary:focus-visible {
+.audit-rule-list summary:focus-visible {
   outline: 2px solid var(--focus-500);
   outline-offset: 2px;
   border-radius: var(--radius-sm);
 }
 
-.audit-opa-rules ul {
+.audit-rule-list ul {
   margin: var(--space-2) 0 0;
   padding: 0;
   list-style: none;
@@ -2483,6 +2483,25 @@ img {
 
 .consistency-item.failed .consistency-result {
   color: var(--danger-500);
+}
+
+.audit-rule-list.failed summary {
+  color: var(--danger-500);
+}
+
+.audit-gate.skip,
+.audit-gate.na {
+  border-style: dashed;
+  color: var(--ink-500);
+}
+
+.audit-gate.info {
+  background: var(--surface-100);
+}
+
+.audit-rule-note {
+  font-size: 11px;
+  color: var(--ink-500);
 }
 
 .audit-legend {

@@ -13,7 +13,9 @@ import {
   reasonLabel,
   recordTypeLabel,
 } from './auditLabels'
-import type { Phase } from './auditLabels'
+import type { EngineVerdict, Phase } from './auditLabels'
+import { datalogOf, prologChecksOf, z3ModelOf } from './engineRules'
+import type { RuleList, RuleStatus } from './engineRules'
 import { formatAuditTime, formatDate, gapAfter } from './labels'
 
 /**
@@ -141,38 +143,65 @@ function Summary({ rows }: { rows: TraceRow[] }) {
 }
 
 /** Which engine decided the row (derived in `enginesOf`, from the row alone). */
+const STATUS_MARK: Record<RuleStatus, string> = { pass: '✓', fail: '✗', skip: '…', na: '–', info: '•' }
+const STATUS_NOTE: Partial<Record<RuleStatus, string>> = { skip: 'לא נבדק', na: 'לא רלוונטי לפעולה' }
+
+/** One engine's checks on the row, collapsed behind a one-line summary. */
+function RuleDetails({ list, className }: { list: RuleList; className?: string }) {
+  return (
+    <details className={['audit-rule-list', list.failed && 'failed', className].filter(Boolean).join(' ')}>
+      <summary>{list.summary}</summary>
+      <ul>
+        {list.items.map((item) => (
+          <li className={`audit-gate ${item.status}`} key={item.code}>
+            <span aria-hidden="true">{STATUS_MARK[item.status]}</span> {item.label}{' '}
+            <span className="mono">{item.code}</span>
+            {(item.note ?? STATUS_NOTE[item.status]) && (
+              <span className="audit-rule-note"> · {item.note ?? STATUS_NOTE[item.status]}</span>
+            )}
+          </li>
+        ))}
+      </ul>
+    </details>
+  )
+}
+
+/** Which engine decided the row and what each one checked (derived from the row alone). */
 function Engines({ row }: { row: TraceRow }) {
   const engines = enginesOf(row)
-  const rules = opaRulesOf(row)
-  if (engines.length === 0) return null
-  const passed = rules?.filter((rule) => rule.passed).length ?? 0
+  const opa = opaRulesOf(row)
+  const prolog = prologChecksOf(row)
+  const datalog = datalogOf(row)
+  const z3 = z3ModelOf(row)
+  if (engines.length === 0 && !datalog) return null
+  const opaList: RuleList | null = opa && {
+    engine: 'OPA',
+    summary: `OPA: ${opa.filter((rule) => rule.passed).length}/${opa.length} כללי deny עברו`,
+    failed: opa.some((rule) => !rule.passed),
+    items: opa.map((rule) => ({ code: rule.code, label: rule.label, status: rule.passed ? 'pass' : 'fail' })),
+  }
+  const chips: EngineVerdict[] = datalog
+    ? [
+        ...engines,
+        { engine: 'Datalog', verdict: datalog.failed ? 'מזעור נכשל' : 'המזעור נשמר', tone: datalog.failed ? 'bad' : 'good' },
+      ]
+    : engines
   return (
     <div className="audit-engines">
       <div className="audit-gates-group">
         <span className="audit-gates-label">מנועים</span>
         <ul>
-          {engines.map((engine) => (
+          {chips.map((engine) => (
             <li className={`audit-engine tone-${engine.tone}`} key={engine.engine}>
               <span className="audit-engine-name">{engine.engine}</span> {engine.verdict}
             </li>
           ))}
         </ul>
       </div>
-      {rules && (
-        <details className="audit-opa-rules">
-          <summary>
-            OPA: {passed}/{rules.length} כללי deny עברו
-          </summary>
-          <ul>
-            {rules.map((rule) => (
-              <li className={`audit-gate ${rule.passed ? 'pass' : 'fail'}`} key={rule.code}>
-                <span aria-hidden="true">{rule.passed ? '✓' : '✗'}</span> {rule.label}{' '}
-                <span className="mono">{rule.code}</span>
-              </li>
-            ))}
-          </ul>
-        </details>
-      )}
+      {opaList && <RuleDetails list={opaList} className="audit-opa-rules" />}
+      {prolog && <RuleDetails list={prolog} />}
+      {datalog && <RuleDetails list={datalog} />}
+      {z3 && <RuleDetails list={z3} />}
     </div>
   )
 }
