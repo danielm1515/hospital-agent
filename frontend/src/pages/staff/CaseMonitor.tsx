@@ -356,7 +356,11 @@ function ExpandableRow({ row, detail, detailError, open, context, contextError, 
                   </section>
 
                   <h3 className="fact-group-h">יומן הביקורת (Audit)</h3>
-                  <AuditTimeline rows={context.trace} label={`יומן הביקורת של ${row.case_id}`} />
+                  <AuditTimeline
+                    rows={context.trace}
+                    context={context}
+                    label={`יומן הביקורת של ${row.case_id}`}
+                  />
                 </>
               ) : (
                 <Loading size="inline" label="טוען תכתובת" />

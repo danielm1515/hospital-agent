@@ -32,6 +32,8 @@ class Effect(StrEnum):
 
     MARK_IDENTITY_VERIFIED = "MarkIdentityVerified"
     RECORD_CLASSIFICATION = "RecordClassification"
+    # Open finding 02: an escalation straight from Classifying keeps what the case was classified as.
+    RECORD_EARLY_CLASSIFICATION = "RecordEarlyClassification"
     RECORD_PLAN = "RecordPlan"
     ADVANCE_STEP = "AdvanceStep"
     RECORD_RETRIEVAL = "RecordRetrieval"
@@ -95,12 +97,14 @@ TRANSITIONS: tuple[Transition, ...] = (
                ("valid_classification", "ReadinessInProgress"), effects=(Effect.RECORD_CLASSIFICATION,)),
     Transition(S.CLASSIFYING, E.MEDICAL_QUESTION_DETECTED, S.AWAITING_HUMAN_REVIEW,
                "escalation_kind = MedicalQuestion, escalated_from_state = Classifying",
-               escalation=_fixed(K.MEDICAL_QUESTION, S.CLASSIFYING)),
+               escalation=_fixed(K.MEDICAL_QUESTION, S.CLASSIFYING),
+               effects=(Effect.RECORD_EARLY_CLASSIFICATION,)),
     Transition(S.CLASSIFYING, E.HUMAN_REVIEW_REQUIRED, S.AWAITING_HUMAN_REVIEW,
                "SystemEscalationRequired, escalation_kind in {SafetyEscalation, ClassificationFailed, "
                "TemporalViolation}, escalated_from_state = Classifying",
                _SYS, escalation=_signal(S.CLASSIFYING, K.SAFETY_ESCALATION, K.CLASSIFICATION_FAILED,
-                                        K.TEMPORAL_VIOLATION)),
+                                        K.TEMPORAL_VIOLATION),
+               effects=(Effect.RECORD_EARLY_CLASSIFICATION,)),
     Transition(S.CLASSIFIED, E.PLAN_CREATED, S.PLANNING, "PlanComplete", ("PlanComplete",),
                effects=(Effect.RECORD_PLAN,)),
     Transition(S.CLASSIFIED, E.HUMAN_REVIEW_REQUIRED, S.AWAITING_HUMAN_REVIEW,
@@ -291,6 +295,14 @@ def apply_effects(case: CaseRecord, row: Transition, ctx: GuardContext) -> CaseR
             case Effect.RECORD_CLASSIFICATION:
                 changes["intent"] = p.get("intent")
                 if p.get("safety_level"):  # LLM design §5: re-classification never lowers the risk
+                    changes["safety_level"] = _higher_risk(case.safety_level, SafetyLevel(p["safety_level"]))
+            case Effect.RECORD_EARLY_CLASSIFICATION:
+                # Only what the Classifier actually answered: these rows also carry escalations
+                # with no classification (ClassificationFailed, TemporalViolation), which must
+                # leave the case as it was - and a malformed value is ignored, never raised on.
+                if isinstance(p.get("intent"), str) and p["intent"]:
+                    changes["intent"] = p["intent"]
+                if p.get("safety_level") in {s.value for s in SafetyLevel}:
                     changes["safety_level"] = _higher_risk(case.safety_level, SafetyLevel(p["safety_level"]))
             case Effect.RECORD_PLAN:
                 steps = [dict(step) for step in p["ordered_steps"]]

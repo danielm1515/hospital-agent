@@ -82,6 +82,27 @@ def test_d2_a_medical_question_goes_to_a_human(run):
     assert events(patient)[-1] == "MEDICAL_QUESTION_DETECTED"
 
 
+def test_an_early_escalation_keeps_the_classification_on_the_case(run):
+    """Open finding 02: a medical question used to escalate with the case's intent and
+    safety_level still empty, so the staff could not see what it was classified as."""
+    patient, agent = run()
+    patient.submit()
+    patient.validate(MEDICAL)
+    agent.run_case(patient.case_id)
+    assert patient.case.intent == "MedicalQuestion"
+    assert patient.case.safety_level is not None
+
+
+def test_a_safety_escalation_keeps_the_classification_on_the_case(run):
+    provider = FakeProvider({Call.SAFETY: [{"safety_level": "CriticalRisk"}]})
+    patient, agent = run(provider)
+    patient.submit()
+    patient.validate()
+    agent.run_case(patient.case_id)
+    assert escalation(patient) == (State.AWAITING_HUMAN_REVIEW, EscalationKind.SAFETY_ESCALATION)
+    assert (patient.case.intent, patient.case.safety_level) == ("AppointmentPreparation", SafetyLevel.CRITICAL_RISK)
+
+
 def test_d9_a_valid_document_with_risky_text_escalates_before_the_planner(run):
     patient, agent = run()
     patient.submit()
@@ -160,10 +181,26 @@ def test_a_non_retryable_llm_failure_escalates_after_one_attempt(run):
     assert [call for call, _ in provider.calls].count(Call.INTENT) == 1
 
 
-def test_an_unsupported_intent_has_no_complete_plan(run):
-    patient, agent = run()
+def test_an_unsupported_intent_escalates_without_asking_the_planner(run):
+    """No automatic plan covers an Unsupported intent (docs/spec_corrections.md row 31), so the
+    Orchestrator escalates it from Classified straight away, with a reason that says so -
+    the same PlanningFailed transition as before, minus a Planner call whose answer was known."""
+    provider = FakeProvider()
+    patient, agent = run(provider)
     patient.submit()
     patient.validate("Where do I pay the invoice for parking?")
+    agent.run_case(patient.case_id)
+    assert escalation(patient) == (State.AWAITING_HUMAN_REVIEW, EscalationKind.PLANNING_FAILED)
+    assert patient.trace()[-1].policy_reasons == ["intent_unsupported"]
+    assert patient.trace()[-1].state_before == State.CLASSIFIED.value
+    assert Call.PLANNER not in [call for call, _ in provider.calls]
+
+
+def test_a_supported_intent_without_a_complete_plan_is_still_plan_incomplete(run):
+    plan = {"plan_complete": False, "ordered_steps": []}
+    patient, agent = run(FakeProvider({Call.PLANNER: [plan]}))
+    patient.submit()
+    patient.validate()
     agent.run_case(patient.case_id)
     assert escalation(patient) == (State.AWAITING_HUMAN_REVIEW, EscalationKind.PLANNING_FAILED)
     assert patient.trace()[-1].policy_reasons == ["plan_incomplete"]

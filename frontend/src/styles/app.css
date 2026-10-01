@@ -2504,6 +2504,27 @@ img {
   color: var(--ink-500);
 }
 
+.audit-classification {
+  margin: 0;
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--ink-700);
+}
+
+.audit-classification b {
+  color: var(--ink-900);
+}
+
+.audit-classification .mono {
+  font-size: 11px;
+  color: var(--ink-500);
+}
+
+.audit-classification.replaced {
+  font-style: italic;
+  color: var(--ink-500);
+}
+
 .audit-legend {
   margin: 0;
   padding: var(--space-2) var(--space-3);

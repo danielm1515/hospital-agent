@@ -320,7 +320,7 @@ export function ReviewCase() {
             יומן הביקורת
           </h2>
           <p className="col-note">כל הרשומות של הפנייה, מהישנה לחדשה.</p>
-          <AuditTimeline rows={context.trace} />
+          <AuditTimeline rows={context.trace} context={context} />
         </section>
 
         <section className="card col" aria-labelledby="col-decision">

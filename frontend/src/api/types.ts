@@ -368,6 +368,14 @@ export interface TraceRow {
   approval_id: string | null
 }
 
+/** One LLM attempt of a case (`llm_usage`), as the review context shows it. */
+export interface LlmCall {
+  call: string
+  source: string
+  outcome: string
+  created_at: IsoDateTime
+}
+
 /** `GET /api/staff/cases/{case_id}/context`. */
 export interface ReviewContext extends CaseAppointmentFacts {
   case_id: string
@@ -378,6 +386,11 @@ export interface ReviewContext extends CaseAppointmentFacts {
   reasons: string[]
   data: DataLogEntry[]
   trace: TraceRow[]
+  /** The case's latest classification (`cases.intent` / `safety_level`); the Audit row holds neither. */
+  intent?: string | null
+  safety_level?: string | null
+  /** The case's LLM attempts in order - codes and times only. */
+  llm_calls?: LlmCall[]
   /** Must be sent back unchanged with the decision (409 `context_changed` otherwise). */
   shown_context_ref: string
 }

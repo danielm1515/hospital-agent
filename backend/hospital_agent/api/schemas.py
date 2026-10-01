@@ -286,6 +286,9 @@ class ReviewContext(BaseModel):
     reasons: list[str]
     data: list[dict[str, Any]]
     trace: list[dict[str, Any]]
+    intent: str | None = None
+    safety_level: str | None = None
+    llm_calls: list[dict[str, Any]] = []
     shown_context_ref: str
     # Sub-project 18 (design D13): read-only, same as CaseDetail above.
     appointment_id: str | None = None

@@ -675,6 +675,11 @@ Everything the reviewer is shown, plus the reference that binds the decision to 
       "approval_id": null
     }
   ],
+  "intent": "MedicalQuestion",
+  "safety_level": "LowRisk",
+  "llm_calls": [
+    {"call": "Intent", "source": "agent", "outcome": "ok", "created_at": "2026-09-19T22:12:40.912000Z"}
+  ],
   "shown_context_ref": "ctx-ba3e0652b0ea355663db57e7d19550c61ee1d156fea64c91c2cacd539bbc7d83",
   "appointment_id": null,
   "answered_appointment_id": null,
@@ -699,6 +704,12 @@ Everything the reviewer is shown, plus the reference that binds the decision to 
   `execution_id` and `approval_id` are the execution facts - the staff audit timeline shows
   the gates each row passed and each attempt from them. They are part of what is shown, so
   part of `shown_context_ref`.
+- `intent` / `safety_level` are the case's **latest** classification (`cases`); the
+  `INTENT_CLASSIFIED` audit row holds neither, so a case classified again (after a valid upload,
+  T10) has lost its earlier values. `llm_calls` is the case's LLM attempts (`llm_usage`) in
+  order - `call`, `source` (`agent` | `document_service`), `outcome` (`ok` or the unusable
+  answer's code) and `created_at`, never text, tokens or cost. Both are part of
+  `shown_context_ref`.
 - `shown_context_ref` **must be sent back with the decision**. Fetch the context, show it,
   and post the decision with the `shown_context_ref` that came with what the reviewer read.
   Any change in between (a new audit row, a deleted entry) makes the decision

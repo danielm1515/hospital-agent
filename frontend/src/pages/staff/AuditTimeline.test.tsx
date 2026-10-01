@@ -232,6 +232,57 @@ describe('AuditTimeline', () => {
     expect(screen.getByText('upload_h + verify_h + review_h > hours_until')).toBeInTheDocument()
   })
 
+  it("shows the case's classification on the row that classified it", () => {
+    const { container } = render(
+      <AuditTimeline rows={TRACE} context={{ intent: 'Unsupported', safety_level: 'LowRisk', llm_calls: [] }} />,
+    )
+    const classified = container.querySelectorAll('.audit-timeline-item')[2] as HTMLElement
+    expect(classified.querySelector('.audit-classification')).toHaveTextContent(
+      'סיווג: כוונה לא נתמכת Unsupported · רמת בטיחות סיכון נמוך LowRisk',
+    )
+    expect(container.querySelectorAll('.audit-classification')).toHaveLength(1)
+  })
+
+  it('says an earlier classification of a re-classified case was replaced, never showing a value it lacks', () => {
+    const rows = [
+      row({ event: 'INTENT_CLASSIFIED' }),
+      row({ event: 'DOCUMENT_UPLOADED' }),
+      row({ event: 'INTENT_CLASSIFIED' }),
+    ]
+    const { container } = render(
+      <AuditTimeline rows={rows} context={{ intent: 'AppointmentPreparation', safety_level: 'LowRisk' }} />,
+    )
+    const lines = [...container.querySelectorAll('.audit-classification')]
+    expect(lines[0]).toHaveClass('replaced')
+    expect(lines[0]).not.toHaveTextContent('AppointmentPreparation')
+    expect(lines[1]).toHaveTextContent('הכנה לתור')
+  })
+
+  it('puts each LLM call on the first row written after it, and counts them in the summary', () => {
+    const rows = [
+      row({ event: 'REQUEST_VALIDATED', recorded_at: '2026-09-30T21:01:10.000Z' }),
+      row({ event: 'INTENT_CLASSIFIED', recorded_at: '2026-09-30T21:01:15.000Z' }),
+      row({ event: 'HUMAN_REVIEW_REQUIRED', recorded_at: '2026-09-30T21:01:19.000Z' }),
+    ]
+    const llm_calls = [
+      { call: 'Intent', source: 'agent', outcome: 'ok', created_at: '2026-09-30T21:01:14.000Z' },
+      { call: 'Safety', source: 'agent', outcome: 'ok', created_at: '2026-09-30T21:01:14.500Z' },
+      { call: 'Planner', source: 'agent', outcome: 'schema_violation', created_at: '2026-09-30T21:01:18.000Z' },
+    ]
+    const { container } = render(<AuditTimeline rows={rows} context={{ llm_calls }} />)
+    const items = container.querySelectorAll('.audit-timeline-item')
+    const callsOf = (item: Element) => [...item.querySelectorAll('.audit-gate')].map((gate) => gate.textContent)
+    expect(callsOf(items[0])).toEqual([])
+    expect(callsOf(items[1])).toEqual(['✓ סיווג כוונה Intent', '✓ סיווג סיכון Safety'])
+    expect(callsOf(items[2])).toEqual(['✗ תכנון Planner · schema_violation'])
+    const summary = screen.getByLabelText('סיכום יומן המעקב')
+    expect(within(summary).getByText('קריאות LLM').closest('.audit-stat')).toHaveTextContent('31 נכשלו')
+  })
+
+  it('explains an unsupported intent', () => {
+    expect(reasonLabel('intent_unsupported')).toBe('הכוונה אינה נתמכת בטיפול אוטומטי (רק הכנה לתור)')
+  })
+
   it('says so when there are no rows', () => {
     render(<AuditTimeline rows={[]} />)
     expect(screen.getByText('אין רשומות ביומן הביקורת לפנייה הזו.')).toBeInTheDocument()

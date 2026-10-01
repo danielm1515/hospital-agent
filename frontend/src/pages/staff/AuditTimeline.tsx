@@ -1,4 +1,4 @@
-import type { TraceRow } from '../../api/types'
+import type { LlmCall, TraceRow } from '../../api/types'
 import {
   PHASE_LABELS,
   actionLabel,
@@ -16,7 +16,8 @@ import {
 import type { EngineVerdict, Phase } from './auditLabels'
 import { datalogOf, prologChecksOf, z3ModelOf } from './engineRules'
 import type { RuleList, RuleStatus } from './engineRules'
-import { formatAuditTime, formatDate, gapAfter } from './labels'
+import { formatAuditTime, formatDate, gapAfter, intentLabel, safetyLabel } from './labels'
+import { LLM_CALL_LABELS } from './metricsLabels'
 
 /**
  * The Audit trace as a journal (design decision 6: no table/timeline exists in the design
@@ -102,7 +103,7 @@ export function formatDuration(ms: number): string {
   return `${Math.floor(hours / 24)} ימים ${hours % 24} שע׳`
 }
 
-function Summary({ rows }: { rows: TraceRow[] }) {
+function Summary({ rows, calls }: { rows: TraceRow[]; calls: LlmCall[] }) {
   const gates = rows.flatMap(guardsOf).filter(([key, value]) => !isEvidence(key) && value).length
   const decisions = rows.filter((row) => row.policy_result)
   const allowed = decisions.filter((row) => row.policy_result === 'Allow').length
@@ -126,6 +127,12 @@ function Summary({ rows }: { rows: TraceRow[] }) {
       value: attempts,
       note: attempts ? `${succeeded} הצליחו · ${failed} נכשלו` : undefined,
       tone: failed ? 'warn' : undefined,
+    },
+    {
+      label: 'קריאות LLM',
+      value: calls.length,
+      note: calls.length ? `${calls.filter((c) => c.outcome !== 'ok').length} נכשלו` : undefined,
+      tone: calls.some((c) => c.outcome !== 'ok') ? 'warn' : undefined,
     },
     { label: 'משך כולל', value: formatDuration(span) },
   ]
@@ -267,7 +274,84 @@ function Gates({ row }: { row: TraceRow }) {
   )
 }
 
-function Item({ row, index, previous }: { row: TraceRow; index: number; previous: TraceRow | null }) {
+/** Where a row says what the case was classified as. */
+const CLASSIFICATION_EVENTS = ['INTENT_CLASSIFIED', 'MEDICAL_QUESTION_DETECTED']
+
+interface Classification {
+  intent: string | null
+  safety_level: string | null
+  /** False on a classification the case later replaced: its values were not kept. */
+  latest: boolean
+}
+
+/**
+ * The case's classification beside the row that produced it. The Audit row holds neither
+ * value and the case keeps only its latest, so an earlier classification of a re-classified
+ * case says it was replaced instead of showing a value it never had.
+ */
+function ClassificationLine({ classification }: { classification: Classification }) {
+  if (!classification.latest) {
+    return <p className="audit-classification replaced">סיווג זה הוחלף בסיווג מאוחר יותר; ערכיו לא נשמרו.</p>
+  }
+  return (
+    <p className="audit-classification">
+      סיווג: כוונה <b>{intentLabel(classification.intent)}</b>{' '}
+      {classification.intent && <span className="mono">{classification.intent}</span>} · רמת בטיחות{' '}
+      <b>{safetyLabel(classification.safety_level)}</b>{' '}
+      {classification.safety_level && <span className="mono">{classification.safety_level}</span>}
+    </p>
+  )
+}
+
+/** The LLM attempts made just before this row (attached in `callsByRow`). */
+function LlmCalls({ calls }: { calls: LlmCall[] }) {
+  if (calls.length === 0) return null
+  return (
+    <div className="audit-gates-group">
+      <span className="audit-gates-label">קריאות LLM</span>
+      <ul>
+        {calls.map((call, index) => {
+          const ok = call.outcome === 'ok'
+          return (
+            <li className={`audit-gate ${ok ? 'pass' : 'fail'}`} key={`${call.call}-${index}`}>
+              <span aria-hidden="true">{ok ? '✓' : '✗'}</span> {LLM_CALL_LABELS[call.call] ?? call.call}{' '}
+              <span className="mono">{call.call}</span>
+              {!ok && <span className="audit-rule-note"> · {call.outcome}</span>}
+            </li>
+          )
+        })}
+      </ul>
+    </div>
+  )
+}
+
+/**
+ * Each LLM attempt belongs to the first audit row written at or after it - the call happens,
+ * then its result is applied. Attempts after the last row (nothing applied yet) stay on it.
+ */
+function callsByRow(rows: TraceRow[], calls: LlmCall[]): Map<number, LlmCall[]> {
+  const byRow = new Map<number, LlmCall[]>()
+  for (const call of calls) {
+    const at = new Date(call.created_at).getTime()
+    const row = rows.find((candidate) => new Date(candidate.recorded_at).getTime() >= at) ?? rows[rows.length - 1]
+    byRow.set(row.audit_id, [...(byRow.get(row.audit_id) ?? []), call])
+  }
+  return byRow
+}
+
+function Item({
+  row,
+  index,
+  previous,
+  classification,
+  calls,
+}: {
+  row: TraceRow
+  index: number
+  previous: TraceRow | null
+  classification?: Classification
+  calls: LlmCall[]
+}) {
   const gap = gapAfter(previous?.recorded_at ?? null, row.recorded_at)
   const label = eventLabel(row.event)
   const attempt = row.attempt_number ?? null
@@ -308,6 +392,8 @@ function Item({ row, index, previous }: { row: TraceRow; index: number; previous
           <span className="mono">{row.policy_result}</span>
         </p>
       )}
+      {classification && <ClassificationLine classification={classification} />}
+      <LlmCalls calls={calls} />
       <Engines row={row} />
       <Gates row={row} />
       {row.policy_reasons.length > 0 && (
@@ -342,13 +428,32 @@ function segmentsOf(rows: TraceRow[]): Array<{ phase: Phase; start: number; rows
   return segments
 }
 
-export function AuditTimeline({ rows, label }: { rows: TraceRow[]; label?: string }) {
+export function AuditTimeline({
+  rows,
+  label,
+  context,
+}: {
+  rows: TraceRow[]
+  label?: string
+  /** The case's latest classification and its LLM attempts (`/context`), when known. */
+  context?: { intent?: string | null; safety_level?: string | null; llm_calls?: LlmCall[] }
+}) {
   if (rows.length === 0) {
     return <p className="empty-note">אין רשומות ביומן הביקורת לפנייה הזו.</p>
   }
+  const calls = callsByRow(rows, context?.llm_calls ?? [])
+  const lastClassified = [...rows].reverse().find((row) => CLASSIFICATION_EVENTS.includes(row.event))
+  const classificationOf = (row: TraceRow): Classification | undefined =>
+    context && CLASSIFICATION_EVENTS.includes(row.event)
+      ? {
+          intent: context.intent ?? null,
+          safety_level: context.safety_level ?? null,
+          latest: row.audit_id === lastClassified?.audit_id,
+        }
+      : undefined
   return (
     <div className="audit-journal">
-      <Summary rows={rows} />
+      <Summary rows={rows} calls={context?.llm_calls ?? []} />
       <EngineLegend />
       <p className="audit-timeline-day">
         {rows.length} רשומות · {formatDate(rows[0].recorded_at)}
@@ -361,7 +466,14 @@ export function AuditTimeline({ rows, label }: { rows: TraceRow[]; label?: strin
               {segment.rows.map((row, offset) => {
                 const index = segment.start + offset
                 return (
-                  <Item key={row.audit_id} row={row} index={index} previous={index > 0 ? rows[index - 1] : null} />
+                  <Item
+                    key={row.audit_id}
+                    row={row}
+                    index={index}
+                    previous={index > 0 ? rows[index - 1] : null}
+                    classification={classificationOf(row)}
+                    calls={calls.get(row.audit_id) ?? []}
+                  />
                 )
               })}
             </ol>

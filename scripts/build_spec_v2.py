@@ -29,7 +29,7 @@ OUT = ROOT / "Hospital_Agent_Clean_v2.docx"
 
 NAVY = "1F3864"  # the original's table-header fill, reused for the version-2 markers
 CODE_FONTS = {"Consolas", "Courier New"}
-CHAPTER_TITLE = "19. תוספות מעבר לאפיון הדמו (תתי-פרויקטים 9–18)"
+CHAPTER_TITLE = "19. תוספות מעבר לאפיון הדמו (תתי-פרויקטים 9–19 ויומן המעקב)"
 VERIFY_TITLE = "15.1 תוצאות אימות מדודות (גרסה 2)"
 FRONT_TITLE = "גרסה 2 – מסמך מעודכן לפי המערכת שנבנתה"
 
@@ -457,6 +457,35 @@ CHAPTER = [
         "instruction_not_approved, ו־OPA שאינו זמין מחזיר 503 instructions_unavailable. מסך "
         "הפנייה מתעדכן ב־polling כל 5 שניות, אבל לא בסטטוסים completed ו־closed. (תיקון 89)",
     ]),
+    ("19.9 תת־פרויקט 19 – שימוש ועלות LLM לכל פנייה", [
+        "כל ניסיון LLM נרשם בטבלה llm_usage (מיגרציה 0008): קריאות הסוכן (Intent, Safety, "
+        "Planner, Response Evaluator) וקריאת שירות המסמכים לכל העלאה, עם קודים, מספרי טוקנים "
+        "ועלות בלבד, בלי טקסט ובלי שדה מטופל (§12.3). הרישום הוא הנהלת חשבונות מחוץ ל־Audit: "
+        "טרנזקציה קצרה משלו, בלי שורת Audit, ואף State, Guard, החלטת Policy או חוק Temporal לא "
+        "קוראים אותו. כשל ברישום נרשם בלוג ואינו עוצר פנייה. זו הנקודה היחידה במערכת שאינה "
+        "fail-closed, משום שאינה בקרת בטיחות. העלויות מוצגות במסך המדדים למנהל בלבד. (תיקון 94)",
+    ]),
+    ("19.10 יומן המעקב לצוות, הוכחות העקביות ושמירת הסיווג", [
+        "יומן ה־Audit של הפנייה מוצג לצוות כסיפור: סיכום של השערים שעברו, החלטות המדיניות, "
+        "בדיקות Z3, החסימות, ניסיונות הביצוע וקריאות ה־LLM; השורות מקובצות לפי שלב בתהליך; "
+        "ולצד כל קוד תווית בעברית. GET /api/staff/cases/{id}/context מחזיר לשם כך לכל שורה את "
+        "ה־guards ואת נתוני הביצוע, ואת הסיווג האחרון של הפנייה ואת ניסיונות ה־LLM שלה (קודים "
+        "וזמנים בלבד), וכולם חלק מ־shown_context_ref. אין שינוי בסכמה. (תיקון 95)",
+        "לכל שורת מדיניות מוצגים OPA (18 כללי ה־deny של policy.rego), Prolog (בדיקות explain/4 "
+        "לפי הסדר: מה עבר, מה נכשל ומה לא נבדק), Datalog (מערכת היעד, השדות שהפעולה שולחת "
+        "והשדות החסומים לפי flows.dl), ובשורת MISSING_INFORMATION_DETECTED גם מודל Z3 של §9.1 "
+        "ותוצאתו. ה־Audit שומר את התוצאה המאוחדת בלבד, ולכן הפירוט נגזר מהשורה ומקבצי המנועים; "
+        "בדיקות ה־frontend משוות כל רשימה לקובץ המקור שלה. מסך המדדים מריץ לפי דרישה את "
+        "הוכחות העקביות של §9.2 (9 שאילתות UNSAT, 7 תכונות) דרך GET /api/admin/consistency. "
+        "(תיקון 95)",
+        "פנייה שסווגה Unsupported מוסלמת מיד מ־Classified כ־PlanningFailed עם הסיבה "
+        "intent_unsupported, בלי לשאול את ה־Planner שתשובתו ידועה מראש; המעבר בטבלת סעיף 3 "
+        "זהה. (תיקון 31)",
+        "פנייה שמוסלמת ישירות מ־Classifying (שאלה רפואית, או SafetyEscalation) שומרת עכשיו את "
+        "הכוונה ורמת הבטיחות שהמסווג החזיר, כך שהצוות רואה במה סווגה. ClassificationFailed "
+        "ו־TemporalViolation אינם נושאים סיווג ואינם משנים את הפנייה, ורמת הסיכון רק עולה. "
+        "(תיקון 96)",
+    ]),
 ]
 
 
@@ -727,7 +756,7 @@ def build():
             ["D33 – recall של Response Evaluator (סעיפים 6.5, 16)", "`python -m eval.d33 --live`",
              "1.0000 (24/24) במודל החי, מעל הסף 0.95; 2 false positives מתוך 24 הודעות "
              "תפעוליות; 0 תשובות לא שמישות"],
-            ["חבילת הבדיקות של ה־backend", "`pytest`", "1543 passed, 1 skipped"],
+            ["חבילת הבדיקות של ה־backend", "`pytest`", "1725 passed, 2 skipped, 3 xfailed (Postgres מנוהל ב־RDS)"],
         ],
         [3000, 3300, 3550],
     )
@@ -803,14 +832,16 @@ def build():
         "ה־Intent Classifier מחזיר AppointmentPreparation, MedicalQuestion או Unsupported. כל "
         "תשובה לא שמישה (שגיאת API, timeout, JSON לא תקין או הפרת Schema) נספרת לשלושת הכשלים. "
         "ה־Planner רואה את טקסט הפנייה רק ביצירת התוכנית, ומקור ההוראות אינו מוצע על ידו. "
-        "Response Evaluator רץ בתהליך נפרד, ותהליך שנפל מוחלף."))
+        "Response Evaluator רץ בתהליך נפרד, ותהליך שנפל מוחלף. פנייה שסווגה Unsupported "
+        "מוסלמת מ־Classified כ־PlanningFailed עם intent_unsupported, בלי קריאה ל־Planner "
+        "(סעיף 19.10)."))
 
     # -- chapter 19, after the last body paragraph (before sectPr)
     body_end = note_185
     chapter = [mk_par(CHAPTER_TITLE, "Heading1"),
-               mk_par("תתי־פרויקטים 1–8 מממשים את הדמו של סעיפים 0–18. תתי־פרויקטים 9–18 נוספו "
+               mk_par("תתי־פרויקטים 1–8 מממשים את הדמו של סעיפים 0–18. תתי־פרויקטים 9–19 נוספו "
                       "בבקשה מפורשת של הבעלים, מעבר להיקף הדמו, ונרשמו "
-                      "ב־`docs/spec_corrections.md` (שורות 65–93). אף אחד מהם אינו משנה את "
+                      "ב־`docs/spec_corrections.md` (שורות 65–96). אף אחד מהם אינו משנה את "
                       "הרשימות של סעיף 2, את 41 השורות של סעיף 3, את קוד ה־Rego, ה־Prolog, "
                       "ה־Datalog וה־Z3 או את שלושת התרחישים. בלי הגדרת מערכות חיצוניות הכול "
                       "רץ על ה־Mock, וה־golden traces נשארים 35/4/54.")]
@@ -861,7 +892,7 @@ def verify() -> None:
     for needed in (FRONT_TITLE, CHAPTER_TITLE, VERIFY_TITLE):
         assert needed in texts, needed
     subs = [t for t in texts if t.startswith("19.") and not t.startswith("19. ")]
-    assert len(subs) == 8, subs
+    assert len(subs) == 10, subs
     markers = sum(t.count("עודכן בגרסה 2") for t in texts) + sum(
         c.text.count("עודכן בגרסה 2") for t in v2.tables for r in t.rows for c in r.cells)
     notes = sum(t.startswith("הערת גרסה 2") for t in texts)

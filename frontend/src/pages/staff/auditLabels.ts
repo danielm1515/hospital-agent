@@ -318,7 +318,8 @@ const REASON_LABELS: Record<string, string> = {
   invalid_escalation_reason: 'סיבת ההסלמה אינה תקינה',
   executor_reverification_failed: 'האימות מחדש לפני הביצוע נכשל',
   attempts_exhausted: 'הניסיונות מוצו',
-  plan_incomplete: 'התוכנית אינה שלמה',
+  plan_incomplete: 'ה-Planner לא החזיר תוכנית שלמה',
+  intent_unsupported: 'הכוונה אינה נתמכת בטיפול אוטומטי (רק הכנה לתור)',
 }
 
 /**

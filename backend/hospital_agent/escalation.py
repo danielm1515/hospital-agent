@@ -8,7 +8,7 @@ Anything else is Blocked: invalid_escalation_reason.
 """
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING
 
 from .guards import INVALID_ESCALATION_REASON
@@ -30,6 +30,7 @@ class EscalationCoordinator:
         source: Component,
         reasons: Sequence[str] = (),
         execution_outcome: ExecutionOutcome | None = None,
+        classification: Mapping[str, str] | None = None,
     ) -> TransitionResult:
         """`reasons` (e.g. a Z3 counterexample) are kept in the escalation row's policy_reasons.
 
@@ -43,5 +44,7 @@ class EscalationCoordinator:
             return self._state_manager.record_blocked(case_id, Event.HUMAN_REVIEW_REQUIRED, INVALID_ESCALATION_REASON)
         payload = {"escalation_kind": str(kind), "escalated_from_state": str(from_state),
                    "policy_reasons": list(reasons)}
+        if classification:  # a SafetyEscalation from Classifying: what it was classified as (finding 02)
+            payload.update({key: classification[key] for key in ("intent", "safety_level") if key in classification})
         return self._state_manager.apply(case_id, Event.HUMAN_REVIEW_REQUIRED, payload, Component.ESCALATION_COORDINATOR,
                                          execution_outcome=execution_outcome)

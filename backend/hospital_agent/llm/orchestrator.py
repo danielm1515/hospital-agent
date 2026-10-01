@@ -58,6 +58,7 @@ from .evaluator import ResponseEvaluator
 from .message import status_message
 from .planner import Planner
 from .provider import LLMFailed, LLMProvider
+from .schemas import Intent
 from .usage import UsageSink, usage_scope
 
 logger = logging.getLogger(__name__)
@@ -220,11 +221,17 @@ class Orchestrator:
         outcome = verdict(classification)
         if outcome is EscalationKind.SAFETY_ESCALATION:
             return self.sm.escalation.signal(case_id, outcome, State.CLASSIFYING, Component.CLASSIFIER_SERVICE,
-                                             reasons=[f"safety_level:{classification.safety_level.value}"])
+                                             reasons=[f"safety_level:{classification.safety_level.value}"],
+                                             classification=payload)
         return self.sm.apply(case_id, outcome, payload, Component.CLASSIFIER_SERVICE)
 
     def _plan(self, case_id: str) -> TransitionResult:
         case = self.sm.load(case_id)
+        if case.intent == Intent.UNSUPPORTED.value:
+            # No automatic plan covers it (docs/spec_corrections.md row 31): escalate now, with a
+            # reason that names the intent, instead of asking the Planner for an answer known in
+            # advance. Same transition as an incomplete plan - PlanningFailed from Classified.
+            return self._fail(case_id, State.CLASSIFIED, "intent_unsupported")
         plan = self.planner.plan(case.intent or "", self._request_text(case_id))
         if not plan.plan_complete:  # §3.1 PlanComplete: the case does not move to Planning
             return self._fail(case_id, State.CLASSIFIED, "plan_incomplete")

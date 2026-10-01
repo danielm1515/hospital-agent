@@ -375,7 +375,8 @@ def test_the_context_shows_the_data_log_and_the_trace(client, staff, sm, app_eng
     assert set(context) == {"case_id", "patient_id", "state", "escalation_kind", "escalated_from_state",
                             "reasons", "data", "trace", "shown_context_ref", "appointment_id",
                             "answered_appointment_id", "department", "exam_type_label",
-                            "instruction_source_id", "instruction_version"}
+                            "instruction_source_id", "instruction_version", "intent", "safety_level",
+                            "llm_calls"}
     assert context["state"] == "AwaitingHumanReview"
     assert [entry["kind"] for entry in context["data"]] == ["request_text"]
     assert context["data"][0]["content"] == MEDICAL
@@ -406,6 +407,24 @@ def test_the_context_trace_carries_the_gates_and_the_execution_facts(client, sta
     succeeded = next(row for row in trace if row["record_type"] == "ExecutionSucceeded")
     assert (succeeded["outcome"], succeeded["attempt_number"], succeeded["execution_id"]) == (
         "success", 1, started[0]["execution_id"])
+
+
+def test_the_context_carries_the_classification_and_the_llm_calls(client, staff, sm, app_engine):
+    """The audit journal shows what the case was classified as and each LLM attempt, in order -
+    codes and times only, no text, tokens or cost."""
+    d = Driver(sm, app_engine)
+    d.to_classified()
+    with app_engine.begin() as conn:
+        for minute, call in ((1, "Intent"), (2, "Safety")):
+            conn.execute(text(
+                "INSERT INTO llm_usage (case_id, source, call, model, outcome, input_tokens, created_at) "
+                "VALUES (:c, 'agent', :call, 'm', 'ok', 100, :at)"),
+                {"c": d.case_id, "call": call, "at": f"2026-09-30T21:0{minute}:00+00:00"})
+    context = client.get(f"/api/staff/cases/{d.case_id}/context", headers=staff).json()
+    assert (context["intent"], context["safety_level"]) == (d.case.intent, d.case.safety_level.value)
+    assert [(c["call"], c["source"], c["outcome"]) for c in context["llm_calls"]] == [
+        ("Intent", "agent", "ok"), ("Safety", "agent", "ok")]
+    assert set(context["llm_calls"][0]) == {"call", "source", "outcome", "created_at"}
 
 
 def test_the_context_carries_the_chosen_appointment_and_instruction_source(client, staff, sm, app_engine):

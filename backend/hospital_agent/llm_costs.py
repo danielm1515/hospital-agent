@@ -140,6 +140,15 @@ def case_usage(conn: Connection, case_id: str) -> CaseUsage:
                      unpriced_calls=unpriced, by_call=by_call)
 
 
+def case_calls(conn: Connection, case_id: str) -> list[dict[str, Any]]:
+    """One case's LLM attempts in the order they were made - which call, from where, and how it
+    ended - for the staff audit journal. Codes and times only: no text, no tokens, no cost."""
+    query = (select(llm_usage.c.call, llm_usage.c.source, llm_usage.c.outcome, llm_usage.c.created_at)
+             .where(llm_usage.c.case_id == case_id).order_by(llm_usage.c.created_at, llm_usage.c.usage_id))
+    return [{"call": row.call, "source": row.source, "outcome": row.outcome, "created_at": row.created_at}
+            for row in conn.execute(query)]
+
+
 def _now() -> datetime:
     return datetime.now(UTC)
 

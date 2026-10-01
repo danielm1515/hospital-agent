@@ -21,7 +21,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any
 
-from . import data_log, patient_messages, repository
+from . import data_log, llm_costs, patient_messages, repository
 from .auth import CLINICAL_STAFF
 from .case import ApprovalRecord, CaseRecord, ExecutionRecord
 from .documents import CATALOG_LABELS
@@ -114,6 +114,10 @@ class ReviewContext:
     exam_type_label: str | None = None
     instruction_source_id: str | None = None
     instruction_version: str | None = None
+    # The case's (latest) classification and its LLM attempts, for the audit journal.
+    intent: str | None = None
+    safety_level: str | None = None
+    llm_calls: list[dict] | None = None
 
 
 def allowed_decisions(kind: EscalationKind | None) -> list[str]:
@@ -221,6 +225,7 @@ class HumanReviewService:
             trace = repository.load_trace(conn, case_id)
             accepted = data_log.accepted_uploads(trace)
             entries = [entry for kind in data_log.DataKind for entry in data_log.entries(conn, case_id, kind)]
+            llm_calls = llm_costs.case_calls(conn, case_id)
         entries.sort(key=lambda entry: (entry.created_at, entry.entry_id))
         data = [
             {"entry_id": e.entry_id, "kind": e.kind.value, "content": e.content, "content_hash": e.content_hash,
@@ -248,6 +253,11 @@ class HumanReviewService:
             "reasons": _escalation_reasons(trace) if case.state is State.AWAITING_HUMAN_REVIEW else [],
             "data": data,
             "trace": rows,
+            # The case's classification and its LLM attempts, for the staff audit journal: the
+            # Audit row of INTENT_CLASSIFIED holds neither (the case keeps the latest only).
+            "intent": case.intent,
+            "safety_level": case.safety_level.value if case.safety_level else None,
+            "llm_calls": llm_calls,
             "appointment_id": case.appointment_id,
             "answered_appointment_id": case.answered_appointment_id,
             "department": case.department,
