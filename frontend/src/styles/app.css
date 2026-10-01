@@ -197,11 +197,6 @@ img {
   }
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .spin {
-    animation: none;
-  }
-}
 
 /* ---- TextField ---------------------------------------------------------- */
 
@@ -1109,12 +1104,6 @@ img {
   border-width: 2px;
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .loader-ring {
-    animation: none;
-    display: none;
-  }
-}
 
 .card {
   background: var(--surface-000);

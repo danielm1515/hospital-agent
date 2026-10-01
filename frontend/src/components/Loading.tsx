@@ -13,8 +13,8 @@ export interface LoadingProps {
  * loading place in both UIs instead of each screen inlining its own "טוען…" text.
  * A ring (track `--surface-200`, arc `--brand-500`) sits beside a visible status
  * text. `role="status"` and `aria-live="polite"` so a screen reader announces it
- * once; under `prefers-reduced-motion` the ring is hidden and unanimated
- * (`app.css`), and only the text remains.
+ * once. The ring always rotates, even under `prefers-reduced-motion` - the owner's
+ * decision (2026-10-01): a stopped or hidden ring read as a frozen screen.
  */
 export function Loading({ label = 'טוען…', size = 'page' }: LoadingProps) {
   return (
