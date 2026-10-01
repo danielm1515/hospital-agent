@@ -11,7 +11,7 @@ from datetime import UTC, datetime
 from fastapi import Depends, HTTPException, Request
 from sqlalchemy.engine import Engine
 
-from ..auth import ADMIN_STAFF, Principal, auth_secret, verify_token
+from ..auth import ADMIN_STAFF, Principal, UserStore, auth_secret, verify_token
 from ..human_review import HumanReviewService
 from ..session import SessionService
 
@@ -30,13 +30,18 @@ def get_reviews(request: Request) -> HumanReviewService:
     return request.app.state.reviews
 
 
+def get_users(request: Request) -> UserStore:
+    return request.app.state.users
+
+
 def current_principal(request: Request) -> Principal:
     """The verified token's Principal, or 401. Every failure gives the same answer: a wrong
     password, an expired token and a forged signature must not be told apart."""
     scheme, _, token = (request.headers.get("Authorization") or "").partition(" ")
     principal = None
     if scheme.lower() == BEARER and token.strip():
-        principal = verify_token(token.strip(), now=datetime.now(UTC), secret=auth_secret())
+        principal = verify_token(token.strip(), now=datetime.now(UTC), secret=auth_secret(),
+                                 store=get_users(request))
     if principal is None:
         raise HTTPException(status_code=401, detail="not_authenticated",
                             headers={"WWW-Authenticate": "Bearer"})

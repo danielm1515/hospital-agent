@@ -486,6 +486,18 @@ CHAPTER = [
         "ו־TemporalViolation אינם נושאים סיווג ואינם משנים את הפנייה, ורמת הסיכון רק עולה. "
         "(תיקון 96)",
     ]),
+    ("19.11 טבלת המשתמשים", [
+        "רשימת המשתמשים הקבועה בקוד הוחלפה בטבלה users (מיגרציה 0009): אותם חמישה משתמשים, עם "
+        "תפקיד (patient, clinical_staff או admin_staff), שם תצוגה, hash של סיסמה לכל משתמש "
+        "(scrypt עם salt נפרד), identity_verified (P-30000 עדיין נכשלת באימות בכוונה) ו־active. "
+        "כל משתמש נזרע עם hash משלו של סיסמת הדמו, ולכן הכניסה עובדת כמו קודם. ההחלטה של תיקון "
+        "66 (\"DEMO_USERS נשאר ה־IdP\") מוחלפת. (תיקון 97)",
+        "hospital_app מקבל SELECT בלבד, כי האפליקציה אינה יוצרת או משנה משתמשים. hospital_reader "
+        "אינו מקבל דבר: אימות הזהות וה־hash הם נתוני IdP ולא פרטי מטופל. משתמש לא מוכר או לא "
+        "פעיל נבדק מול hash דמה, כך שזמן התגובה אינו חושף אילו מזהים קיימים, וכל בקשה קוראת את "
+        "המשתמש מחדש, ולכן השבתת משתמש או שינוי תפקידו מבטלים את ה־token שלו מיד. פורמט ה־token, "
+        "התפקידים, השערים ו־rules.pl לא השתנו, ושירותי התורים והמסמכים לא נגעו. (תיקון 97)",
+    ]),
 ]
 
 
@@ -841,7 +853,7 @@ def build():
     chapter = [mk_par(CHAPTER_TITLE, "Heading1"),
                mk_par("תתי־פרויקטים 1–8 מממשים את הדמו של סעיפים 0–18. תתי־פרויקטים 9–19 נוספו "
                       "בבקשה מפורשת של הבעלים, מעבר להיקף הדמו, ונרשמו "
-                      "ב־`docs/spec_corrections.md` (שורות 65–96). אף אחד מהם אינו משנה את "
+                      "ב־`docs/spec_corrections.md` (שורות 65–97). אף אחד מהם אינו משנה את "
                       "הרשימות של סעיף 2, את 41 השורות של סעיף 3, את קוד ה־Rego, ה־Prolog, "
                       "ה־Datalog וה־Z3 או את שלושת התרחישים. בלי הגדרת מערכות חיצוניות הכול "
                       "רץ על ה־Mock, וה־golden traces נשארים 35/4/54.")]
@@ -892,7 +904,7 @@ def verify() -> None:
     for needed in (FRONT_TITLE, CHAPTER_TITLE, VERIFY_TITLE):
         assert needed in texts, needed
     subs = [t for t in texts if t.startswith("19.") and not t.startswith("19. ")]
-    assert len(subs) == 10, subs
+    assert len(subs) == 11, subs
     markers = sum(t.count("עודכן בגרסה 2") for t in texts) + sum(
         c.text.count("עודכן בגרסה 2") for t in v2.tables for r in t.rows for c in r.cells)
     notes = sum(t.startswith("הערת גרסה 2") for t in texts)

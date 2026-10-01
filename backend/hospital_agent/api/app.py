@@ -29,6 +29,7 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from .. import logging_setup
 from ..appointment_list import AppointmentListClient, build_list_client
+from ..auth import DbUserStore
 from ..db import make_engine
 from ..document_intake import build_intake_client
 from ..execution.appointment_service import build_gateway
@@ -107,6 +108,7 @@ def create_app(engine: Engine | None = None, orchestrator: Orchestrator | None =
         if owned:  # never for a test: it always injects an engine (see module docstring)
             logging_setup.configure()
         app.state.engine = make_engine() if owned else engine
+        app.state.users = DbUserStore(app.state.engine)
         app.state.orchestrator_status = None  # reported by /health only for a real server
         app.state.appointments_source = None  # likewise: "mock" or "appointment-service"
         app.state.documents_source = None  # likewise: "mock" or "document-service"

@@ -417,8 +417,8 @@ def test_the_context_carries_the_classification_and_the_llm_calls(client, staff,
     with app_engine.begin() as conn:
         for minute, call in ((1, "Intent"), (2, "Safety")):
             conn.execute(text(
-                "INSERT INTO llm_usage (case_id, source, call, model, outcome, input_tokens, created_at) "
-                "VALUES (:c, 'agent', :call, 'm', 'ok', 100, :at)"),
+                "INSERT INTO llm_usage (case_id, source, call, model, outcome, created_at) "
+                "VALUES (:c, 'agent', :call, 'm', 'ok', :at)"),
                 {"c": d.case_id, "call": call, "at": f"2026-09-30T21:0{minute}:00+00:00"})
     context = client.get(f"/api/staff/cases/{d.case_id}/context", headers=staff).json()
     assert (context["intent"], context["safety_level"]) == (d.case.intent, d.case.safety_level.value)

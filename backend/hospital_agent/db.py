@@ -159,6 +159,20 @@ patients = Table(
     Column("created_at", DateTime(timezone=True), nullable=False),
 )
 
+# Migration 0009 (row 97): the IdP's users - a role and a scrypt hash each. hospital_app reads it
+# only; hospital_reader has no right on it at all.
+users = Table(
+    "users",
+    metadata,
+    Column("user_id", Text, primary_key=True),
+    Column("role", Text, nullable=False),
+    Column("display_name", Text, nullable=False),
+    Column("password_hash", Text, nullable=False),
+    Column("identity_verified", Boolean, nullable=False),
+    Column("active", Boolean, nullable=False),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+)
+
 
 # Migration 0008 (sub-project 19, design D4): one row per LLM attempt, append-only like audit_log.
 llm_usage = Table(

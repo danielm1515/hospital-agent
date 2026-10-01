@@ -21,8 +21,9 @@ build - see the note under the route table.)
 
 ## 1. Authentication
 
-The demo IdP (§18.3) is a fixed user list with one shared password. `POST /api/auth/login`
-returns a stateless token; send it on every other `/api` request:
+The demo IdP (§18.3) is the `users` table (migration 0009, `docs/spec_corrections.md` row 97):
+each user has a role and its own scrypt password hash. `POST /api/auth/login` returns a
+stateless token; send it on every other `/api` request:
 
 ```
 Authorization: Bearer <token>
@@ -31,7 +32,9 @@ Authorization: Bearer <token>
 The token is `base64url({"exp":…,"role":…,"sub":…}).<hmac-sha256>`, valid **8 hours**. It
 is opaque to the UI: store it (e.g. in `sessionStorage`), send it, and on `401` send the
 user back to the login screen. There is no refresh endpoint and no server session - log in
-again.
+again. Every request re-reads the user, so a token stops working at once when its user is made
+inactive or its role changes. An unknown user, an inactive one and a wrong password are all the
+same `401 invalid_credentials`.
 
 ### Demo users
 
@@ -43,8 +46,10 @@ again.
 | `coordinator_nurse` | `clinical_staff` | אחות מתאמת | Staff screen |
 | `admin_coordinator` | `admin_staff` | רכזת מנהלה | Staff screen |
 
-**Password:** the same for all of them - the value of `DEMO_PASSWORD`, default `demo`
-(set in `.env` at the repo root). `AUTH_SECRET` (also `.env`) signs the tokens; changing it
+**Password:** migration 0009 seeded each user with its own hash of the value `DEMO_PASSWORD` had
+when the migration ran (default `demo`, set in `.env` at the repo root), so all five start with
+the same password; changing `DEMO_PASSWORD` afterwards changes nothing - a password changes by
+updating that user's `password_hash`. `AUTH_SECRET` (also `.env`) signs the tokens; changing it
 invalidates every issued token.
 
 `role` is `patient`, `clinical_staff` or `admin_staff`. The two staff roles have exactly

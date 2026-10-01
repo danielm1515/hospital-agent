@@ -13,7 +13,7 @@ from email.parser import HeaderParser
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from starlette.concurrency import run_in_threadpool
 
-from ..auth import DEMO_USERS, Principal
+from ..auth import Principal, UserStore
 from ..document_intake import IntakeUnavailable
 from ..session import (
     CaseNotFound,
@@ -24,7 +24,7 @@ from ..session import (
     SessionService,
 )
 from . import appointments, instructions
-from .deps import get_session, require_patient
+from .deps import get_session, get_users, require_patient
 from .schemas import (
     AppointmentsView,
     DocumentUpload,
@@ -44,18 +44,19 @@ UPLOAD_BODY_LIMIT = MAX_PDF_BYTES + 64 * 1024  # the file plus the multipart fra
 MAX_FORM_PARTS = 64  # the form has one file part; a few others are ignored, thousands are refused
 
 
-def _identity_verified(principal: Principal) -> bool:
-    """The demo IdP's verdict for this patient (§18.3) - not something the client may send."""
-    user = DEMO_USERS.get(principal.user_id)
+def _identity_verified(principal: Principal, users: UserStore) -> bool:
+    """The IdP's verdict for this patient (§18.3, the users table) - never something the client sends."""
+    user = users.get(principal.user_id)
     return bool(user and user.identity_verified)
 
 
 @router.post("/requests", response_model=PatientCaseView, status_code=201)
 def submit_request(body: NewRequest, principal: Principal = Depends(require_patient),
-                   session: SessionService = Depends(get_session)) -> PatientCaseView:
+                   session: SessionService = Depends(get_session),
+                   users: UserStore = Depends(get_users)) -> PatientCaseView:
     try:
         case_id = session.submit_request(principal.patient_id, body.text,
-                                         identity_verified=_identity_verified(principal),
+                                         identity_verified=_identity_verified(principal, users),
                                          appointment_id=body.appointment_id)
     except EventRejected as rejected:
         # The patient gets one code: a guard's reason (§3.1) is internal, and §12.3 keeps it

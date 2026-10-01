@@ -11,10 +11,13 @@ from fastapi.testclient import TestClient
 
 from hospital_agent import repository
 from hospital_agent.api.app import create_app
-from hospital_agent.auth import DEMO_USERS, auth_secret, demo_password, issue_token
+from hospital_agent.auth import User, auth_secret, demo_password, issue_token
 
 REQUEST = "When is my appointment and which documents do I need?"
 PATIENT, OTHER, NURSE = "P-10041", "P-20000", "coordinator_nurse"
+# Token subjects only: issue_token() reads no password, and the API re-reads the user from the table.
+PATIENT_USER = User(PATIENT, "patient", "דנה כהן", password_hash="-")
+NURSE_USER = User(NURSE, "clinical_staff", "אחות מתאמת", password_hash="-")
 
 
 @pytest.fixture
@@ -42,7 +45,7 @@ def test_login_returns_a_token_and_the_identity(client):
     assert response.status_code == 200
     body = response.json()
     assert (body["user_id"], body["role"]) == (PATIENT, "patient")
-    assert body["display_name"] == DEMO_USERS[PATIENT].display_name
+    assert body["display_name"] == "דנה כהן"
     assert body["token"].count(".") == 1
 
 
@@ -56,7 +59,7 @@ def test_me_returns_the_identity_of_the_token(client):
     response = client.get("/api/auth/me", headers=auth(client, NURSE))
     assert response.status_code == 200
     assert response.json() == {"user_id": NURSE, "role": "clinical_staff",
-                               "display_name": DEMO_USERS[NURSE].display_name}
+                               "display_name": "אחות מתאמת"}
 
 
 @pytest.mark.parametrize("headers", [
@@ -72,7 +75,7 @@ def test_a_missing_or_malformed_token_is_401(client, headers):
 
 
 def test_an_expired_token_is_401(client):
-    stale = issue_token(DEMO_USERS[PATIENT], now=datetime.now(UTC) - timedelta(hours=9), secret=auth_secret())
+    stale = issue_token(PATIENT_USER, now=datetime.now(UTC) - timedelta(hours=9), secret=auth_secret())
     response = client.get("/api/auth/me", headers={"Authorization": f"Bearer {stale}"})
     assert response.status_code == 401
     assert response.json() == {"detail": "not_authenticated"}
@@ -80,7 +83,7 @@ def test_an_expired_token_is_401(client):
 
 def test_a_tampered_token_is_401(client):
     payload, signature = login(client, PATIENT).json()["token"].split(".")
-    forged = issue_token(DEMO_USERS[NURSE], now=datetime.now(UTC), secret="another-secret").split(".")[0]
+    forged = issue_token(NURSE_USER, now=datetime.now(UTC), secret="another-secret").split(".")[0]
     for token in (f"{payload}.{signature[::-1]}", f"{forged}.{signature}"):
         response = client.get("/api/auth/me", headers={"Authorization": f"Bearer {token}"})
         assert response.status_code == 401
