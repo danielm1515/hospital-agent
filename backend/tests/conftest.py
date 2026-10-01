@@ -122,11 +122,20 @@ def migrated(owner_engine: Engine, alembic_config: Config) -> None:
     command.upgrade(alembic_config, "head")
 
 
+@pytest.fixture(autouse=True)
+def _fresh_document_status():
+    """Row 98: the document-service's last outcome is process memory - no test inherits another's."""
+    from hospital_agent import document_status
+    document_status.reset()
+    yield
+    document_status.reset()
+
+
 @pytest.fixture
 def app_engine(migrated: None, owner_engine: Engine) -> Engine:
     """A clean database, reached as hospital_app - the role the application uses."""
     with owner_engine.begin() as conn:
-        conn.execute(text("TRUNCATE llm_usage, data_log, audit_log, approvals, executions, cases RESTART IDENTITY"))
+        conn.execute(text("TRUNCATE upload_attempts, llm_usage, data_log, audit_log, approvals, executions, cases RESTART IDENTITY"))
     engine = create_engine(_env("TEST_DATABASE_URL"))
     yield engine
     engine.dispose()

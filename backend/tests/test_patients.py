@@ -7,10 +7,9 @@ from alembic import command
 from sqlalchemy import create_engine, make_url, text
 from sqlalchemy.exc import IntegrityError, ProgrammingError
 
-from hospital_agent.auth import DEMO_USERS, PATIENT
-
 READER = "hospital_reader"
-OTHER_TABLES = ["cases", "audit_log", "data_log", "approvals", "executions", "llm_usage"]
+# `users` above all: its identity verdicts and password hashes are IdP data (row 97).
+OTHER_TABLES = ["cases", "audit_log", "data_log", "approvals", "executions", "llm_usage", "users"]
 # The three statements migration 0004's REVOKE cannot reach on a managed Postgres.
 LARGE_OBJECT_CREATORS_SQL = {
     "SELECT lo_creat(-1)",
@@ -80,11 +79,13 @@ def reader(migrated):
 
 
 def test_the_registry_holds_exactly_the_idps_patients(app_engine):
-    """DEMO_USERS stays the IdP (§18.3); the table must never drift from it (design §3.3)."""
+    """The IdP is the users table (row 97); the registry must never drift from its patients
+    (design §3.3)."""
     with app_engine.connect() as conn:
         rows = {(r.patient_id, r.full_name) for r in conn.execute(text("SELECT patient_id, full_name FROM patients"))}
-    expected = {(u.user_id, u.display_name) for u in DEMO_USERS.values() if u.role == PATIENT}
-    assert rows == expected
+        expected = {(r.user_id, r.display_name) for r in conn.execute(
+            text("SELECT user_id, display_name FROM users WHERE role = 'patient'"))}
+    assert rows == expected and len(rows) == 3
 
 
 def test_every_phone_is_e164(app_engine):

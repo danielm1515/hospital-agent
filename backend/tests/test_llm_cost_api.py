@@ -242,6 +242,7 @@ def test_usage_rows_never_change_the_shown_context_ref(client, sm, app_engine):
     after = client.get(f"/api/staff/cases/{d.case_id}/context", headers=staff).json()
     assert after["shown_context_ref"] == before["shown_context_ref"]
     assert "llm_usage" not in after and "llm_cost_usd" not in after
+    assert len(after["llm_calls"]) == 2  # shown in the journal, all the same - just never hashed
     assert client.get(f"/api/staff/cases/{d.case_id}", headers=staff).json()["llm_usage"]["calls"] == 2
 
 

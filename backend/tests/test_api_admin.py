@@ -91,3 +91,20 @@ def test_the_answer_and_the_log_carry_no_patient_identifier(client, app_engine, 
         assert identifier not in response.text
         assert identifier not in caplog.text
     assert "admin_coordinator" in caplog.text
+
+
+# --- the §9.2 cross-layer consistency proofs, for the metrics screen -------------------------
+
+def test_consistency_is_admin_only(client):
+    assert client.get("/api/admin/consistency").status_code == 401
+    assert client.get("/api/admin/consistency", headers=headers(client, NURSE)).status_code == 403
+
+
+def test_consistency_runs_the_nine_z3_queries_and_every_one_is_unsat(client):
+    body = client.get("/api/admin/consistency", headers=headers(client, ADMIN)).json()
+    assert set(body) == {"engine", "all_proved", "queries"}
+    assert body["engine"] == "z3"
+    assert [q["property"] for q in body["queries"]] == ["P1", "P1", "P1", "P2", "P3", "P4", "P5", "P6", "P7"]
+    assert all(q["result"] == "unsat" and q["proved"] is True for q in body["queries"])
+    assert body["all_proved"] is True
+    assert body["queries"][0]["description"] == "OPA allows what Prolog blocks"

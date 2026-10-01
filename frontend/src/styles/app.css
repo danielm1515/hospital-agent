@@ -197,11 +197,6 @@ img {
   }
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .spin {
-    animation: none;
-  }
-}
 
 /* ---- TextField ---------------------------------------------------------- */
 
@@ -1109,12 +1104,6 @@ img {
   border-width: 2px;
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .loader-ring {
-    animation: none;
-    display: none;
-  }
-}
 
 .card {
   background: var(--surface-000);
@@ -2009,35 +1998,148 @@ img {
   margin: var(--space-2) 0 0;
 }
 
-/* ---- Audit timeline ----------------------------------------------------- */
+/* ---- Audit journal -------------------------------------------------------
+ * The staff audit trace: a summary strip, then the rows grouped by phase of
+ * the flow, each row a card whose inline-start edge carries its tone. */
 
-.audit-timeline {
+.audit-journal {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.audit-summary {
+  margin: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(112px, 1fr));
+  gap: var(--space-2);
+}
+
+.audit-stat {
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  background: var(--surface-100);
+  border: 1px solid var(--line-200);
+  border-block-start: 3px solid var(--line-300);
+  border-radius: var(--radius-md);
+}
+
+.audit-stat dt {
+  font-size: 11px;
+  line-height: 16px;
+  color: var(--ink-500);
+}
+
+.audit-stat dd {
+  margin: 0;
+  font-size: 20px;
+  line-height: 28px;
+  font-weight: 700;
+  color: var(--ink-900);
+  font-variant-numeric: tabular-nums;
+}
+
+.audit-stat.tone-good {
+  border-block-start-color: var(--success-500);
+}
+
+.audit-stat.tone-bad {
+  border-block-start-color: var(--danger-500);
+}
+
+.audit-stat.tone-warn {
+  border-block-start-color: var(--warning-500);
+}
+
+.audit-stat-note {
+  margin: 0;
+  font-size: 11px;
+  line-height: 16px;
+  color: var(--ink-500);
+}
+
+.audit-timeline-day {
+  margin: 0;
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--ink-500);
+  font-variant-numeric: tabular-nums;
+}
+
+.audit-timeline,
+.audit-phase-rows {
   margin: 0;
   padding: 0;
   list-style: none;
   display: flex;
   flex-direction: column;
-  gap: var(--space-3);
+}
+
+.audit-timeline {
+  gap: var(--space-4);
+}
+
+.audit-phase-rows {
+  gap: var(--space-2);
+  margin-inline-start: 5px;
   border-inline-start: 2px solid var(--line-200);
-  padding-inline-start: var(--space-4);
+  padding-inline-start: var(--space-3);
+}
+
+.audit-phase-title {
+  margin: 0 0 var(--space-2);
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: 12px;
+  line-height: 18px;
+  font-weight: 700;
+  color: var(--brand-700);
+}
+
+.audit-phase-title::before {
+  content: '';
+  inline-size: 12px;
+  block-size: 12px;
+  border-radius: var(--radius-pill);
+  background: var(--brand-500);
+  box-shadow: 0 0 0 3px var(--brand-100);
+}
+
+.audit-phase-title::after {
+  content: '';
+  flex: 1;
+  block-size: 1px;
+  background: var(--line-200);
 }
 
 .audit-timeline-item {
-  position: relative;
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: var(--space-1);
+  padding: var(--space-2) var(--space-3);
+  background: var(--surface-000);
+  border: 1px solid var(--line-200);
+  border-radius: var(--radius-sm);
 }
 
-.audit-timeline-item::before {
-  content: '';
-  position: absolute;
-  inset-inline-start: calc(-1 * var(--space-4) - 5px);
-  inset-block-start: 6px;
-  inline-size: 8px;
-  block-size: 8px;
-  border-radius: var(--radius-pill);
-  background: var(--brand-500);
+.audit-timeline-item.tone-good {
+  border-color: color-mix(in srgb, var(--success-500) 35%, var(--line-200));
+}
+
+.audit-timeline-item.tone-bad {
+  border-color: color-mix(in srgb, var(--danger-500) 45%, var(--line-200));
+  background: color-mix(in srgb, var(--danger-500) 6%, var(--surface-000));
+}
+
+.audit-timeline-item.tone-warn {
+  border-color: color-mix(in srgb, var(--warning-500) 50%, var(--line-200));
+  background: color-mix(in srgb, var(--warning-500) 7%, var(--surface-000));
+}
+
+.audit-timeline-item.tone-quiet {
+  padding-block: var(--space-1);
+  opacity: 0.75;
 }
 
 .audit-timeline-head {
@@ -2047,32 +2149,6 @@ img {
   gap: var(--space-2);
 }
 
-.audit-timeline-kind {
-  font-size: 11px;
-  line-height: 16px;
-  font-weight: 600;
-  letter-spacing: 0.06em;
-  color: var(--ink-500);
-}
-
-.audit-timeline-kind.kind-Blocked,
-.audit-timeline-kind.kind-ExecutionFailed,
-.audit-timeline-kind.kind-ExecutionUnknown {
-  color: var(--danger-500);
-}
-
-.audit-timeline-kind.kind-ExecutionSucceeded {
-  color: var(--success-500);
-}
-
-.audit-timeline-day {
-  margin: 0 0 var(--space-2);
-  font-size: 12px;
-  line-height: 18px;
-  color: var(--ink-500);
-  font-variant-numeric: tabular-nums;
-}
-
 .audit-timeline-index {
   font-size: 11px;
   line-height: 16px;
@@ -2080,7 +2156,35 @@ img {
   font-variant-numeric: tabular-nums;
 }
 
+.audit-timeline-kind {
+  padding-inline: var(--space-2);
+  border-radius: var(--radius-pill);
+  background: var(--surface-200);
+  font-size: 11px;
+  line-height: 16px;
+  font-weight: 600;
+  color: var(--ink-700);
+}
+
+.audit-timeline-kind.kind-Blocked,
+.audit-timeline-kind.kind-ExecutionFailed,
+.audit-timeline-kind.kind-ExecutionUnknown {
+  background: color-mix(in srgb, var(--danger-500) 14%, var(--surface-000));
+  color: var(--danger-500);
+}
+
+.audit-timeline-kind.kind-ExecutionSucceeded {
+  background: color-mix(in srgb, var(--success-500) 14%, var(--surface-000));
+  color: var(--success-500);
+}
+
+.audit-timeline-kind.kind-ExecutionStarted {
+  background: var(--brand-100);
+  color: var(--brand-700);
+}
+
 .audit-timeline-time {
+  margin-inline-start: auto;
   display: flex;
   align-items: baseline;
   gap: var(--space-2);
@@ -2097,15 +2201,26 @@ img {
 
 .audit-timeline-event {
   margin: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2);
   color: var(--ink-900);
 }
 
-.audit-timeline-event .mono {
-  font-size: 13px;
-  font-weight: 600;
+.audit-timeline-title {
+  font-size: 14px;
+  line-height: 20px;
+  font-weight: 700;
 }
 
-.audit-timeline-states {
+.audit-timeline-event .mono {
+  font-size: 11px;
+  color: var(--ink-500);
+}
+
+.audit-timeline-states,
+.audit-timeline-meta {
   margin: 0;
   font-size: 12px;
   line-height: 18px;
@@ -2121,11 +2236,300 @@ img {
   font-style: italic;
 }
 
-.audit-timeline-meta {
+.audit-timeline-meta .mono {
+  color: var(--ink-700);
+}
+
+.audit-badge {
+  display: inline-block;
+  margin-inline-start: var(--space-2);
+  padding-inline: var(--space-2);
+  border-radius: var(--radius-pill);
+  background: var(--surface-200);
+  font-size: 11px;
+  line-height: 18px;
+  font-weight: 700;
+  color: var(--ink-700);
+}
+
+.audit-badge.outcome-success,
+.audit-badge.policy-Allow {
+  background: color-mix(in srgb, var(--success-500) 16%, var(--surface-000));
+  color: var(--success-500);
+}
+
+.audit-badge.outcome-failed,
+.audit-badge.outcome-unknown,
+.audit-badge.policy-Deny {
+  background: color-mix(in srgb, var(--danger-500) 16%, var(--surface-000));
+  color: var(--danger-500);
+}
+
+.audit-badge.policy-RequireHumanReview {
+  background: color-mix(in srgb, var(--warning-500) 18%, var(--surface-000));
+  color: var(--ink-900);
+}
+
+.audit-gates {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.audit-gates-group,
+.audit-reasons {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-1) var(--space-2);
+}
+
+.audit-gates-label {
+  min-inline-size: 52px;
+  font-size: 11px;
+  line-height: 18px;
+  font-weight: 700;
+  color: var(--ink-500);
+}
+
+.audit-gates-group ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+}
+
+.audit-gate {
+  padding-inline: var(--space-2);
+  border: 1px solid var(--line-200);
+  border-radius: var(--radius-pill);
+  background: var(--surface-100);
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--ink-700);
+}
+
+.audit-gate .mono {
+  font-size: 10px;
+  color: var(--ink-500);
+}
+
+.audit-gate.pass {
+  border-color: color-mix(in srgb, var(--success-500) 40%, var(--line-200));
+  background: color-mix(in srgb, var(--success-500) 8%, var(--surface-000));
+}
+
+.audit-gate.pass > span[aria-hidden] {
+  font-weight: 700;
+  color: var(--success-500);
+}
+
+.audit-gate.fail {
+  border-color: color-mix(in srgb, var(--danger-500) 40%, var(--line-200));
+  color: var(--danger-500);
+}
+
+.audit-gate.check {
+  border-style: dashed;
+}
+
+.audit-reasons .reasons li {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  font-size: 12px;
+}
+
+.audit-reason-label {
+  color: var(--ink-900);
+}
+
+.audit-engine {
+  padding-inline: var(--space-2);
+  border: 1px solid var(--line-200);
+  border-radius: var(--radius-sm);
+  background: var(--surface-100);
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--ink-700);
+}
+
+.audit-engine-name {
+  font-family: var(--font-mono);
+  font-weight: 700;
+  color: var(--ink-900);
+}
+
+.audit-engine.tone-good {
+  border-color: color-mix(in srgb, var(--success-500) 40%, var(--line-200));
+  background: color-mix(in srgb, var(--success-500) 8%, var(--surface-000));
+}
+
+.audit-engine.tone-bad {
+  border-color: color-mix(in srgb, var(--danger-500) 45%, var(--line-200));
+  background: color-mix(in srgb, var(--danger-500) 8%, var(--surface-000));
+}
+
+.audit-engine.tone-warn {
+  border-color: color-mix(in srgb, var(--warning-500) 50%, var(--line-200));
+  background: color-mix(in srgb, var(--warning-500) 10%, var(--surface-000));
+}
+
+.audit-engines {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.audit-rule-list summary {
+  cursor: pointer;
+  inline-size: fit-content;
+  font-size: 12px;
+  line-height: 18px;
+  font-weight: 600;
+  color: var(--brand-700);
+}
+
+.audit-rule-list summary:focus-visible {
+  outline: 2px solid var(--focus-500);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+
+.audit-rule-list ul {
+  margin: var(--space-2) 0 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+}
+
+.consistency-verdict {
+  margin: 0 0 var(--space-3);
+  font-weight: 700;
+}
+
+.consistency-verdict.proved {
+  color: var(--success-500);
+}
+
+.consistency-verdict.failed {
+  color: var(--danger-500);
+}
+
+.consistency-list {
+  margin: 0 0 var(--space-3);
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.consistency-item {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: baseline;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--line-200);
+  border-radius: var(--radius-sm);
+  background: var(--surface-000);
+}
+
+.consistency-item.failed {
+  border-color: color-mix(in srgb, var(--danger-500) 45%, var(--line-200));
+  background: color-mix(in srgb, var(--danger-500) 6%, var(--surface-000));
+}
+
+.consistency-prop {
+  font-weight: 700;
+  color: var(--brand-700);
+}
+
+.consistency-text {
+  display: flex;
+  flex-direction: column;
+  color: var(--ink-900);
+}
+
+.consistency-code {
+  font-size: 11px;
+  line-height: 16px;
+  color: var(--ink-500);
+  direction: ltr;
+  unicode-bidi: isolate;
+  text-align: start;
+}
+
+.consistency-result {
+  font-weight: 700;
+  color: var(--success-500);
+}
+
+.consistency-item.failed .consistency-result {
+  color: var(--danger-500);
+}
+
+.audit-rule-list.failed summary {
+  color: var(--danger-500);
+}
+
+.audit-gate.skip,
+.audit-gate.na {
+  border-style: dashed;
+  color: var(--ink-500);
+}
+
+.audit-gate.info {
+  background: var(--surface-100);
+}
+
+.audit-rule-note {
+  font-size: 11px;
+  color: var(--ink-500);
+}
+
+.audit-classification {
   margin: 0;
   font-size: 12px;
   line-height: 18px;
+  color: var(--ink-700);
+}
+
+.audit-classification b {
+  color: var(--ink-900);
+}
+
+.audit-classification .mono {
+  font-size: 11px;
   color: var(--ink-500);
+}
+
+.audit-classification.replaced {
+  font-style: italic;
+  color: var(--ink-500);
+}
+
+.audit-legend {
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  list-style: none;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: var(--space-1) var(--space-4);
+  border: 1px dashed var(--line-300);
+  border-radius: var(--radius-md);
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--ink-500);
+}
+
+.audit-legend b {
+  color: var(--ink-900);
 }
 
 /* ---- Confirm dialog ----------------------------------------------------- */
@@ -2506,137 +2910,7 @@ img {
 }
 
 /* ---- Sub-project 19 (design D7): LLM cost, staff only ----------------------------------- */
-/* The Case Monitor's strip: the average cost per case first, then the total, the cases and
-   the calls, for a preset range chosen in a compact segmented control. */
-.llm-strip {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-3);
-  padding: var(--space-4) var(--space-5);
-}
-
-.llm-strip-head {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-3);
-}
-
-.llm-strip-h {
-  margin: 0;
-  font-size: 15px;
-  line-height: 22px;
-  font-weight: 600;
-  color: var(--ink-900);
-}
-
-.llm-strip-range {
-  display: inline-flex;
-  flex-wrap: wrap;
-  gap: 2px;
-  padding: 2px;
-  border: 1px solid var(--line-300);
-  border-radius: var(--radius-md);
-}
-
-.llm-range-btn {
-  font: inherit;
-  font-size: 13px;
-  line-height: 20px;
-  padding-block: 2px;
-  padding-inline: var(--space-3);
-  color: var(--ink-700);
-  background: transparent;
-  border: 0;
-  border-radius: var(--radius-sm);
-  cursor: pointer;
-}
-
-.llm-range-btn:hover {
-  background: var(--surface-100);
-}
-
-.llm-range-btn[aria-pressed='true'] {
-  color: var(--brand-700);
-  background: var(--brand-100);
-  font-weight: 600;
-}
-
-.llm-range-btn:focus-visible {
-  outline: 2px solid var(--focus-500);
-  outline-offset: 1px;
-}
-
-.llm-strip-facts {
-  margin: 0;
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: var(--space-2) var(--space-6);
-}
-
-.llm-strip-fact {
-  display: flex;
-  flex-direction: column-reverse;
-  gap: 2px;
-}
-
-.llm-strip-fact dt {
-  font-size: 13px;
-  line-height: 18px;
-  color: var(--ink-700);
-}
-
-.llm-strip-fact dd {
-  margin: 0;
-  font-size: 18px;
-  line-height: 26px;
-  font-weight: 600;
-  font-variant-numeric: tabular-nums;
-  color: var(--ink-900);
-}
-
-.llm-strip-main dd {
-  font-size: 26px;
-  line-height: 32px;
-}
-
-.llm-strip-note,
-.llm-note {
-  margin: 0;
-  font-size: 13px;
-  line-height: 20px;
-  color: var(--ink-500);
-}
-
-.llm-note {
-  margin-block-start: var(--space-2);
-}
-
-/* The expanded row's per-call breakdown: the table of the list, tightened to a fact group. */
-.llm-calls {
-  margin-block-start: var(--space-2);
-  font-size: 13px;
-  line-height: 20px;
-  font-variant-numeric: tabular-nums;
-}
-
-.llm-calls th,
-.llm-calls td {
-  padding-block: var(--space-1);
-  padding-inline: var(--space-2);
-}
-
-.llm-calls-caption {
-  caption-side: top;
-  text-align: start;
-  font-size: 12px;
-  line-height: 18px;
-  color: var(--ink-500);
-}
-
-/* A lower-bound cost in the Case Monitor's list: some calls have no known price. */
+/* A lower-bound cost (metrics): some calls have no known price. */
 .llm-partial {
   margin-inline-start: 1px;
   color: var(--ink-500);

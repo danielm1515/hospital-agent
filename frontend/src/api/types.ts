@@ -359,6 +359,31 @@ export interface TraceRow {
   policy_result: string | null
   policy_reasons: string[]
   recorded_at: IsoDateTime
+  /** Guard results and policy evidence of the row (`{}` on a Blocked row). */
+  guards: Record<string, boolean>
+  outcome: 'success' | 'failed' | 'unknown' | null
+  attempt_number: number | null
+  retry_cycle: number | null
+  execution_id: string | null
+  approval_id: string | null
+}
+
+/** One patient upload attempt (`upload_attempts`, row 98). */
+export interface UploadAttempt {
+  kind: 'upload' | 'reply' | string
+  /** The outcome code the patient was shown (`accepted`, `not_medical`, `document_service_unavailable`…). */
+  outcome: string
+  /** The detail behind it: the document-service's reason, or why it could not be reached. */
+  reason: string | null
+  created_at: IsoDateTime
+}
+
+/** One LLM attempt of a case (`llm_usage`), as the review context shows it. */
+export interface LlmCall {
+  call: string
+  source: string
+  outcome: string
+  created_at: IsoDateTime
 }
 
 /** `GET /api/staff/cases/{case_id}/context`. */
@@ -371,6 +396,13 @@ export interface ReviewContext extends CaseAppointmentFacts {
   reasons: string[]
   data: DataLogEntry[]
   trace: TraceRow[]
+  /** The case's latest classification (`cases.intent` / `safety_level`); the Audit row holds neither. */
+  intent?: string | null
+  safety_level?: string | null
+  /** The case's LLM attempts in order - codes and times only. */
+  llm_calls?: LlmCall[]
+  /** Row 98: every upload attempt, including refused and unanswered ones - codes and times only. */
+  upload_attempts?: UploadAttempt[]
   /** Must be sent back unchanged with the decision (409 `context_changed` otherwise). */
   shown_context_ref: string
 }
@@ -649,7 +681,32 @@ export interface LlmStatus {
   last_error_at: IsoDateTime | null
 }
 
+/** Row 98: the document-service as the staff banner sees it. */
+export interface DocumentsStatus {
+  configured: boolean
+  /** `ok` | `degraded` | `unreachable`; `null` when not configured. */
+  health: string | null
+  last_ok_at: IsoDateTime | null
+  last_error: string | null
+  last_error_at: IsoDateTime | null
+}
+
 export interface SystemStatus {
   orchestrator: string | null
   llm: LlmStatus
+  documents?: DocumentsStatus
+}
+
+/** `GET /api/admin/consistency` (docs/api.md §7). */
+export interface ConsistencyQuery {
+  property: string
+  description: string
+  result: 'unsat' | 'sat' | 'unknown' | string
+  proved: boolean
+}
+
+export interface Consistency {
+  engine: string
+  all_proved: boolean
+  queries: ConsistencyQuery[]
 }

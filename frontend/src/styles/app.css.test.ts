@@ -152,16 +152,17 @@ describe('app.css structural integrity', () => {
     expect(duplicates).toEqual([])
   })
 
-  it('stops the shared loader ring from rotating under prefers-reduced-motion', () => {
-    // Regression test for the Loading component (staff-fixes design Task 6): the ring
-    // must not spin for a user who asked for reduced motion, leaving only the visible
-    // status text.
-    const reducedMotion = collectAtRuleBodies(stripComments(css), 'prefers-reduced-motion: reduce')
-    expect(reducedMotion).toMatch(/\.loader-ring\s*{[^}]*animation:\s*none/)
-    // Fix round 1 (M5): stopping the animation still leaves a static ring on screen, which
-    // can read as a frozen/stuck spinner - the ring must be hidden outright too, leaving
-    // only the status text.
-    expect(reducedMotion).toMatch(/\.loader-ring\s*{[^}]*display:\s*none/)
+  it('keeps every spinner rotating, even under prefers-reduced-motion', () => {
+    // The owner's decision (2026-10-01), replacing staff-fixes Task 6's: with Windows'
+    // animation effects off the browser reports reduced motion, and a ring that stopped or
+    // vanished read as a frozen screen. A small loading spinner is not the large on-screen
+    // motion that setting is for, so neither the shared loader ring nor a button's spinner
+    // is stopped or hidden for it.
+    const stripped = stripComments(css)
+    const reducedMotion = collectAtRuleBodies(stripped, 'prefers-reduced-motion: reduce')
+    expect(reducedMotion).not.toMatch(/\.(loader-ring|spin)\s*{/)
+    expect(stripped).toMatch(/\.loader-ring\s*{[^}]*animation:\s*sp/)
+    expect(stripped).toMatch(/\.spin\s*{[^}]*animation:\s*sp/)
   })
 
   it('gives the alert close button a tappable minimum size (M8)', () => {

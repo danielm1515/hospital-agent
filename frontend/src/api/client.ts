@@ -14,6 +14,7 @@ import type {
   AuditRecord,
   CaseDetail,
   CaseListPage,
+  Consistency,
   CreateRequestBody,
   DecisionBody,
   DecisionResult,
@@ -352,6 +353,11 @@ export function replyWithFile(caseId: string, file: File): Promise<PdfUploadResp
 export function getMetrics(from: Date, to: Date): Promise<Metrics> {
   const query = new URLSearchParams({ from: from.toISOString(), to: to.toISOString() })
   return request<Metrics>('GET', `/admin/metrics?${query.toString()}`)
+}
+
+/** `GET /api/admin/consistency`: the spec §9.2 Z3 cross-layer proofs, run now. */
+export function getConsistency(): Promise<Consistency> {
+  return request<Consistency>('GET', '/admin/consistency')
 }
 
 // ---- LLM cost (sub-project 19, docs/api.md §10) --------------------------------

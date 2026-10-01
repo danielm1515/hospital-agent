@@ -21,7 +21,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any
 
-from . import data_log, patient_messages, repository
+from . import data_log, llm_costs, patient_messages, repository, upload_attempts
 from .auth import CLINICAL_STAFF
 from .case import ApprovalRecord, CaseRecord, ExecutionRecord
 from .documents import CATALOG_LABELS
@@ -114,6 +114,11 @@ class ReviewContext:
     exam_type_label: str | None = None
     instruction_source_id: str | None = None
     instruction_version: str | None = None
+    # The case's (latest) classification and its LLM attempts, for the audit journal.
+    intent: str | None = None
+    safety_level: str | None = None
+    llm_calls: list[dict] | None = None
+    upload_attempts: list[dict] | None = None
 
 
 def allowed_decisions(kind: EscalationKind | None) -> list[str]:
@@ -221,6 +226,8 @@ class HumanReviewService:
             trace = repository.load_trace(conn, case_id)
             accepted = data_log.accepted_uploads(trace)
             entries = [entry for kind in data_log.DataKind for entry in data_log.entries(conn, case_id, kind)]
+            llm_calls = llm_costs.case_calls(conn, case_id)
+            uploads = upload_attempts.case_attempts(conn, case_id)
         entries.sort(key=lambda entry: (entry.created_at, entry.entry_id))
         data = [
             {"entry_id": e.entry_id, "kind": e.kind.value, "content": e.content, "content_hash": e.content_hash,
@@ -232,7 +239,11 @@ class HumanReviewService:
         rows = [
             {"audit_id": r.audit_id, "record_type": r.record_type, "event": r.event, "state_before": r.state_before,
              "state_after": r.state_after, "action": r.action, "policy_result": r.policy_result,
-             "policy_reasons": list(r.policy_reasons), "recorded_at": r.recorded_at}
+             "policy_reasons": list(r.policy_reasons), "recorded_at": r.recorded_at,
+             # The gates each row passed and the execution facts, for the staff timeline -
+             # still content-free: guard results, codes and ids only (§12.3).
+             "guards": dict(r.guards), "outcome": r.outcome, "attempt_number": r.attempt_number,
+             "retry_cycle": r.retry_cycle, "execution_id": r.execution_id, "approval_id": r.approval_id}
             for r in trace
         ]
         shown = {
@@ -244,6 +255,10 @@ class HumanReviewService:
             "reasons": _escalation_reasons(trace) if case.state is State.AWAITING_HUMAN_REVIEW else [],
             "data": data,
             "trace": rows,
+            # The case's classification, for the staff audit journal: the Audit row of
+            # INTENT_CLASSIFIED holds neither value (the case keeps the latest only).
+            "intent": case.intent,
+            "safety_level": case.safety_level.value if case.safety_level else None,
             "appointment_id": case.appointment_id,
             "answered_appointment_id": case.answered_appointment_id,
             "department": case.department,
@@ -251,7 +266,11 @@ class HumanReviewService:
             "instruction_source_id": case.instruction_source_id,
             "instruction_version": case.instruction_version,
         }
-        return ReviewContext(**shown, shown_context_ref=_context_ref(shown))
+        # The LLM attempts and the upload attempts are shown but never hashed: both are
+        # bookkeeping outside Audit (rows 94, 98), written in the background - a reviewer's
+        # decision must never be refused as context_changed because one was added meanwhile.
+        return ReviewContext(**shown, llm_calls=llm_calls, upload_attempts=uploads,
+                             shown_context_ref=_context_ref(shown))
 
     # --- deciding --------------------------------------------------------------------------
 

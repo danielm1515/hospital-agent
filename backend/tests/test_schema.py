@@ -81,3 +81,31 @@ def test_app_role_cannot_change_or_delete_usage_rows(app_engine, statement):
     with pytest.raises(ProgrammingError, match="permission denied"):
         with app_engine.begin() as conn:
             conn.execute(text(statement))
+
+
+# --- row 98: upload_attempts is append-only for the app role, like llm_usage -----------------
+
+def _seed_attempt(app_engine) -> None:
+    now = datetime.now(UTC)
+    with app_engine.begin() as conn:
+        repository.insert_case(conn, new_case("CASE-1", "P-1", now))
+        conn.execute(text("INSERT INTO upload_attempts (case_id, kind, outcome, reason, created_at) "
+                          "VALUES ('CASE-1', 'upload', 'document_service_unavailable', 'no_answer', now())"))
+
+
+def test_app_role_can_append_and_read_upload_attempts(app_engine):
+    _seed_attempt(app_engine)
+    with app_engine.connect() as conn:
+        assert conn.execute(text("SELECT count(*) FROM upload_attempts")).scalar() == 1
+
+
+@pytest.mark.parametrize("statement", [
+    "UPDATE upload_attempts SET outcome = 'accepted'",
+    "DELETE FROM upload_attempts",
+    "TRUNCATE upload_attempts",
+])
+def test_app_role_cannot_change_or_delete_upload_attempts(app_engine, statement):
+    _seed_attempt(app_engine)
+    with pytest.raises(ProgrammingError, match="permission denied"):
+        with app_engine.begin() as conn:
+            conn.execute(text(statement))

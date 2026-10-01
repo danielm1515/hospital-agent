@@ -24,9 +24,10 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Literal, Protocol
 
-from . import auth, data_log, naming, patient_messages, repository
+from . import auth, data_log, document_status, naming, patient_messages, repository, upload_attempts
 from .case import CaseRecord
 from .document_intake import IntakeAnswer, IntakeUnavailable, sniff_kind
+from .upload_attempts import UploadAttemptRecorder
 from .documents import CATALOG_LABELS, document_label
 from .llm.usage import SOURCE_DOCUMENT_SERVICE, UsageSink
 from .naming import Component, Event, SafetyLevel, State
@@ -256,7 +257,8 @@ def status_history(trace: list[repository.AuditEntry], delivered: bool) -> list[
 
 class SessionService:
     def __init__(self, state_manager: StateManager, *, wake: Callable[[], None] = lambda: None,
-                 document_intake: DocumentIntake | None = None, usage_recorder: UsageSink | None = None) -> None:
+                 document_intake: DocumentIntake | None = None, usage_recorder: UsageSink | None = None,
+                 upload_recorder: UploadAttemptRecorder | None = None) -> None:
         self.sm = state_manager
         self.engine = state_manager.engine
         self.wake = wake
@@ -264,6 +266,7 @@ class SessionService:
         # Sub-project 19 (design D5): where the document-service's LLM call is recorded; None
         # records nothing (the tests' default - the server passes its UsageRecorder).
         self.usage_recorder = usage_recorder
+        self.upload_recorder = upload_recorder
 
     # --- events --------------------------------------------------------------------------
 
@@ -374,7 +377,10 @@ class SessionService:
             # The client's code only (no_answer, status_<n>, invalid_response), so an operator
             # can tell a 400 from a 5xx - never a patient id, a file name or a document id.
             logger.info("pdf upload: document_service_unavailable (%s)", unavailable)
+            self._record_attempt(case_id, upload_attempts.UPLOAD, "document_service_unavailable", str(unavailable))
+            document_status.record_error(str(unavailable))
             raise
+        document_status.record_ok()
         self._record_usage(case_id, answer)  # billed whatever the answer says next
         document_type, document_ref = _effective(answer)  # rule 4
         if document_type is None or document_ref is None:  # rule 6
@@ -391,10 +397,18 @@ class SessionService:
                                               document_extra={"document_ref": document_ref})
                 if not result.committed or result.state_after is not State.CLASSIFYING:
                     logger.info("pdf upload: not_waiting_for_document")
+                    self._record_attempt(case_id, upload_attempts.UPLOAD, "not_waiting_for_document", answer.reason)
                     raise NotWaitingForDocument(case_id)
                 outcome = UploadOutcome("accepted", document_type)
         _log_upload_outcome("pdf upload", outcome, answer.reason)  # rule 7: codes, nothing else
+        self._record_attempt(case_id, upload_attempts.UPLOAD, outcome.code, answer.reason)
         return outcome
+
+    def _record_attempt(self, case_id: str, kind: str, outcome: str, reason: str | None) -> None:
+        """Row 98: the attempt and how it ended, for the staff journal - codes only, and never
+        able to change the upload's answer (the recorder never raises)."""
+        if self.upload_recorder is not None:
+            self.upload_recorder.record(case_id, kind, outcome, reason)
 
     def _record_usage(self, case_id: str, answer: IntakeAnswer) -> None:
         """Sub-project 19 (design D5): the document-service's LLM call for this upload, against
@@ -439,7 +453,10 @@ class SessionService:
             answer = self.document_intake.submit(patient_id, filename, data)
         except IntakeUnavailable as unavailable:
             logger.info("pdf reply: document_service_unavailable (%s)", unavailable)
+            self._record_attempt(case_id, upload_attempts.REPLY, "document_service_unavailable", str(unavailable))
+            document_status.record_error(str(unavailable))
             raise
+        document_status.record_ok()
         self._record_usage(case_id, answer)
         document_type, document_ref = _effective(answer)
         if document_type is None or document_ref is None:
@@ -453,6 +470,7 @@ class SessionService:
                 self._submit_reply(case_id, entry, {"reply_kind": "document", "document_type": document_type})
                 outcome = UploadOutcome("accepted", document_type)
         _log_upload_outcome("pdf reply", outcome, answer.reason)
+        self._record_attempt(case_id, upload_attempts.REPLY, outcome.code, answer.reason)
         return outcome
 
     def _replying_case(self, patient_id: str, case_id: str, kind: str) -> CaseRecord:

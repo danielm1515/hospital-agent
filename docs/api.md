@@ -21,8 +21,9 @@ build - see the note under the route table.)
 
 ## 1. Authentication
 
-The demo IdP (§18.3) is a fixed user list with one shared password. `POST /api/auth/login`
-returns a stateless token; send it on every other `/api` request:
+The demo IdP (§18.3) is the `users` table (migration 0009, `docs/spec_corrections.md` row 97):
+each user has a role and its own scrypt password hash. `POST /api/auth/login` returns a
+stateless token; send it on every other `/api` request:
 
 ```
 Authorization: Bearer <token>
@@ -31,7 +32,9 @@ Authorization: Bearer <token>
 The token is `base64url({"exp":…,"role":…,"sub":…}).<hmac-sha256>`, valid **8 hours**. It
 is opaque to the UI: store it (e.g. in `sessionStorage`), send it, and on `401` send the
 user back to the login screen. There is no refresh endpoint and no server session - log in
-again.
+again. Every request re-reads the user, so a token stops working at once when its user is made
+inactive or its role changes. An unknown user, an inactive one and a wrong password are all the
+same `401 invalid_credentials`.
 
 ### Demo users
 
@@ -43,8 +46,10 @@ again.
 | `coordinator_nurse` | `clinical_staff` | אחות מתאמת | Staff screen |
 | `admin_coordinator` | `admin_staff` | רכזת מנהלה | Staff screen |
 
-**Password:** the same for all of them - the value of `DEMO_PASSWORD`, default `demo`
-(set in `.env` at the repo root). `AUTH_SECRET` (also `.env`) signs the tokens; changing it
+**Password:** migration 0009 seeded each user with its own hash of the value `DEMO_PASSWORD` had
+when the migration ran (default `demo`, set in `.env` at the repo root), so all five start with
+the same password; changing `DEMO_PASSWORD` afterwards changes nothing - a password changes by
+updating that user's `password_hash`. `AUTH_SECRET` (also `.env`) signs the tokens; changing it
 invalidates every issued token.
 
 `role` is `patient`, `clinical_staff` or `admin_staff`. The two staff roles have exactly
@@ -666,8 +671,19 @@ Everything the reviewer is shown, plus the reference that binds the decision to 
       "action": null,
       "policy_result": null,
       "policy_reasons": [],
-      "recorded_at": "2026-09-19T22:12:39.678380Z"
+      "recorded_at": "2026-09-19T22:12:39.678380Z",
+      "guards": {"PatientIdentified": true},
+      "outcome": null,
+      "attempt_number": null,
+      "retry_cycle": null,
+      "execution_id": null,
+      "approval_id": null
     }
+  ],
+  "intent": "MedicalQuestion",
+  "safety_level": "LowRisk",
+  "llm_calls": [
+    {"call": "Intent", "source": "agent", "outcome": "ok", "created_at": "2026-09-19T22:12:40.912000Z"}
   ],
   "shown_context_ref": "ctx-ba3e0652b0ea355663db57e7d19550c61ee1d156fea64c91c2cacd539bbc7d83",
   "appointment_id": null,
@@ -687,7 +703,26 @@ Everything the reviewer is shown, plus the reference that binds the decision to 
   `uploaded_document`, `instructions`, `outgoing_message`, `staff_message` or `patient_reply`
   (the last two, sub-project 15, §8). Deleted entries and uploads the case never accepted
   are not listed at all.
-- `trace` is the same audit rows as `/audit`, with the content-free subset above.
+- `trace` is the same audit rows as `/audit`, with the content-free subset above. `guards`
+  is the row's guard results and policy evidence (`{name: bool}`; `{}` on a `Blocked` row),
+  and `outcome` (`success` | `failed` | `unknown`), `attempt_number`, `retry_cycle`,
+  `execution_id` and `approval_id` are the execution facts - the staff audit timeline shows
+  the gates each row passed and each attempt from them. They are part of what is shown, so
+  part of `shown_context_ref`.
+- `intent` / `safety_level` are the case's **latest** classification (`cases`); the
+  `INTENT_CLASSIFIED` audit row holds neither, so a case classified again (after a valid upload,
+  T10) has lost its earlier values. `llm_calls` is the case's LLM attempts (`llm_usage`) in
+  order - `call`, `source` (`agent` | `document_service`), `outcome` (`ok` or the unusable
+  answer's code) and `created_at`, never text, tokens or cost. `intent` and `safety_level` are
+  part of `shown_context_ref`; `llm_calls` is **not** - it is bookkeeping written in the
+  background (row 94), and must never refuse a decision as `context_changed`.
+- `upload_attempts` (row 98) is every patient upload attempt on the case, in order - including
+  the refused and unanswered ones, which add no event and so appear nowhere else: `kind`
+  (`upload` | `reply`), `outcome` (the code the patient was shown: `accepted`, `not_medical`,
+  `document_service_unavailable`, …), `reason` (the detail behind it - the document-service's
+  own reason, or `no_answer` / `status_<n>` / `invalid_response` / `classifier_unavailable`,
+  or `null`) and `created_at`. Codes only, never the file, its name or a document id. Like
+  `llm_calls`, **not** part of `shown_context_ref`.
 - `shown_context_ref` **must be sent back with the decision**. Fetch the context, show it,
   and post the decision with the `shown_context_ref` that came with what the reviewer read.
   Any change in between (a new audit row, a deleted entry) makes the decision
@@ -807,7 +842,9 @@ Orchestrator run. `200`:
 
 ```json
 {"orchestrator": "running",
- "llm": {"last_ok_at": "2026-09-26T10:00:03.512841+00:00", "last_error": null, "last_error_at": null}}
+ "llm": {"last_ok_at": "2026-09-26T10:00:03.512841+00:00", "last_error": null, "last_error_at": null},
+ "documents": {"configured": true, "health": "ok", "last_ok_at": null, "last_error": null,
+               "last_error_at": null}}
 ```
 
 - `orchestrator` is exactly `/health`'s field: `null` on an injected (test) server, `"running"`,
@@ -820,8 +857,17 @@ Orchestrator run. `200`:
   `api:<ExceptionType>[:<code>]` (e.g. `api:AuthenticationError`,
   `api:RateLimitError:insufficient_quota`) - never request text, a prompt or an answer.
 
+- `documents` (row 98): the document-service. `configured` is whether uploads go to it at all;
+  `health` is a live `GET /health` made on this request (3 s): `ok`, `degraded` or `unreachable`
+  (`null` when not configured). `last_ok_at` / `last_error` / `last_error_at` are the last
+  upload's outcome, kept in memory like `llm`'s: `last_ok_at` is set when the service answered
+  (whatever it said about the file), `last_error` is `no_answer`, `status_<n>`,
+  `invalid_response` or `classifier_unavailable`.
+
 The staff UI shows a banner while `orchestrator` is not `"running"`, or `last_error` is set and
-newer than `last_ok_at` - each with a Hebrew label beside the code.
+newer than `last_ok_at` - each with a Hebrew label beside the code - and a second one for the
+document-service while its `health` is not `ok`, or its `last_error` is newer than its
+`last_ok_at`.
 
 ## 6. Notes for the UI
 
@@ -926,6 +972,27 @@ other group counts what **happened** in it. Durations are seconds; `p50` / `p95`
 
 `llm` (sub-project 19) is the LLM cost of the same window's cohort, read inside the same
 snapshot: exactly the body of `GET /api/staff/llm-costs` (§10) without its `window`.
+
+### GET /api/admin/consistency
+
+`admin_staff` only (`401` / `403 admin_only` as `/metrics`). Runs the spec §9.2 cross-layer
+consistency proofs now - seven abstract properties in nine Z3 queries over the layers' encodings
+(`policy/consistency.py`, the same check as `python -m hospital_agent.policy.consistency`).
+A query holds when Z3 finds no counterexample (`unsat`). They are about the system, not a case,
+so no case's Audit carries them. `200`:
+
+```json
+{
+  "engine": "z3",
+  "all_proved": true,
+  "queries": [
+    {"property": "P1", "description": "OPA allows what Prolog blocks", "result": "unsat", "proved": true}
+  ]
+}
+```
+
+- `queries` is always the nine, in `QUERIES` order (P1 three times, then P2-P7).
+- `result` is Z3's answer: `unsat`, `sat` (a counterexample - the property fails) or `unknown`.
 
 ## 8. Staff requests to the patient (sub-project 15)
 

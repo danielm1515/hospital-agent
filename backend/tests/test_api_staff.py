@@ -272,8 +272,12 @@ def test_cases_list_runs_one_sql_statement_regardless_of_row_count(client, staff
 
     assert response.status_code == 200
     assert len(response.json()["items"]) == 5
-    assert len(statements) == 2
-    assert "llm_usage" not in statements[0] and "GROUP BY llm_usage.case_id" in statements[1]
+    # Row 97: every request first re-reads its user, one statement - then the list's own two.
+    identity = [s for s in statements if "FROM users" in s]
+    listing = [s for s in statements if "FROM users" not in s]
+    assert len(identity) == 1
+    assert len(listing) == 2
+    assert "llm_usage" not in listing[0] and "GROUP BY llm_usage.case_id" in listing[1]
 
 
 def test_cases_list_rejects_a_bad_cursor(client, staff):
@@ -348,7 +352,9 @@ def test_the_review_queue_runs_one_sql_statement_regardless_of_row_count(client,
 
     assert response.status_code == 200
     assert len(response.json()["items"]) == 4
-    assert len(statements) == 1
+    # Row 97: the request's identity check is one statement of its own; the queue is one.
+    assert len([s for s in statements if "FROM users" in s]) == 1
+    assert len([s for s in statements if "FROM users" not in s]) == 1
 
 
 def test_one_review_item_by_case_id(client, staff, sm, app_engine):
@@ -375,7 +381,8 @@ def test_the_context_shows_the_data_log_and_the_trace(client, staff, sm, app_eng
     assert set(context) == {"case_id", "patient_id", "state", "escalation_kind", "escalated_from_state",
                             "reasons", "data", "trace", "shown_context_ref", "appointment_id",
                             "answered_appointment_id", "department", "exam_type_label",
-                            "instruction_source_id", "instruction_version"}
+                            "instruction_source_id", "instruction_version", "intent", "safety_level",
+                            "llm_calls", "upload_attempts"}
     assert context["state"] == "AwaitingHumanReview"
     assert [entry["kind"] for entry in context["data"]] == ["request_text"]
     assert context["data"][0]["content"] == MEDICAL
@@ -386,6 +393,44 @@ def test_the_context_shows_the_data_log_and_the_trace(client, staff, sm, app_eng
             context["exam_type_label"], context["instruction_source_id"], context["instruction_version"]
             ) == (None, None, None, None, None, None)
     assert client.get("/api/staff/cases/CASE-NOPE/context", headers=staff).status_code == 404
+
+
+def test_the_context_trace_carries_the_gates_and_the_execution_facts(client, staff, sm, app_engine):
+    """The audit timeline shows which guards each row passed and each execution's attempt and
+    outcome - fields `audit_log` already holds, now part of the content-free trace subset."""
+    d = Driver(sm, app_engine)
+    d.to_classified()
+    d.plan()
+    d.run_step()  # the real Policy Service and Tool Executor: a STARTED row and its outcome
+    trace = client.get(f"/api/staff/cases/{d.case_id}/context", headers=staff).json()["trace"]
+    assert set(trace[0]) == {"audit_id", "record_type", "event", "state_before", "state_after", "action",
+                             "policy_result", "policy_reasons", "recorded_at", "guards", "outcome",
+                             "attempt_number", "retry_cycle", "execution_id", "approval_id"}
+    validated = next(row for row in trace if row["event"] == "REQUEST_VALIDATED")
+    assert validated["guards"] == {"RequestValid": True, "IdentityVerified": True}
+    started = [row for row in trace if row["event"] == "TOOL_EXECUTION_STARTED"]
+    assert started and started[0]["guards"]["IdentityVerified"] is True and started[0]["execution_id"]
+    succeeded = next(row for row in trace if row["record_type"] == "ExecutionSucceeded")
+    assert (succeeded["outcome"], succeeded["attempt_number"], succeeded["execution_id"]) == (
+        "success", 1, started[0]["execution_id"])
+
+
+def test_the_context_carries_the_classification_and_the_llm_calls(client, staff, sm, app_engine):
+    """The audit journal shows what the case was classified as and each LLM attempt, in order -
+    codes and times only, no text, tokens or cost."""
+    d = Driver(sm, app_engine)
+    d.to_classified()
+    with app_engine.begin() as conn:
+        for minute, call in ((1, "Intent"), (2, "Safety")):
+            conn.execute(text(
+                "INSERT INTO llm_usage (case_id, source, call, model, outcome, created_at) "
+                "VALUES (:c, 'agent', :call, 'm', 'ok', :at)"),
+                {"c": d.case_id, "call": call, "at": f"2026-09-30T21:0{minute}:00+00:00"})
+    context = client.get(f"/api/staff/cases/{d.case_id}/context", headers=staff).json()
+    assert (context["intent"], context["safety_level"]) == (d.case.intent, d.case.safety_level.value)
+    assert [(c["call"], c["source"], c["outcome"]) for c in context["llm_calls"]] == [
+        ("Intent", "agent", "ok"), ("Safety", "agent", "ok")]
+    assert set(context["llm_calls"][0]) == {"call", "source", "outcome", "created_at"}
 
 
 def test_the_context_carries_the_chosen_appointment_and_instruction_source(client, staff, sm, app_engine):
@@ -630,7 +675,10 @@ def test_system_status_shape_on_an_injected_test_server(client, staff):
     response = client.get("/api/staff/system-status", headers=staff)
     assert response.status_code == 200
     assert response.json() == {"orchestrator": None,
-                               "llm": {"last_ok_at": None, "last_error": None, "last_error_at": None}}
+                               "llm": {"last_ok_at": None, "last_error": None, "last_error_at": None},
+                               # Row 98: no intake client is injected here, so no document-service.
+                               "documents": {"configured": False, "health": None, "last_ok_at": None,
+                                             "last_error": None, "last_error_at": None}}
 
 
 def test_system_status_reports_the_llm_telemetry(client, staff):

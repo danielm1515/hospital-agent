@@ -115,6 +115,7 @@ existence check again, so an id sent around the list is still refused.
 
 ## Adding a patient
 
-The patients also exist in the demo IdP, `DEMO_USERS` in `backend/hospital_agent/auth.py`, and
+The patients also exist in the demo IdP, the `users` table (migration 0009, role `patient`), and
 `backend/tests/test_patients.py` fails if the two disagree. So a new patient means a new
-migration that inserts the row, **and** the same patient in `DEMO_USERS`.
+migration that inserts the row here **and** the same patient in `users`. `hospital_reader`
+has no right at all on `users`: its identity verdicts and password hashes are IdP data.

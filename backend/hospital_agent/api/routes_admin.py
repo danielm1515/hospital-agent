@@ -13,9 +13,10 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy.engine import Engine
 
 from .. import metrics
+from ..policy import consistency
 from ..auth import Principal
 from .deps import get_engine, require_admin
-from .schemas import MetricsResponse
+from .schemas import ConsistencyResponse, MetricsResponse
 
 router = APIRouter(prefix="/api/admin", tags=["admin"], dependencies=[Depends(require_admin)])
 logger = logging.getLogger(__name__)
@@ -40,3 +41,14 @@ def get_metrics(request: Request, start: str = Query(alias="from"), end: str = Q
     logger.info("metrics viewed by %s for %s .. %s", principal.user_id,
                 window.start.isoformat(), window.end.isoformat())
     return MetricsResponse.model_validate(result)
+
+
+@router.get("/consistency", response_model=ConsistencyResponse)
+def get_consistency() -> ConsistencyResponse:
+    """The spec §9.2 cross-layer consistency proofs, run now: seven properties in nine Z3
+    queries over the layers' abstract encodings (`policy/consistency.py`). Every query must be
+    UNSAT - no counterexample - for the property to hold. They are about the system, not a case,
+    so no case's Audit ever carries them; the metrics screen shows them."""
+    queries = [{"property": prop, "description": description, "result": result, "proved": result == "unsat"}
+               for prop, description, result in consistency.check()]
+    return ConsistencyResponse(engine="z3", all_proved=all(q["proved"] for q in queries), queries=queries)

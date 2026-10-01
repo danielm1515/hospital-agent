@@ -9,6 +9,7 @@ import { Metrics } from './Metrics'
 vi.mock('../../api/client', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../api/client')>()),
   getMetrics: vi.fn(),
+  getConsistency: vi.fn(),
 }))
 
 const NONE = { count: 0, p50: null, p95: null, max: null }
@@ -101,6 +102,7 @@ function deferred<T>() {
 
 beforeEach(() => {
   vi.mocked(api.getMetrics).mockReset()
+  vi.mocked(api.getConsistency).mockResolvedValue({ engine: 'z3', all_proved: true, queries: [] })
 })
 
 describe('Metrics', () => {

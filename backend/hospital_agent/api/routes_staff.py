@@ -12,7 +12,7 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from sqlalchemy.engine import Engine
 
-from .. import llm_costs, metrics, repository
+from .. import document_status, llm_costs, metrics, repository
 from ..auth import Principal
 from ..human_review import AnswerRejected, ContextChanged, DecisionRejected, HumanReviewService, NotInReview
 from ..llm import telemetry
@@ -159,8 +159,13 @@ def get_audit(case_id: str, db: Engine = Depends(get_engine)) -> list[AuditRecor
 @router.get("/system-status", response_model=SystemStatusView)
 def system_status(request: Request) -> SystemStatusView:
     """Staff-fixes design Task 1, decision 3: whether the Agent Orchestrator runs, and the
-    LLM's last outcome - shown as a banner while the last call failed or it does not run."""
-    return SystemStatusView(orchestrator=request.app.state.orchestrator_status, llm=telemetry.status())
+    LLM's last outcome - shown as a banner while the last call failed or it does not run.
+    Row 98: and the document-service - a live /health check (when it is configured) beside the
+    last upload's outcome, so staff see an outage before cases start expiring."""
+    intake = request.app.state.session.document_intake
+    health = intake.health() if intake is not None and hasattr(intake, "health") else None
+    return SystemStatusView(orchestrator=request.app.state.orchestrator_status, llm=telemetry.status(),
+                            documents=document_status.status(health))
 
 
 # --- human review -----------------------------------------------------------------------------

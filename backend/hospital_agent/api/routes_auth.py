@@ -5,18 +5,18 @@ from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException
 
-from ..auth import Principal, auth_secret, authenticate, issue_token
-from .deps import current_principal
+from ..auth import Principal, UserStore, auth_secret, authenticate, issue_token
+from .deps import current_principal, get_users
 from .schemas import Identity, LoginRequest, LoginResponse
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
 
 @router.post("/login", response_model=LoginResponse)
-def login(body: LoginRequest) -> LoginResponse:
-    """The fixed demo user list and one shared password (§18.3). An unknown user and a wrong
-    password give the same answer, so the list cannot be probed."""
-    user = authenticate(body.user_id, body.password)
+def login(body: LoginRequest, users: UserStore = Depends(get_users)) -> LoginResponse:
+    """The users table, each user's own password hash (§18.3, row 97). An unknown user, an
+    inactive one and a wrong password give the same answer, so the table cannot be probed."""
+    user = authenticate(users, body.user_id, body.password)
     if user is None:
         raise HTTPException(status_code=401, detail="invalid_credentials")
     token = issue_token(user, now=datetime.now(UTC), secret=auth_secret())
