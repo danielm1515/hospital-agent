@@ -122,7 +122,7 @@ describe('AuditTimeline', () => {
     expect(within(failed).getByText('נכשל')).toHaveClass('outcome-failed')
     expect(within(failed).getByText('tool:transient_failure:unavailable')).toBeInTheDocument()
     expect(
-      within(failed).getByText('כשל זמני במערכת החיצונית', { selector: '.audit-reason-label' }),
+      within(failed).getByText('המערכת החיצונית אינה זמינה זמנית (שגיאת שרת)', { selector: '.audit-reason-label' }),
     ).toBeInTheDocument()
   })
 
@@ -298,6 +298,37 @@ describe('AuditTimeline', () => {
     ])
     const summary = screen.getByLabelText('סיכום יומן המעקב')
     expect(within(summary).getByText('ניסיונות העלאה').closest('.audit-stat')).toHaveTextContent('32 לא התקבלו')
+  })
+
+  it("explains a tool's answer by the row's action: no active appointment is not a failure", () => {
+    expect(reasonLabel('tool:error:not_found', 'CheckAppointment')).toBe(
+      'אין למטופל תור עתידי פעיל במערכת התורים (לא קיים, בוטל או עבר)',
+    )
+    expect(reasonLabel('tool:error:not_found', 'LoadInstructions')).toBe('הוראות ההכנה לא נמצאו במקור המאושר')
+    expect(reasonLabel('tool:error:not_found')).toBe('המבוקש לא נמצא במערכת החיצונית')
+    expect(reasonLabel('tool:error:patient_not_found', 'CheckAppointment')).toBe('המטופל אינו קיים במערכת החיצונית')
+    expect(reasonLabel('tool:error:unauthorized')).toBe('המערכת החיצונית דחתה את ההרשאה (מפתח API)')
+    expect(reasonLabel('tool:error:invalid_response')).toBe('המערכת החיצונית החזירה תשובה שאינה לפי החוזה')
+    expect(reasonLabel('tool:transient_failure:timeout')).toBe('המערכת החיצונית לא ענתה בזמן')
+    expect(reasonLabel('tool:exception:ValueError')).toBe('שגיאה בקריאה למערכת החיצונית')
+  })
+
+  it('labels the escalation row of a CheckAppointment with no appointment by its action', () => {
+    render(
+      <AuditTimeline
+        rows={[
+          row({
+            record_type: 'ExecutionFailed',
+            event: 'HUMAN_REVIEW_REQUIRED',
+            action: 'CheckAppointment',
+            attempt_number: 1,
+            outcome: 'failed',
+            policy_reasons: ['tool:error:not_found'],
+          }),
+        ]}
+      />,
+    )
+    expect(screen.getByText('אין למטופל תור עתידי פעיל במערכת התורים (לא קיים, בוטל או עבר)')).toBeInTheDocument()
   })
 
   it('explains an unsupported intent', () => {

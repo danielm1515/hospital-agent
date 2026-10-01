@@ -444,7 +444,7 @@ function Item({
           <span className="audit-gates-label">{row.record_type === 'Blocked' ? 'סיבת החסימה' : 'נימוקים'}</span>
           <ul className="reasons">
             {row.policy_reasons.map((reason) => {
-              const meaning = reasonLabel(reason)
+              const meaning = reasonLabel(reason, row.action)
               return (
                 <li key={reason}>
                   <span className="mono">{reason}</span>

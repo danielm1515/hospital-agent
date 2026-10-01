@@ -360,11 +360,40 @@ const REASON_LABELS: Record<string, string> = {
 }
 
 /**
+ * `tool:<kind>:<code>` (execution/executor.py): what the external system answered. `not_found`
+ * depends on the action - for CheckAppointment it is a clear answer, not a failure: the patient
+ * has no upcoming active appointment (none, cancelled or past - spec_corrections row 76).
+ */
+const TOOL_ERROR_LABELS: Record<string, string> = {
+  patient_not_found: 'המטופל אינו קיים במערכת החיצונית',
+  unauthorized: 'המערכת החיצונית דחתה את ההרשאה (מפתח API)',
+  invalid_response: 'המערכת החיצונית החזירה תשובה שאינה לפי החוזה',
+  rejected: 'המערכת החיצונית דחתה את הבקשה',
+  other: 'שגיאה לא מסווגת במערכת החיצונית',
+}
+const TOOL_TRANSIENT_LABELS: Record<string, string> = {
+  unavailable: 'המערכת החיצונית אינה זמינה זמנית (שגיאת שרת)',
+  timeout: 'המערכת החיצונית לא ענתה בזמן',
+}
+const NOT_FOUND_BY_ACTION: Record<string, string> = {
+  CheckAppointment: 'אין למטופל תור עתידי פעיל במערכת התורים (לא קיים, בוטל או עבר)',
+  LoadInstructions: 'הוראות ההכנה לא נמצאו במקור המאושר',
+}
+
+function toolLabel(kind: string, code: string, action?: string | null): string {
+  if (kind === 'transient_failure') return TOOL_TRANSIENT_LABELS[code] ?? 'כשל זמני במערכת החיצונית'
+  if (kind === 'exception') return 'שגיאה בקריאה למערכת החיצונית'
+  if (code === 'not_found') return (action && NOT_FOUND_BY_ACTION[action]) ?? 'המבוקש לא נמצא במערכת החיצונית'
+  return TOOL_ERROR_LABELS[code] ?? 'שגיאה במערכת החיצונית'
+}
+
+/**
  * What a policy/escalation/blocking reason code means, or `null` when this version does not
  * know it (the code alone is then shown). Codes with a detail after `:` are matched on
- * their prefix; the detail stays in the code shown beside the label.
+ * their prefix; the detail stays in the code shown beside the label. `action` is the row's
+ * action, for the codes whose meaning depends on it.
  */
-export function reasonLabel(reason: string): string | null {
+export function reasonLabel(reason: string, action?: string | null): string | null {
   if (REASON_LABELS[reason]) return REASON_LABELS[reason]
   if (OPA_DENY_RULES[reason]) return `כלל OPA נכשל: ${OPA_DENY_RULES[reason]}`
   const [prefix, ...rest] = reason.split(':')
@@ -379,7 +408,7 @@ export function reasonLabel(reason: string): string | null {
     case 'llm_failed':
       return 'המודל לא החזיר תשובה שמישה שלוש פעמים ברצף'
     case 'tool':
-      return rest[0] === 'transient_failure' ? 'כשל זמני במערכת החיצונית' : 'שגיאה במערכת החיצונית'
+      return toolLabel(rest[0] ?? '', rest.slice(1).join(':'), action)
     case 'content_check_failed':
       return 'בדיקת הבטיחות של התוכן שהתקבל נכשלה'
     case 'execution_error':
