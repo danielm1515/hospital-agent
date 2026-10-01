@@ -672,6 +672,16 @@ def test_an_unanswered_upload_is_recorded_for_the_staff_journal(app_engine, clea
     assert d.state is State.AWAITING_PATIENT_INPUT  # still no event: the attempt is bookkeeping only
 
 
+def test_an_upload_attempt_never_changes_the_shown_context_ref(app_engine):
+    """Row 98, like llm_usage (row 94): bookkeeping must never refuse a reviewer's decision."""
+    with api(app_engine, FakeIntake(raises=IntakeUnavailable("no_answer"))) as client:
+        d = api_awaiting(client, app_engine)
+        before = staff_context(client, d.case_id)["shown_context_ref"]
+        post_pdf(client, d.case_id)
+        after = staff_context(client, d.case_id)
+    assert after["shown_context_ref"] == before and len(after["upload_attempts"]) == 1
+
+
 def test_a_refused_and_an_accepted_upload_are_recorded_too(app_engine):
     intake = FakeIntake(IntakeAnswer("NON_MEDICAL_DOCUMENT", "DOC-1", None, None), accepted("ECG"))
     with api(app_engine, intake) as client:

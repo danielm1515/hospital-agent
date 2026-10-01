@@ -255,14 +255,10 @@ class HumanReviewService:
             "reasons": _escalation_reasons(trace) if case.state is State.AWAITING_HUMAN_REVIEW else [],
             "data": data,
             "trace": rows,
-            # The case's classification and its LLM attempts, for the staff audit journal: the
-            # Audit row of INTENT_CLASSIFIED holds neither (the case keeps the latest only).
+            # The case's classification, for the staff audit journal: the Audit row of
+            # INTENT_CLASSIFIED holds neither value (the case keeps the latest only).
             "intent": case.intent,
             "safety_level": case.safety_level.value if case.safety_level else None,
-            "llm_calls": llm_calls,
-            # Row 98: every upload attempt, including the refused and unanswered ones that add
-            # no event to the case - codes and times only.
-            "upload_attempts": uploads,
             "appointment_id": case.appointment_id,
             "answered_appointment_id": case.answered_appointment_id,
             "department": case.department,
@@ -270,7 +266,11 @@ class HumanReviewService:
             "instruction_source_id": case.instruction_source_id,
             "instruction_version": case.instruction_version,
         }
-        return ReviewContext(**shown, shown_context_ref=_context_ref(shown))
+        # The LLM attempts and the upload attempts are shown but never hashed: both are
+        # bookkeeping outside Audit (rows 94, 98), written in the background - a reviewer's
+        # decision must never be refused as context_changed because one was added meanwhile.
+        return ReviewContext(**shown, llm_calls=llm_calls, upload_attempts=uploads,
+                             shown_context_ref=_context_ref(shown))
 
     # --- deciding --------------------------------------------------------------------------
 

@@ -131,7 +131,7 @@ def _prepare_test_database() -> Engine:
     command.upgrade(config, "head")
     owner = create_engine(owner_url)
     with owner.begin() as conn:
-        conn.execute(text("TRUNCATE llm_usage, data_log, audit_log, approvals, executions, cases RESTART IDENTITY"))
+        conn.execute(text("TRUNCATE upload_attempts, llm_usage, data_log, audit_log, approvals, executions, cases RESTART IDENTITY"))
     owner.dispose()
     return create_engine(os.environ["TEST_DATABASE_URL"])
 

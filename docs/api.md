@@ -713,15 +713,16 @@ Everything the reviewer is shown, plus the reference that binds the decision to 
   `INTENT_CLASSIFIED` audit row holds neither, so a case classified again (after a valid upload,
   T10) has lost its earlier values. `llm_calls` is the case's LLM attempts (`llm_usage`) in
   order - `call`, `source` (`agent` | `document_service`), `outcome` (`ok` or the unusable
-  answer's code) and `created_at`, never text, tokens or cost. Both are part of
-  `shown_context_ref`.
+  answer's code) and `created_at`, never text, tokens or cost. `intent` and `safety_level` are
+  part of `shown_context_ref`; `llm_calls` is **not** - it is bookkeeping written in the
+  background (row 94), and must never refuse a decision as `context_changed`.
 - `upload_attempts` (row 98) is every patient upload attempt on the case, in order - including
   the refused and unanswered ones, which add no event and so appear nowhere else: `kind`
   (`upload` | `reply`), `outcome` (the code the patient was shown: `accepted`, `not_medical`,
   `document_service_unavailable`, …), `reason` (the detail behind it - the document-service's
   own reason, or `no_answer` / `status_<n>` / `invalid_response` / `classifier_unavailable`,
-  or `null`) and `created_at`. Codes only, never the file, its name or a document id. Part of
-  `shown_context_ref` too.
+  or `null`) and `created_at`. Codes only, never the file, its name or a document id. Like
+  `llm_calls`, **not** part of `shown_context_ref`.
 - `shown_context_ref` **must be sent back with the decision**. Fetch the context, show it,
   and post the decision with the `shown_context_ref` that came with what the reviewer read.
   Any change in between (a new audit row, a deleted entry) makes the decision
