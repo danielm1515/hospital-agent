@@ -21,7 +21,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any
 
-from . import data_log, llm_costs, patient_messages, repository
+from . import data_log, llm_costs, patient_messages, repository, upload_attempts
 from .auth import CLINICAL_STAFF
 from .case import ApprovalRecord, CaseRecord, ExecutionRecord
 from .documents import CATALOG_LABELS
@@ -118,6 +118,7 @@ class ReviewContext:
     intent: str | None = None
     safety_level: str | None = None
     llm_calls: list[dict] | None = None
+    upload_attempts: list[dict] | None = None
 
 
 def allowed_decisions(kind: EscalationKind | None) -> list[str]:
@@ -226,6 +227,7 @@ class HumanReviewService:
             accepted = data_log.accepted_uploads(trace)
             entries = [entry for kind in data_log.DataKind for entry in data_log.entries(conn, case_id, kind)]
             llm_calls = llm_costs.case_calls(conn, case_id)
+            uploads = upload_attempts.case_attempts(conn, case_id)
         entries.sort(key=lambda entry: (entry.created_at, entry.entry_id))
         data = [
             {"entry_id": e.entry_id, "kind": e.kind.value, "content": e.content, "content_hash": e.content_hash,
@@ -258,6 +260,9 @@ class HumanReviewService:
             "intent": case.intent,
             "safety_level": case.safety_level.value if case.safety_level else None,
             "llm_calls": llm_calls,
+            # Row 98: every upload attempt, including the refused and unanswered ones that add
+            # no event to the case - codes and times only.
+            "upload_attempts": uploads,
             "appointment_id": case.appointment_id,
             "answered_appointment_id": case.answered_appointment_id,
             "department": case.department,

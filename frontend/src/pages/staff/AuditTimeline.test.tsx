@@ -279,6 +279,27 @@ describe('AuditTimeline', () => {
     expect(within(summary).getByText('קריאות LLM').closest('.audit-stat')).toHaveTextContent('31 נכשלו')
   })
 
+  it("shows the patient's upload attempts on the row after them, refused and unanswered ones too", () => {
+    const rows = [
+      row({ event: 'MISSING_INFORMATION_DETECTED', recorded_at: '2026-10-01T09:00:00.000Z' }),
+      row({ event: 'DOCUMENT_UPLOADED', recorded_at: '2026-10-01T09:20:00.000Z' }),
+    ]
+    const upload_attempts = [
+      { kind: 'upload', outcome: 'document_service_unavailable', reason: 'no_answer', created_at: '2026-10-01T09:05:00.000Z' },
+      { kind: 'upload', outcome: 'not_medical', reason: null, created_at: '2026-10-01T09:10:00.000Z' },
+      { kind: 'upload', outcome: 'accepted', reason: null, created_at: '2026-10-01T09:19:59.000Z' },
+    ]
+    const { container } = render(<AuditTimeline rows={rows} context={{ upload_attempts }} />)
+    const uploaded = container.querySelectorAll('.audit-timeline-item')[1] as HTMLElement
+    expect([...uploaded.querySelectorAll('.audit-gate')].map((gate) => gate.textContent)).toEqual([
+      '✗ שירות המסמכים לא היה זמין document_service_unavailable · לא התקבלה תשובה no_answer',
+      '✗ המסמך אינו רפואי not_medical',
+      '✓ המסמך התקבל accepted',
+    ])
+    const summary = screen.getByLabelText('סיכום יומן המעקב')
+    expect(within(summary).getByText('ניסיונות העלאה').closest('.audit-stat')).toHaveTextContent('32 לא התקבלו')
+  })
+
   it('explains an unsupported intent', () => {
     expect(reasonLabel('intent_unsupported')).toBe('הכוונה אינה נתמכת בטיפול אוטומטי (רק הכנה לתור)')
   })

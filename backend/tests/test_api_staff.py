@@ -272,8 +272,12 @@ def test_cases_list_runs_one_sql_statement_regardless_of_row_count(client, staff
 
     assert response.status_code == 200
     assert len(response.json()["items"]) == 5
-    assert len(statements) == 2
-    assert "llm_usage" not in statements[0] and "GROUP BY llm_usage.case_id" in statements[1]
+    # Row 97: every request first re-reads its user, one statement - then the list's own two.
+    identity = [s for s in statements if "FROM users" in s]
+    listing = [s for s in statements if "FROM users" not in s]
+    assert len(identity) == 1
+    assert len(listing) == 2
+    assert "llm_usage" not in listing[0] and "GROUP BY llm_usage.case_id" in listing[1]
 
 
 def test_cases_list_rejects_a_bad_cursor(client, staff):
@@ -348,7 +352,9 @@ def test_the_review_queue_runs_one_sql_statement_regardless_of_row_count(client,
 
     assert response.status_code == 200
     assert len(response.json()["items"]) == 4
-    assert len(statements) == 1
+    # Row 97: the request's identity check is one statement of its own; the queue is one.
+    assert len([s for s in statements if "FROM users" in s]) == 1
+    assert len([s for s in statements if "FROM users" not in s]) == 1
 
 
 def test_one_review_item_by_case_id(client, staff, sm, app_engine):
@@ -376,7 +382,7 @@ def test_the_context_shows_the_data_log_and_the_trace(client, staff, sm, app_eng
                             "reasons", "data", "trace", "shown_context_ref", "appointment_id",
                             "answered_appointment_id", "department", "exam_type_label",
                             "instruction_source_id", "instruction_version", "intent", "safety_level",
-                            "llm_calls"}
+                            "llm_calls", "upload_attempts"}
     assert context["state"] == "AwaitingHumanReview"
     assert [entry["kind"] for entry in context["data"]] == ["request_text"]
     assert context["data"][0]["content"] == MEDICAL
@@ -669,7 +675,10 @@ def test_system_status_shape_on_an_injected_test_server(client, staff):
     response = client.get("/api/staff/system-status", headers=staff)
     assert response.status_code == 200
     assert response.json() == {"orchestrator": None,
-                               "llm": {"last_ok_at": None, "last_error": None, "last_error_at": None}}
+                               "llm": {"last_ok_at": None, "last_error": None, "last_error_at": None},
+                               # Row 98: no intake client is injected here, so no document-service.
+                               "documents": {"configured": False, "health": None, "last_ok_at": None,
+                                             "last_error": None, "last_error_at": None}}
 
 
 def test_system_status_reports_the_llm_telemetry(client, staff):

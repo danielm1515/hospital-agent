@@ -193,6 +193,19 @@ llm_usage = Table(
     Column("created_at", DateTime(timezone=True), nullable=False),
 )
 
+# Migration 0010 (row 98): one row per patient upload attempt - codes only, bookkeeping outside
+# Audit like llm_usage; hospital_app SELECT, INSERT only (append-only).
+upload_attempts = Table(
+    "upload_attempts",
+    metadata,
+    Column("attempt_id", BigInteger, Identity(), primary_key=True),
+    Column("case_id", Text, ForeignKey("cases.case_id"), nullable=False),
+    Column("kind", Text, nullable=False),
+    Column("outcome", Text, nullable=False),
+    Column("reason", Text),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+)
+
 
 def make_engine(url: str | None = None) -> Engine:
     """Engine for the application role (hospital_app). Defaults to $DATABASE_URL.
@@ -201,3 +214,4 @@ def make_engine(url: str | None = None) -> Engine:
     (e.g. patient_id) in its message, which would leak into the application log (§12.3).
     """
     return create_engine(url or os.environ["DATABASE_URL"], pool_pre_ping=True, hide_parameters=True)
+

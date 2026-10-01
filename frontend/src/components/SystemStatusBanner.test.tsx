@@ -152,4 +152,56 @@ describe('SystemStatusBanner', () => {
     await act(() => vi.advanceTimersByTimeAsync(60000 * 3))
     expect(api.getSystemStatus).toHaveBeenCalledTimes(1) // no fetch after unmount, ever
   })
+
+  it('warns about the document-service when its health check fails, beside the code', async () => {
+    vi.mocked(api.getSystemStatus).mockResolvedValue(
+      status({
+        documents: { configured: true, health: 'unreachable', last_ok_at: null, last_error: null, last_error_at: null },
+      }),
+    )
+    render(<SystemStatusBanner />)
+    expect(await screen.findByText('שירות המסמכים אינו זמין - מטופלים אינם יכולים להעלות מסמכים')).toBeInTheDocument()
+    expect(screen.getByText('unreachable')).toHaveClass('mono')
+  })
+
+  it("warns about the document classifier when the service is up but the last upload failed on it", async () => {
+    vi.mocked(api.getSystemStatus).mockResolvedValue(
+      status({
+        documents: {
+          configured: true,
+          health: 'ok',
+          last_ok_at: '2026-10-01T08:00:00Z',
+          last_error: 'classifier_unavailable',
+          last_error_at: '2026-10-01T09:00:00Z',
+        },
+      }),
+    )
+    render(<SystemStatusBanner />)
+    expect(await screen.findByText('סיווג המסמכים אינו זמין (ספק ה-LLM) - העלאות נכשלות')).toBeInTheDocument()
+  })
+
+  it('says nothing about documents once a later upload was answered, or when the service is not configured', async () => {
+    vi.mocked(api.getSystemStatus).mockResolvedValue(
+      status({
+        documents: {
+          configured: true,
+          health: 'ok',
+          last_ok_at: '2026-10-01T10:00:00Z',
+          last_error: 'no_answer',
+          last_error_at: '2026-10-01T09:00:00Z',
+        },
+      }),
+    )
+    const { unmount } = render(<SystemStatusBanner />)
+    await waitFor(() => expect(api.getSystemStatus).toHaveBeenCalled())
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    unmount()
+
+    vi.mocked(api.getSystemStatus).mockResolvedValue(
+      status({ documents: { configured: false, health: null, last_ok_at: null, last_error: null, last_error_at: null } }),
+    )
+    render(<SystemStatusBanner />)
+    await waitFor(() => expect(api.getSystemStatus).toHaveBeenCalledTimes(2))
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  })
 })

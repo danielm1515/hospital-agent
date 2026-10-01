@@ -715,6 +715,13 @@ Everything the reviewer is shown, plus the reference that binds the decision to 
   order - `call`, `source` (`agent` | `document_service`), `outcome` (`ok` or the unusable
   answer's code) and `created_at`, never text, tokens or cost. Both are part of
   `shown_context_ref`.
+- `upload_attempts` (row 98) is every patient upload attempt on the case, in order - including
+  the refused and unanswered ones, which add no event and so appear nowhere else: `kind`
+  (`upload` | `reply`), `outcome` (the code the patient was shown: `accepted`, `not_medical`,
+  `document_service_unavailable`, …), `reason` (the detail behind it - the document-service's
+  own reason, or `no_answer` / `status_<n>` / `invalid_response` / `classifier_unavailable`,
+  or `null`) and `created_at`. Codes only, never the file, its name or a document id. Part of
+  `shown_context_ref` too.
 - `shown_context_ref` **must be sent back with the decision**. Fetch the context, show it,
   and post the decision with the `shown_context_ref` that came with what the reviewer read.
   Any change in between (a new audit row, a deleted entry) makes the decision
@@ -834,7 +841,9 @@ Orchestrator run. `200`:
 
 ```json
 {"orchestrator": "running",
- "llm": {"last_ok_at": "2026-09-26T10:00:03.512841+00:00", "last_error": null, "last_error_at": null}}
+ "llm": {"last_ok_at": "2026-09-26T10:00:03.512841+00:00", "last_error": null, "last_error_at": null},
+ "documents": {"configured": true, "health": "ok", "last_ok_at": null, "last_error": null,
+               "last_error_at": null}}
 ```
 
 - `orchestrator` is exactly `/health`'s field: `null` on an injected (test) server, `"running"`,
@@ -847,8 +856,17 @@ Orchestrator run. `200`:
   `api:<ExceptionType>[:<code>]` (e.g. `api:AuthenticationError`,
   `api:RateLimitError:insufficient_quota`) - never request text, a prompt or an answer.
 
+- `documents` (row 98): the document-service. `configured` is whether uploads go to it at all;
+  `health` is a live `GET /health` made on this request (3 s): `ok`, `degraded` or `unreachable`
+  (`null` when not configured). `last_ok_at` / `last_error` / `last_error_at` are the last
+  upload's outcome, kept in memory like `llm`'s: `last_ok_at` is set when the service answered
+  (whatever it said about the file), `last_error` is `no_answer`, `status_<n>`,
+  `invalid_response` or `classifier_unavailable`.
+
 The staff UI shows a banner while `orchestrator` is not `"running"`, or `last_error` is set and
-newer than `last_ok_at` - each with a Hebrew label beside the code.
+newer than `last_ok_at` - each with a Hebrew label beside the code - and a second one for the
+document-service while its `health` is not `ok`, or its `last_error` is newer than its
+`last_ok_at`.
 
 ## 6. Notes for the UI
 

@@ -289,6 +289,7 @@ class ReviewContext(BaseModel):
     intent: str | None = None
     safety_level: str | None = None
     llm_calls: list[dict[str, Any]] = []
+    upload_attempts: list[dict[str, Any]] = []
     shown_context_ref: str
     # Sub-project 18 (design D13): read-only, same as CaseDetail above.
     appointment_id: str | None = None
@@ -541,9 +542,19 @@ class LlmStatusView(BaseModel):
     last_error_at: str | None
 
 
+class DocumentsStatusView(BaseModel):
+    """Row 98: the document-service as the staff banner sees it."""
+    configured: bool
+    health: str | None  # ok | degraded | unreachable; None when not configured
+    last_ok_at: str | None
+    last_error: str | None
+    last_error_at: str | None
+
+
 class SystemStatusView(BaseModel):
     orchestrator: str | None
     llm: LlmStatusView
+    documents: DocumentsStatusView
 
 
 class ConsistencyQuery(BaseModel):

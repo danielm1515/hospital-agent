@@ -32,6 +32,19 @@ export function systemStatusLabel(code: string): string {
   return known ? STATUS_LABELS[known] : GENERIC_LABEL
 }
 
+/** Row 98: the document-service, beside its code (`health` or the last upload's error). */
+const DOCUMENT_LABELS: Record<string, string> = {
+  unreachable: 'שירות המסמכים אינו זמין - מטופלים אינם יכולים להעלות מסמכים',
+  degraded: 'שירות המסמכים פועל חלקית - העלאות עלולות להיכשל',
+  classifier_unavailable: 'סיווג המסמכים אינו זמין (ספק ה-LLM) - העלאות נכשלות',
+  no_answer: 'שירות המסמכים לא ענה בהעלאה האחרונה',
+}
+const DOCUMENT_GENERIC = 'שירות המסמכים אינו זמין'
+
+export function documentStatusLabel(code: string): string {
+  return DOCUMENT_LABELS[code] ?? DOCUMENT_GENERIC
+}
+
 function isNewer(a: string, b: string): boolean {
   return new Date(a).getTime() > new Date(b).getTime()
 }
@@ -48,6 +61,20 @@ function trouble(status: SystemStatus): Trouble | null {
   if (status.orchestrator !== 'running') return { code: status.orchestrator }
   const { last_error, last_ok_at, last_error_at } = status.llm
   if (last_error && last_error_at && (!last_ok_at || isNewer(last_error_at, last_ok_at))) return { code: last_error }
+  return null
+}
+
+/**
+ * Row 98: the document-service's trouble code, or null. The live health check comes first - it
+ * sees an outage before any patient tries; with the service up, the last upload's error still
+ * counts while it is newer than the last answered upload (e.g. the classifier's LLM provider).
+ */
+function documentsTrouble(status: SystemStatus): string | null {
+  const documents = status.documents
+  if (!documents?.configured) return null
+  if (documents.health && documents.health !== 'ok') return documents.health
+  const { last_error, last_error_at, last_ok_at } = documents
+  if (last_error && last_error_at && (!last_ok_at || isNewer(last_error_at, last_ok_at))) return last_error
   return null
 }
 
@@ -75,12 +102,21 @@ export function SystemStatusBanner() {
 
   if (!status) return null
   const found = trouble(status)
-  if (found === null) return null
-  const label = found.code === null ? GENERIC_LABEL : systemStatusLabel(found.code)
+  const documents = documentsTrouble(status)
+  if (found === null && documents === null) return null
 
   return (
-    <Alert variant="error" title={label}>
-      {found.code === null ? undefined : <span className="mono">{found.code}</span>}
-    </Alert>
+    <>
+      {found && (
+        <Alert variant="error" title={found.code === null ? GENERIC_LABEL : systemStatusLabel(found.code)}>
+          {found.code === null ? undefined : <span className="mono">{found.code}</span>}
+        </Alert>
+      )}
+      {documents && (
+        <Alert variant="error" title={documentStatusLabel(documents)}>
+          <span className="mono">{documents}</span>
+        </Alert>
+      )}
+    </>
   )
 }

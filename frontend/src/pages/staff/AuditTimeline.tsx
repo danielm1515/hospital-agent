@@ -1,4 +1,4 @@
-import type { LlmCall, TraceRow } from '../../api/types'
+import type { LlmCall, TraceRow, UploadAttempt } from '../../api/types'
 import {
   PHASE_LABELS,
   actionLabel,
@@ -12,6 +12,8 @@ import {
   policyResultLabel,
   reasonLabel,
   recordTypeLabel,
+  uploadOutcomeLabel,
+  uploadReasonLabel,
 } from './auditLabels'
 import type { EngineVerdict, Phase } from './auditLabels'
 import { datalogOf, prologChecksOf, z3ModelOf } from './engineRules'
@@ -103,7 +105,7 @@ export function formatDuration(ms: number): string {
   return `${Math.floor(hours / 24)} ימים ${hours % 24} שע׳`
 }
 
-function Summary({ rows, calls }: { rows: TraceRow[]; calls: LlmCall[] }) {
+function Summary({ rows, calls, uploads }: { rows: TraceRow[]; calls: LlmCall[]; uploads: UploadAttempt[] }) {
   const gates = rows.flatMap(guardsOf).filter(([key, value]) => !isEvidence(key) && value).length
   const decisions = rows.filter((row) => row.policy_result)
   const allowed = decisions.filter((row) => row.policy_result === 'Allow').length
@@ -133,6 +135,12 @@ function Summary({ rows, calls }: { rows: TraceRow[]; calls: LlmCall[] }) {
       value: calls.length,
       note: calls.length ? `${calls.filter((c) => c.outcome !== 'ok').length} נכשלו` : undefined,
       tone: calls.some((c) => c.outcome !== 'ok') ? 'warn' : undefined,
+    },
+    {
+      label: 'ניסיונות העלאה',
+      value: uploads.length,
+      note: uploads.length ? `${uploads.filter((u) => u.outcome !== 'accepted').length} לא התקבלו` : undefined,
+      tone: uploads.some((u) => u.outcome === 'document_service_unavailable') ? 'warn' : undefined,
     },
     { label: 'משך כולל', value: formatDuration(span) },
   ]
@@ -329,14 +337,46 @@ function LlmCalls({ calls }: { calls: LlmCall[] }) {
  * Each LLM attempt belongs to the first audit row written at or after it - the call happens,
  * then its result is applied. Attempts after the last row (nothing applied yet) stay on it.
  */
-function callsByRow(rows: TraceRow[], calls: LlmCall[]): Map<number, LlmCall[]> {
-  const byRow = new Map<number, LlmCall[]>()
-  for (const call of calls) {
-    const at = new Date(call.created_at).getTime()
+function byRow<T extends { created_at: string }>(rows: TraceRow[], items: T[]): Map<number, T[]> {
+  const attached = new Map<number, T[]>()
+  for (const item of items) {
+    const at = new Date(item.created_at).getTime()
     const row = rows.find((candidate) => new Date(candidate.recorded_at).getTime() >= at) ?? rows[rows.length - 1]
-    byRow.set(row.audit_id, [...(byRow.get(row.audit_id) ?? []), call])
+    attached.set(row.audit_id, [...(attached.get(row.audit_id) ?? []), item])
   }
-  return byRow
+  return attached
+}
+
+/**
+ * Row 98: the patient's upload attempts made just before this row - the refused and unanswered
+ * ones add no event of their own, so this is the only place the journal shows them.
+ */
+function UploadAttempts({ attempts }: { attempts: UploadAttempt[] }) {
+  if (attempts.length === 0) return null
+  return (
+    <div className="audit-gates-group">
+      <span className="audit-gates-label">ניסיונות העלאה</span>
+      <ul>
+        {attempts.map((attempt, index) => {
+          const ok = attempt.outcome === 'accepted'
+          const reason = uploadReasonLabel(attempt.reason)
+          return (
+            <li className={`audit-gate ${ok ? 'pass' : 'fail'}`} key={`${attempt.created_at}-${index}`}>
+              <span aria-hidden="true">{ok ? '✓' : '✗'}</span> {uploadOutcomeLabel(attempt.outcome)}{' '}
+              <span className="mono">{attempt.outcome}</span>
+              {attempt.reason && (
+                <span className="audit-rule-note">
+                  {' · '}
+                  {reason ? `${reason} ` : ''}
+                  <span className="mono">{attempt.reason}</span>
+                </span>
+              )}
+            </li>
+          )
+        })}
+      </ul>
+    </div>
+  )
 }
 
 function Item({
@@ -345,12 +385,14 @@ function Item({
   previous,
   classification,
   calls,
+  uploads,
 }: {
   row: TraceRow
   index: number
   previous: TraceRow | null
   classification?: Classification
   calls: LlmCall[]
+  uploads: UploadAttempt[]
 }) {
   const gap = gapAfter(previous?.recorded_at ?? null, row.recorded_at)
   const label = eventLabel(row.event)
@@ -394,6 +436,7 @@ function Item({
       )}
       {classification && <ClassificationLine classification={classification} />}
       <LlmCalls calls={calls} />
+      <UploadAttempts attempts={uploads} />
       <Engines row={row} />
       <Gates row={row} />
       {row.policy_reasons.length > 0 && (
@@ -436,12 +479,18 @@ export function AuditTimeline({
   rows: TraceRow[]
   label?: string
   /** The case's latest classification and its LLM attempts (`/context`), when known. */
-  context?: { intent?: string | null; safety_level?: string | null; llm_calls?: LlmCall[] }
+  context?: {
+    intent?: string | null
+    safety_level?: string | null
+    llm_calls?: LlmCall[]
+    upload_attempts?: UploadAttempt[]
+  }
 }) {
   if (rows.length === 0) {
     return <p className="empty-note">אין רשומות ביומן הביקורת לפנייה הזו.</p>
   }
-  const calls = callsByRow(rows, context?.llm_calls ?? [])
+  const calls = byRow(rows, context?.llm_calls ?? [])
+  const uploads = byRow(rows, context?.upload_attempts ?? [])
   const lastClassified = [...rows].reverse().find((row) => CLASSIFICATION_EVENTS.includes(row.event))
   const classificationOf = (row: TraceRow): Classification | undefined =>
     context && CLASSIFICATION_EVENTS.includes(row.event)
@@ -453,7 +502,7 @@ export function AuditTimeline({
       : undefined
   return (
     <div className="audit-journal">
-      <Summary rows={rows} calls={context?.llm_calls ?? []} />
+      <Summary rows={rows} calls={context?.llm_calls ?? []} uploads={context?.upload_attempts ?? []} />
       <EngineLegend />
       <p className="audit-timeline-day">
         {rows.length} רשומות · {formatDate(rows[0].recorded_at)}
@@ -473,6 +522,7 @@ export function AuditTimeline({
                     previous={index > 0 ? rows[index - 1] : null}
                     classification={classificationOf(row)}
                     calls={calls.get(row.audit_id) ?? []}
+                    uploads={uploads.get(row.audit_id) ?? []}
                   />
                 )
               })}

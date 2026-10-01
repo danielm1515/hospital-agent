@@ -30,6 +30,7 @@ import uuid
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 
+from . import document_status
 from .execution import http
 from .execution.http import HttpResponse
 from .llm.usage import DOCUMENT_CALL_CODES, LLMUsage
@@ -40,6 +41,8 @@ logger = logging.getLogger(__name__)
 # = 70 s (its README); the client must wait longer than that, or an accepted upload would look
 # like a failure and the patient's retry would come back as a duplicate.
 TIMEOUT_SECONDS = 75.0
+# The staff banner's live check: short, because it runs on each poll and only asks "is it up".
+HEALTH_TIMEOUT_SECONDS = 3.0
 
 # (method, url, headers, body, timeout) -> the response; raises OSError / HTTPException when
 # there is no usable answer.
@@ -247,6 +250,16 @@ class DocumentIntakeClient:
             # `from None`: the transport's own exception can name the host.
             raise IntakeUnavailable("no_answer") from None
         return map_answer(response)
+
+    def health(self) -> str:
+        """`ok` | `degraded` | `unreachable` from the document-service's own /health, within
+        HEALTH_TIMEOUT_SECONDS - for the staff system-status banner (row 98). Never raises."""
+        try:
+            response = self._transport("GET", f"{self._base_url}/health", {"Accept": "application/json"}, b"",
+                                       HEALTH_TIMEOUT_SECONDS)
+        except (OSError, http_client.HTTPException):
+            return "unreachable"
+        return document_status.health_of(response.status, response.body)
 
 
 def build_intake_client(env: Mapping[str, str] | None = None) -> DocumentIntakeClient | None:

@@ -32,6 +32,7 @@ from ..appointment_list import AppointmentListClient, build_list_client
 from ..auth import DbUserStore
 from ..db import make_engine
 from ..document_intake import build_intake_client
+from ..upload_attempts import UploadAttemptRecorder
 from ..execution.appointment_service import build_gateway
 from ..execution.background import sla_interval_seconds, start_background
 from ..execution.document_service import build_document_gateway
@@ -136,7 +137,10 @@ def create_app(engine: Engine | None = None, orchestrator: Orchestrator | None =
         # a test injects its own client (or none) the way it injects the Orchestrator.
         app.state.session = SessionService(
             sm, wake=_wake, document_intake=build_intake_client() if owned else document_intake,
-            usage_recorder=recorder)
+            usage_recorder=recorder,
+            # Row 98: every upload attempt and how it ended, for the staff journal - on the
+            # app's own engine always (a test's engine is its database).
+            upload_recorder=UploadAttemptRecorder(app.state.engine))
         app.state.reviews = HumanReviewService(sm, app.state.session, wake=_wake)
 
         stops, started = [], None

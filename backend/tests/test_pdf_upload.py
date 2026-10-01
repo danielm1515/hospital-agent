@@ -635,3 +635,78 @@ def test_the_text_route_still_works_without_a_document_intake_client(app_engine)
                                json={"document_id": "ECG", "format": "pdf", "content": "normal"})
         assert response.status_code == 200
         assert response.json()["status"] == "in_progress"
+
+
+# --- row 98: every attempt reaches the staff journal, and the banner sees the service -------------
+
+class HealthIntake(FakeIntake):
+    def __init__(self, *answers, health="ok", **kwargs):
+        super().__init__(*answers, **kwargs)
+        self._health = health
+
+    def health(self):
+        return self._health
+
+
+def staff_context(client, case_id):
+    return client.get(f"/api/staff/cases/{case_id}/context", headers=token(client, "coordinator_nurse")).json()
+
+
+@pytest.fixture
+def clean_status():
+    from hospital_agent import document_status
+    document_status.reset()
+    yield document_status
+    document_status.reset()
+
+
+def test_an_unanswered_upload_is_recorded_for_the_staff_journal(app_engine, clean_status):
+    with api(app_engine, FakeIntake(raises=IntakeUnavailable("no_answer"))) as client:
+        d = api_awaiting(client, app_engine)
+        assert post_pdf(client, d.case_id).status_code == 503
+        assert post_pdf(client, d.case_id).status_code == 503
+        attempts = staff_context(client, d.case_id)["upload_attempts"]
+    assert [(a["kind"], a["outcome"], a["reason"]) for a in attempts] == [
+        ("upload", "document_service_unavailable", "no_answer")] * 2
+    assert set(attempts[0]) == {"kind", "outcome", "reason", "created_at"}
+    assert d.state is State.AWAITING_PATIENT_INPUT  # still no event: the attempt is bookkeeping only
+
+
+def test_a_refused_and_an_accepted_upload_are_recorded_too(app_engine):
+    intake = FakeIntake(IntakeAnswer("NON_MEDICAL_DOCUMENT", "DOC-1", None, None), accepted("ECG"))
+    with api(app_engine, intake) as client:
+        d = api_awaiting(client, app_engine)
+        post_pdf(client, d.case_id)
+        post_pdf(client, d.case_id)
+        attempts = staff_context(client, d.case_id)["upload_attempts"]
+    assert [a["outcome"] for a in attempts] == ["not_medical", "accepted"]
+
+
+def test_a_failed_attempt_write_never_changes_the_uploads_answer(app_engine):
+    with api(app_engine, FakeIntake(accepted("ECG"))) as client:
+        d = api_awaiting(client, app_engine)
+        # A database the recorder cannot reach: the write fails, the upload's answer does not.
+        from sqlalchemy import create_engine
+
+        from hospital_agent.upload_attempts import UploadAttemptRecorder
+        client.app.state.session.upload_recorder = UploadAttemptRecorder(
+            create_engine("postgresql+psycopg://nobody@127.0.0.1:1/none"))
+        assert post_pdf(client, d.case_id).json()["upload"]["code"] == "accepted"
+
+
+def test_the_staff_banner_reports_the_document_services_health_and_last_error(app_engine, clean_status):
+    with api(app_engine, HealthIntake(raises=IntakeUnavailable("classifier_unavailable"), health="ok")) as client:
+        d = api_awaiting(client, app_engine)
+        post_pdf(client, d.case_id)
+        documents = client.get("/api/staff/system-status", headers=token(client, "coordinator_nurse")).json()["documents"]
+    assert (documents["configured"], documents["health"], documents["last_error"]) == (True, "ok", "classifier_unavailable")
+    assert documents["last_error_at"] and documents["last_ok_at"] is None
+
+
+def test_the_staff_banner_says_unreachable_and_not_configured(app_engine, clean_status):
+    with api(app_engine, HealthIntake(health="unreachable")) as client:
+        documents = client.get("/api/staff/system-status", headers=token(client, "coordinator_nurse")).json()["documents"]
+    assert (documents["configured"], documents["health"]) == (True, "unreachable")
+    with api(app_engine, None) as client:
+        documents = client.get("/api/staff/system-status", headers=token(client, "coordinator_nurse")).json()["documents"]
+    assert (documents["configured"], documents["health"]) == (False, None)

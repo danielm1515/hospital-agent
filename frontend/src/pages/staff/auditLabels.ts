@@ -293,6 +293,43 @@ export function enginesOf(row: { event: string; policy_result: string | null; po
   return engines
 }
 
+/** Row 98: what a patient upload attempt ended as (the code the patient was shown). */
+export const UPLOAD_OUTCOME_LABELS: Record<string, string> = {
+  accepted: 'המסמך התקבל',
+  not_required: 'המסמך אינו נדרש בפנייה',
+  already_received: 'המסמך כבר התקבל',
+  wrong_document_type: 'סוג מסמך שונה מהמבוקש',
+  not_medical: 'המסמך אינו רפואי',
+  not_yours: 'המסמך שייך למטופל אחר',
+  unreadable: 'המסמך אינו קריא',
+  unrecognised_type: 'סוג המסמך לא זוהה',
+  unreadable_scan: 'סריקה שאינה קריאה',
+  bad_date: 'תאריך המסמך אינו תקין',
+  no_date: 'למסמך אין תאריך',
+  expired: 'המסמך ישן מדי',
+  unsupported_format: 'פורמט קובץ שאינו נתמך',
+  too_large: 'הקובץ גדול מדי',
+  document_service_unavailable: 'שירות המסמכים לא היה זמין',
+  not_waiting_for_document: 'הפנייה כבר לא המתינה למסמך',
+}
+
+/** Row 98: why the document-service could not be used (`IntakeUnavailable`'s code). */
+export const UPLOAD_REASON_LABELS: Record<string, string> = {
+  no_answer: 'לא התקבלה תשובה',
+  invalid_response: 'תשובה שאינה לפי החוזה',
+  classifier_unavailable: 'ספק ה-LLM של הסיווג אינו זמין',
+}
+
+export function uploadOutcomeLabel(code: string): string {
+  return UPLOAD_OUTCOME_LABELS[code] ?? code
+}
+
+export function uploadReasonLabel(code: string | null): string | null {
+  if (!code) return null
+  if (UPLOAD_REASON_LABELS[code]) return UPLOAD_REASON_LABELS[code]
+  return /^status_\d+$/.test(code) ? `השירות החזיר ${code.slice('status_'.length)}` : null
+}
+
 /** The temporal rules (spec §6.2, plus sub-project 15's T13), in one line each. */
 export const TEMPORAL_RULE_LABELS: Record<string, string> = {
   T1: 'כל ביצוע מיד אחרי אישור מדיניות',
