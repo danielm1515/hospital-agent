@@ -162,13 +162,18 @@ def plan_intact(ctx: GuardContext) -> str | None:
 
 
 def can_advance(ctx: GuardContext) -> str | None:
+    """"The new pointer is inside the approved plan" (§3.1) - and, for STEP_ADVANCED, inside the
+    retrieval phase: the delivery step is reached only through DELIVERY_PLANNED, from Ready
+    (docs/spec_corrections.md row 99). Without that, three STEP_ADVANCED after PLAN_CREATED
+    reached SendStatusUpdate with no data retrieved and no readiness check - found by Alloy
+    (docs/alloy, C1); only the Orchestrator's own sequencing prevented it."""
     case = ctx.case
-    return _check(
-        case is not None
-        and case.ordered_steps is not None
-        and case.current_step is not None
-        and case.current_step + 1 <= len(case.ordered_steps)
-    )
+    if not (case is not None and case.ordered_steps is not None and case.current_step is not None
+            and case.current_step + 1 <= len(case.ordered_steps)):
+        return GUARD_FAILED
+    if ctx.event is Event.STEP_ADVANCED:
+        return _check(case.current_action in RETRIEVAL_ACTIONS and case.next_action in RETRIEVAL_ACTIONS)
+    return None
 
 
 def retrieval_steps_remain(ctx: GuardContext) -> str | None:

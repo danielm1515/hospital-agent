@@ -29,7 +29,7 @@ OUT = ROOT / "Hospital_Agent_Clean_v2.docx"
 
 NAVY = "1F3864"  # the original's table-header fill, reused for the version-2 markers
 CODE_FONTS = {"Consolas", "Courier New"}
-CHAPTER_TITLE = "19. תוספות מעבר לאפיון הדמו (תתי-פרויקטים 9–19 ויומן המעקב)"
+CHAPTER_TITLE = "19. תוספות מעבר לאפיון הדמו (תתי-פרויקטים 9–19, יומן המעקב ו־Alloy)"
 VERIFY_TITLE = "15.1 תוצאות אימות מדודות (גרסה 2)"
 FRONT_TITLE = "גרסה 2 – מסמך מעודכן לפי המערכת שנבנתה"
 
@@ -510,6 +510,20 @@ CHAPTER = [
         "שבדיקת הבריאות אינה רואה. לא נוסף ניסיון חוזר אוטומטי ולא circuit breaker: ההעלאה היא "
         "פעולה של המטופל, וההמתנה של 75 שניות מכסה תקלה רגעית. (תיקון 98)",
     ]),
+    ("19.13 בדיקת Alloy של מכונת המצבים, ותיקון CanAdvance", [
+        "Alloy 6 בודק את מכונת המצבים עצמה, על כל מסלול עד 20 צעדים. המודל נוצר אוטומטית "
+        "מ־fsm.py (44 שורות), ובדיקה נכשלת אם הוא סוטה מהקוד. 12 תכונות מתקיימות לכל תוצאה של "
+        "השערים - בהן אין מצב תקוע, T5, T8, T11, רק צוות מוציא פנייה מבקרה, ושאלה רפואית, דחיית "
+        "מדיניות והסלמת בטיחות אינן חוזרות לאוטומציה. כל 13 המצבים ברי־השגה. התוצאות, המסלולים "
+        "ותרשים המצבים נמצאים ב־docs/alloy/RESULTS.md.",
+        "Alloy מצא באג אמיתי: CanAdvance בדק רק שיש צעד הבא, ולכן PLAN_CREATED ואחריו שלושה "
+        "STEP_ADVANCED הביאו את התוכנית לצעד המסירה, ו־POLICY_ALLOWED העביר את הפנייה ל־Delivering "
+        "בלי שליפת נתונים ובלי בדיקת מוכנות. רק סדר הפעולות של ה־Orchestrator מנע זאת. הבאג "
+        "שוחזר מול ה־State Manager ותוקן: ב־STEP_ADVANCED התוכנית מתקדמת רק בתוך שלב השליפה, "
+        "וצעד המסירה מושג רק ב־DELIVERY_PLANNED מ־Ready. טבלת סעיף 3 לא השתנתה. שכבת המודל "
+        "fsm_plan.als מראה את שני הצדדים: עם השער הישן דוגמה נגדית, עם המתוקן התכונה מתקיימת. "
+        "(תיקון 99)",
+    ]),
 ]
 
 
@@ -780,7 +794,7 @@ def build():
             ["D33 – recall של Response Evaluator (סעיפים 6.5, 16)", "`python -m eval.d33 --live`",
              "1.0000 (24/24) במודל החי, מעל הסף 0.95; 2 false positives מתוך 24 הודעות "
              "תפעוליות; 0 תשובות לא שמישות"],
-            ["חבילת הבדיקות של ה־backend", "`pytest`", "1757 passed, 2 skipped, 3 xfailed (Postgres מנוהל ב־RDS)"],
+            ["חבילת הבדיקות של ה־backend", "`pytest`", "1767 passed, 2 skipped, 3 xfailed (Postgres מנוהל ב־RDS)"],
         ],
         [3000, 3300, 3550],
     )
@@ -865,7 +879,7 @@ def build():
     chapter = [mk_par(CHAPTER_TITLE, "Heading1"),
                mk_par("תתי־פרויקטים 1–8 מממשים את הדמו של סעיפים 0–18. תתי־פרויקטים 9–19 נוספו "
                       "בבקשה מפורשת של הבעלים, מעבר להיקף הדמו, ונרשמו "
-                      "ב־`docs/spec_corrections.md` (שורות 65–98). אף אחד מהם אינו משנה את "
+                      "ב־`docs/spec_corrections.md` (שורות 65–99). אף אחד מהם אינו משנה את "
                       "הרשימות של סעיף 2, את 41 השורות של סעיף 3, את קוד ה־Rego, ה־Prolog, "
                       "ה־Datalog וה־Z3 או את שלושת התרחישים. בלי הגדרת מערכות חיצוניות הכול "
                       "רץ על ה־Mock, וה־golden traces נשארים 35/4/54.")]
@@ -916,7 +930,7 @@ def verify() -> None:
     for needed in (FRONT_TITLE, CHAPTER_TITLE, VERIFY_TITLE):
         assert needed in texts, needed
     subs = [t for t in texts if t.startswith("19.") and not t.startswith("19. ")]
-    assert len(subs) == 12, subs
+    assert len(subs) == 13, subs
     markers = sum(t.count("עודכן בגרסה 2") for t in texts) + sum(
         c.text.count("עודכן בגרסה 2") for t in v2.tables for r in t.rows for c in r.cells)
     notes = sum(t.startswith("הערת גרסה 2") for t in texts)

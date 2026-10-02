@@ -23,16 +23,20 @@ ROOT = Path(__file__).resolve().parent.parent
 ALLOY_DIR = ROOT / "docs" / "alloy"
 JAR = ROOT / "tools" / "org.alloytools.alloy.dist.jar"
 CHECKS = ALLOY_DIR / "fsm_checks.als"
+PLAN = ALLOY_DIR / "fsm_plan.als"
 MODEL = ALLOY_DIR / "fsm_model.als"
-OUT = ALLOY_DIR / "out"
+# Each command file and the directory Alloy writes its results to.
+SOURCES = [(CHECKS, ALLOY_DIR / "out"), (PLAN, ALLOY_DIR / "out_plan")]
 RESULTS = ALLOY_DIR / "RESULTS.md"
 
 # check: "holds" (no counterexample) | "counterexample"; run: "instance" (reachable).
-EXPECTED_COUNTEREXAMPLES = {"C1_AutoCompletionNeedsReady_GuardsAbstracted", "C3_PlanBeforePlanning_GuardsAbstracted"}
+EXPECTED_COUNTEREXAMPLES = {"C1_AutoCompletionNeedsReady_GuardsAbstracted", "C3_PlanBeforePlanning_GuardsAbstracted",
+                            "P1_NoDeliveryBeforeReady_OldCanAdvance"}
 # Commands whose trace the report prints step by step.
 TRACES = ["C1_AutoCompletionNeedsReady_GuardsAbstracted", "C3_PlanBeforePlanning_GuardsAbstracted",
           "E1_AutomaticCompletion",
-          "E2_MedicalQuestionClosedByStaff", "E3_MissingDocumentThenReclassified"]
+          "E2_MedicalQuestionClosedByStaff", "E3_MissingDocumentThenReclassified",
+          "P1_NoDeliveryBeforeReady_OldCanAdvance", "P4_Scenario1UnderPlanGuards"]
 
 LOOP_LEGEND = "`↺` = המקום שאליו המסלול חוזר אחרי הצעד האחרון: Alloy 6 מייצג כל מסלול כאינסופי, כלולאה."
 
@@ -56,6 +60,10 @@ HEBREW = {
     "E1_AutomaticCompletion": "תרחיש 1: השלמה אוטומטית דרך מוכנות",
     "E2_MedicalQuestionClosedByStaff": "תרחיש 2: שאלה רפואית נסגרת על ידי צוות",
     "E3_MissingDocumentThenReclassified": "מסמך חסר, המטופל מעלה, הפנייה מסווגת מחדש (T10)",
+    "P1_NoDeliveryBeforeReady_OldCanAdvance": "אין שליחה למטופל לפני Ready - עם CanAdvance הישן (הבאג)",
+    "P2_NoDeliveryBeforeReady_CanAdvanceNow": "אין שליחה למטופל לפני Ready - עם CanAdvance המתוקן (תיקון 99)",
+    "P3_PlanBeforePlanning_WithPlanGuards": "אין תכנון בלי תוכנית - מול השערים הממודלים, בלי הנחה",
+    "P4_Scenario1UnderPlanGuards": "תרחיש 1 עדיין אפשרי תחת השערים הממודלים (השערים אינם ריקים)",
 }
 
 
@@ -70,17 +78,19 @@ def alloy(*args: str) -> str:
     return result.stdout
 
 
-def trace(command: str) -> list[tuple[str, str, str, bool]]:
+def trace(command: str, source: Path) -> list[tuple[str, str, str, bool]]:
     """(state, escalation, last row's event, is_loop_start) per step of `command`'s instance."""
-    text = alloy("exec", "-q", "-c", command, "-t", "text", "-o", "-", CHECKS.name)
+    text = alloy("exec", "-q", "-c", command, "-t", "text", "-o", "-", source.name)
     steps, current, loop = [], {}, False
     rows = row_events()
 
     def flush():
         if current:
             last = current.get("last", "")
-            steps.append((current.get("state", "Initial") or "Initial", current.get("escalation", "") or "-",
-                          rows.get(last, last) or "-", loop))
+            state = current.get("state", "Initial") or "Initial"
+            if current.get("step"):  # fsm_plan.als: where the plan pointer is
+                state = f"{state} · {current['step'].replace('_', ' ', 1)}"
+            steps.append((state, current.get("escalation", "") or "-", rows.get(last, last) or "-", loop))
 
     for line in text.splitlines():
         header = re.match(r"-+State (\d+)( \(loop\))?-+", line)
@@ -88,10 +98,12 @@ def trace(command: str) -> list[tuple[str, str, str, bool]]:
             flush()
             current, loop = {}, bool(header.group(2))
             continue
-        field = re.match(r"fsm_model/Case<:(state|escalation|last)=\{(.*)\}", line.strip())
+        field = re.match(r"(?:fsm_model/Case|this/Plan|fsm_plan/Plan)<:(state|escalation|last|step)=\{(.*)\}", line.strip())
         if field:
             value = field.group(2).strip()
-            current[field.group(1)] = re.sub(r"^.*/|\$\d+$", "", value) if value else ""
+            # "Case$0->fsm_model/Received$0" or "Plan$0->S2_CheckDocuments$0": the atom after the arrow.
+            atom = value.split("->")[-1]
+            current[field.group(1)] = re.sub(r"^.*/|\$\d+$", "", atom) if value else ""
     flush()
     return steps
 
@@ -130,12 +142,16 @@ def main() -> int:
         sys.exit(f"missing {JAR.relative_to(ROOT)} - see docs/alloy/README.md")
     version = f"Alloy {alloy('version').strip().splitlines()[0]}"
     started = time.perf_counter()
-    alloy("exec", "-q", "-f", "-t", "json", "-o", OUT.name, CHECKS.name)
+    commands, source_of = {}, {}
+    for source, out in SOURCES:
+        alloy("exec", "-q", "-f", "-t", "json", "-o", out.name, source.name)
+        receipt = json.loads((out / "receipt.json").read_text(encoding="utf-8"))
+        for name, command in receipt["commands"].items():
+            commands[name], source_of[name] = command, source
     elapsed = time.perf_counter() - started
-    receipt = json.loads((OUT / "receipt.json").read_text(encoding="utf-8"))
 
     rows, failures = [], []
-    for name, command in receipt["commands"].items():
+    for name, command in commands.items():
         found = bool(command.get("solution"))
         kind = command["type"]
         if kind == "check":
@@ -149,7 +165,7 @@ def main() -> int:
         scope = re.search(r"for (.*)$", command["source"]).group(1)
         rows.append((name, kind, HEBREW.get(name, name.replace("D_reach_", "הגעה למצב ")), scope, actual, ok))
 
-    traces = {name: trace(name) for name in TRACES}
+    traces = {name: trace(name, source_of[name]) for name in TRACES}
     checks = [r for r in rows if r[1] == "check"]
     runs = [r for r in rows if r[1] == "run"]
     mark = {"holds": "✅ מתקיים", "counterexample": "⚠️ דוגמה נגדית", "instance": "✅ נמצא", "no instance": "❌ לא נמצא"}
@@ -163,7 +179,7 @@ def main() -> int:
         f"- **כלי:** {version}, solver `{receipt.get('solver', 'sat4j')}`",
         "- **מודל:** `fsm_model.als`, נוצר אוטומטית מ־`backend/hospital_agent/fsm.py` "
         "(41 שורות סעיף 3 + 3 שורות הרחבה, 13 מצבים, 14 סוגי הסלמה)",
-        "- **תכונות:** `fsm_checks.als`",
+        "- **תכונות:** `fsm_checks.als`; שכבת מיקום התוכנית והשערים שקוראים אותו: `fsm_plan.als`",
         f"- **{len(checks)} בדיקות, {len(runs)} חיפושי מסלול, {elapsed:.0f} שניות סה\"כ.** "
         f"{'כל התוצאות כצפוי.' if not failures else 'תוצאות שלא כצפוי: ' + ', '.join(failures)}",
         "",
@@ -191,6 +207,16 @@ def main() -> int:
         "והשער שלה `ReadinessInProgress` מתקיים רק כשלפנייה כבר יש תוכנית ונתוני מוכנות - כלומר "
         "אחרי שנבנתה תוכנית. C4 מוסיף את החוזה של השער, והתכונה מתקיימת. גם כאן: הטבלה לבדה אינה "
         "מספיקה, השער כן.",
+        "",
+        "**P1–P4 - הבאג ש־Alloy מצא, והתיקון (תיקון 99):** `fsm_plan.als` ממדל את מיקום המצביע "
+        "בתוכנית ואת השערים שקוראים אותו, כפי שהם כתובים ב־`guards.py` - כך שהחוזה של C2 כבר "
+        "אינו הנחה אלא נבדק. P1 מריץ את `CanAdvance` כפי שהיה (רק \"יש צעד הבא\") ו־Alloy מוצא "
+        "את הבאג: `PLAN_CREATED` ואז שלושה `STEP_ADVANCED` מביאים את התוכנית לצעד המסירה, "
+        "ו־`POLICY_ALLOWED` מעביר ל־Delivering - בלי שליפת נתונים ובלי בדיקת מוכנות. הבדיקה "
+        "שוחזרה גם מול ה־State Manager האמיתי. P2 מריץ את `CanAdvance` המתוקן - `STEP_ADVANCED` "
+        "נשאר בתוך שלב השליפה, וצעד המסירה מושג רק ב־`DELIVERY_PLANNED` מ־Ready - והתכונה "
+        "מתקיימת. P4 מוודא שהשערים לא חוסמים את התרחיש התקין, כלומר ש־P2 ו־P3 אינם מתקיימים "
+        "רק משום ששום דבר לא יכול לקרות.",
         "",
         "## הגעה למצבים ותרחישים (run)",
         "",
