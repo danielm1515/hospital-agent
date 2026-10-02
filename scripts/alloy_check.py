@@ -30,13 +30,14 @@ SOURCES = [(CHECKS, ALLOY_DIR / "out"), (PLAN, ALLOY_DIR / "out_plan")]
 RESULTS = ALLOY_DIR / "RESULTS.md"
 
 # check: "holds" (no counterexample) | "counterexample"; run: "instance" (reachable).
-EXPECTED_COUNTEREXAMPLES = {"C1_AutoCompletionNeedsReady_GuardsAbstracted", "C3_PlanBeforePlanning_GuardsAbstracted",
-                            "P1_NoDeliveryBeforeReady_OldCanAdvance"}
+# P1 replays the bug Alloy found (row 99) on the guard as it was: a counterexample there is the
+# evidence, and its disappearing would mean the replay no longer models the old guard.
+BUG = "P1_NoDeliveryBeforeReady_OldCanAdvance"
+FIX = "P2_NoDeliveryBeforeReady_CanAdvanceNow"
+EXPECTED_COUNTEREXAMPLES = {BUG}
 # Commands whose trace the report prints step by step.
-TRACES = ["C1_AutoCompletionNeedsReady_GuardsAbstracted", "C3_PlanBeforePlanning_GuardsAbstracted",
-          "E1_AutomaticCompletion",
-          "E2_MedicalQuestionClosedByStaff", "E3_MissingDocumentThenReclassified",
-          "P1_NoDeliveryBeforeReady_OldCanAdvance", "P4_Scenario1UnderPlanGuards"]
+SCENARIOS = ["E1_AutomaticCompletion", "E2_MedicalQuestionClosedByStaff", "E3_MissingDocumentThenReclassified"]
+TRACES = [BUG, *SCENARIOS]
 
 LOOP_LEGEND = "`↺` = המקום שאליו המסלול חוזר אחרי הצעד האחרון: Alloy 6 מייצג כל מסלול כאינסופי, כלולאה."
 
@@ -51,19 +52,14 @@ HEBREW = {
     "B3_LeaveReviewOnlyByStaff": "רק החלטת צוות מוציאה פנייה מבקרה אנושית",
     "B4_NoAutomationAfterMedicalDeniedOrUnsafe": "שאלה רפואית, דחיית מדיניות או הסלמת בטיחות אינן חוזרות לאוטומציה",
     "B5_ValidatedBeforeClassification": "אין סיווג לפני בקשה מאומתת",
-    "B7_CallsOnlyAfterPolicyAllowed": "T1: קריאה חיצונית מתחילה רק מאישור מדיניות",
-    "B8_T8_ReadyOnlyThroughReadiness": "T8: Ready רק דרך בדיקת מוכנות שעברה",
-    "C1_AutoCompletionNeedsReady_GuardsAbstracted": "השלמה אוטומטית עוברת דרך Ready - בלי השער delivery_action",
-    "C2_AutoCompletionNeedsReady_WithDeliveryGuard": "השלמה אוטומטית עוברת דרך Ready - עם השער delivery_action",
-    "C3_PlanBeforePlanning_GuardsAbstracted": "אין תכנון בלי תוכנית שלמה - בלי השער ReadinessInProgress",
-    "C4_PlanBeforePlanning_WithReadinessGuard": "אין תכנון בלי תוכנית שלמה - עם השער ReadinessInProgress",
+    "B6_CallsOnlyAfterPolicyAllowed": "T1: קריאה חיצונית מתחילה רק מאישור מדיניות",
+    "B7_T8_ReadyOnlyThroughReadiness": "T8: Ready רק דרך בדיקת מוכנות שעברה",
     "E1_AutomaticCompletion": "תרחיש 1: השלמה אוטומטית דרך מוכנות",
     "E2_MedicalQuestionClosedByStaff": "תרחיש 2: שאלה רפואית נסגרת על ידי צוות",
     "E3_MissingDocumentThenReclassified": "מסמך חסר, המטופל מעלה, הפנייה מסווגת מחדש (T10)",
-    "P1_NoDeliveryBeforeReady_OldCanAdvance": "אין שליחה למטופל לפני Ready - עם CanAdvance הישן (הבאג)",
-    "P2_NoDeliveryBeforeReady_CanAdvanceNow": "אין שליחה למטופל לפני Ready - עם CanAdvance המתוקן (תיקון 99)",
-    "P3_PlanBeforePlanning_WithPlanGuards": "אין תכנון בלי תוכנית - מול השערים הממודלים, בלי הנחה",
-    "P4_Scenario1UnderPlanGuards": "תרחיש 1 עדיין אפשרי תחת השערים הממודלים (השערים אינם ריקים)",
+    "P1_NoDeliveryBeforeReady_OldCanAdvance": "אין שליחה למטופל לפני Ready - לפני התיקון",
+    "P2_NoDeliveryBeforeReady_CanAdvanceNow": "אין שליחה למטופל לפני Ready (T8)",
+    "P3_PlanBeforePlanning_WithPlanGuards": "אין תכנון בלי תוכנית שלמה (Unsupported לא מגיעה לשם)",
 }
 
 
@@ -166,10 +162,25 @@ def main() -> int:
         rows.append((name, kind, HEBREW.get(name, name.replace("D_reach_", "הגעה למצב ")), scope, actual, ok))
 
     traces = {name: trace(name, source_of[name]) for name in TRACES}
-    checks = [r for r in rows if r[1] == "check"]
+    by_name = {r[0]: r for r in rows}
+    holding = [r for r in rows if r[1] == "check" and r[0] != BUG]
     runs = [r for r in rows if r[1] == "run"]
     mark = {"holds": "✅ מתקיים", "counterexample": "⚠️ דוגמה נגדית", "instance": "✅ נמצא", "no instance": "❌ לא נמצא"}
 
+    def table(selected: list[tuple], head: str) -> list[str]:
+        lines = [f"| # | {head} | היקף | תוצאה | כצפוי |", "|---|---|---|---|---|"]
+        lines += [f"| `{name}` | {hebrew} | `{scope}` | {mark[actual]} | {'✓' if ok else '✗'} |"
+                  for name, _, hebrew, scope, actual, ok in selected]
+        return lines
+
+    def steps_table(name: str) -> list[str]:
+        lines = [LOOP_LEGEND, "", "| צעד | מצב · צעד בתוכנית | escalation_kind | השורה שהביאה לכאן |",
+                 "|---|---|---|---|"]
+        lines += [f"| {i}{' ↺' if loop else ''} | {state} | {esc} | {event} |"
+                  for i, (state, esc, event, loop) in enumerate(traces[name])]
+        return lines
+
+    bug, fix = by_name[BUG], by_name[FIX]
     out = [
         "# תוצאות Alloy - מכונת המצבים של סעיף 3",
         "",
@@ -178,61 +189,54 @@ def main() -> int:
         f"- **מתי:** {datetime.now().strftime('%Y-%m-%d %H:%M')}",
         f"- **כלי:** {version}, solver `{receipt.get('solver', 'sat4j')}`",
         "- **מודל:** `fsm_model.als`, נוצר אוטומטית מ־`backend/hospital_agent/fsm.py` "
-        "(41 שורות סעיף 3 + 3 שורות הרחבה, 13 מצבים, 14 סוגי הסלמה)",
-        "- **תכונות:** `fsm_checks.als`; שכבת מיקום התוכנית והשערים שקוראים אותו: `fsm_plan.als`",
-        f"- **{len(checks)} בדיקות, {len(runs)} חיפושי מסלול, {elapsed:.0f} שניות סה\"כ.** "
+        "(41 שורות סעיף 3 + 3 שורות הרחבה, 13 מצבים, 14 סוגי הסלמה); `fsm_plan.als` מוסיף את "
+        "מיקום התוכנית ואת השערים שקוראים אותו, כפי שהם כתובים ב־`guards.py`",
+        f"- **{len(holding)} תכונות מתקיימות, באג אחד שנמצא ותוקן, {len(runs)} חיפושי מסלול, "
+        f"{elapsed:.0f} שניות.** "
         f"{'כל התוצאות כצפוי.' if not failures else 'תוצאות שלא כצפוי: ' + ', '.join(failures)}",
         "",
-        "**איך לקרוא:** `check` - Alloy מחפש דוגמה נגדית בכל מסלול עד גבול הצעדים; \"מתקיים\" = "
-        "אין אף מסלול שמפר את התכונה, לכל תוצאה של השערים (השערים אינם ממודלים). `run` - Alloy "
-        "מחפש מסלול אחד; \"נמצא\" = המצב או התרחיש בר־השגה.",
+        "**איך לקרוא:** `check` - Alloy מחפש דוגמה נגדית בכל מסלול עד 20 צעדים; \"מתקיים\" = אין "
+        "אף מסלול שמפר את התכונה. `run` - Alloy מחפש מסלול אחד; \"נמצא\" = בר־השגה.",
         "",
-        "## בדיקות (check)",
+        "## 1. התכונות שמתקיימות",
         "",
-        "| # | תכונה | היקף | תוצאה | כצפוי |",
-        "|---|---|---|---|---|",
+        "A ו־B נבדקות על הטבלה בלבד, לכל תוצאה של השערים. P2 ו־P3 נבדקות מול השערים שקוראים את "
+        "מיקום התוכנית, כי על הטבלה לבדה יש להן דוגמה נגדית - הן מחזיקות בזכות השערים.",
+        "",
+        *table(holding, "תכונה"),
+        "",
+        "## 2. הבאג ש־Alloy מצא - לפני ואחרי התיקון",
+        "",
+        "`CanAdvance` (§3.1: \"המצביע החדש נמצא בתוך התוכנית\") בדק רק שיש צעד הבא. לכן ה־State "
+        "Manager אישר `PLAN_CREATED` ואחריו שלושה `STEP_ADVANCED` אל צעד המסירה, ו־`POLICY_ALLOWED` "
+        "העביר את הפנייה ל־`Delivering` - קריאה לערוץ המטופל בלי שליפת נתונים ובלי בדיקת מוכנות. "
+        "רק סדר הפעולות של ה־Orchestrator מנע זאת בפועל, והטסטים לא תפסו את זה כי הם מריצים את "
+        "הקוד במסלולים שהוא באמת עובר - Alloy בודק כל מסלול שה־FSM מרשה. הבאג שוחזר מול "
+        "ה־State Manager האמיתי ותוקן: ב־`STEP_ADVANCED` התוכנית מתקדמת רק בתוך שלב השליפה, וצעד "
+        "המסירה מושג רק ב־`DELIVERY_PLANNED` מ־Ready (`spec_corrections` תיקון 99).",
+        "",
+        "| | `CanAdvance` | תוצאה | כצפוי |",
+        "|---|---|---|---|",
+        f"| **לפני** (`{BUG}`) | \"יש צעד הבא\" | {mark[bug[4]]} | {'✓' if bug[5] else '✗'} |",
+        f"| **אחרי** (`{FIX}`) | בתוך שלב השליפה בלבד | {mark[fix[4]]} | {'✓' if fix[5] else '✗'} |",
+        "",
+        "### המסלול שמצא את הבאג (לפני התיקון)",
+        "",
+        *steps_table(BUG),
+        "",
+        "## 3. הגעה למצבים ותרחישים",
+        "",
+        "כל 13 המצבים ברי־השגה, ושלושת התרחישים עוברים תחת השערים כפי שהם בקוד - כלומר התכונות "
+        "בסעיף 1 אינן מתקיימות רק משום שהשערים חוסמים הכול.",
+        "",
+        *table(runs, "מה"),
     ]
-    out += [f"| `{name}` | {hebrew} | `{scope}` | {mark[actual]} | {'✓' if ok else '✗'} |"
-            for name, _, hebrew, scope, actual, ok in checks]
-    out += [
-        "",
-        "**C1 ו־C2 יחד:** בלי השערים, Alloy מוצא מסלול שבו פנייה מגיעה ל־Delivering ישירות מ־Planning "
-        "ונסגרת בלי לעבור דרך Ready - כלומר הטבלה לבדה אינה מבטיחה זאת. C2 מוסיף את החוזה של "
-        "השער `delivery_action` (צעד המסירה מושג רק דרך `DELIVERY_PLANNED`, שיוצא מ־Ready) - ואז "
-        "התכונה מתקיימת. זו הוכחה שהבטיחות כאן נשענת על השער, ושהשער מספיק.",
-        "",
-        "**C3 ו־C4 - ממצא ש־Alloy העלה בעצמו:** \"אין תכנון בלי תוכנית שלמה\" נכתב במקור כבדיקה "
-        "רגילה, ו־Alloy מצא לה דוגמה נגדית: Classifying → (R05) AssessingReadiness → Ready → "
-        "DELIVERY_PLANNED → Planning, בלי `PLAN_CREATED` בדרך. השורה R05 היא שורת הסיווג־מחדש, "
-        "והשער שלה `ReadinessInProgress` מתקיים רק כשלפנייה כבר יש תוכנית ונתוני מוכנות - כלומר "
-        "אחרי שנבנתה תוכנית. C4 מוסיף את החוזה של השער, והתכונה מתקיימת. גם כאן: הטבלה לבדה אינה "
-        "מספיקה, השער כן.",
-        "",
-        "**P1–P4 - הבאג ש־Alloy מצא, והתיקון (תיקון 99):** `fsm_plan.als` ממדל את מיקום המצביע "
-        "בתוכנית ואת השערים שקוראים אותו, כפי שהם כתובים ב־`guards.py` - כך שהחוזה של C2 כבר "
-        "אינו הנחה אלא נבדק. P1 מריץ את `CanAdvance` כפי שהיה (רק \"יש צעד הבא\") ו־Alloy מוצא "
-        "את הבאג: `PLAN_CREATED` ואז שלושה `STEP_ADVANCED` מביאים את התוכנית לצעד המסירה, "
-        "ו־`POLICY_ALLOWED` מעביר ל־Delivering - בלי שליפת נתונים ובלי בדיקת מוכנות. הבדיקה "
-        "שוחזרה גם מול ה־State Manager האמיתי. P2 מריץ את `CanAdvance` המתוקן - `STEP_ADVANCED` "
-        "נשאר בתוך שלב השליפה, וצעד המסירה מושג רק ב־`DELIVERY_PLANNED` מ־Ready - והתכונה "
-        "מתקיימת. P4 מוודא שהשערים לא חוסמים את התרחיש התקין, כלומר ש־P2 ו־P3 אינם מתקיימים "
-        "רק משום ששום דבר לא יכול לקרות.",
-        "",
-        "## הגעה למצבים ותרחישים (run)",
-        "",
-        "| # | מה | היקף | תוצאה | כצפוי |",
-        "|---|---|---|---|---|",
-    ]
-    out += [f"| `{name}` | {hebrew} | `{scope}` | {mark[actual]} | {'✓' if ok else '✗'} |"
-            for name, _, hebrew, scope, actual, ok in runs]
-    for name, steps in traces.items():
-        out += ["", f"### מסלול: `{name}`", "", HEBREW.get(name, name), "", LOOP_LEGEND, "",
-                "| צעד | מצב | escalation_kind | השורה שהביאה לכאן |", "|---|---|---|---|"]
-        out += [f"| {i}{' ↺' if loop else ''} | {state} | {esc} | {event} |"
-                for i, (state, esc, event, loop) in enumerate(steps)]
-    out += ["", "## תרשים המצבים (מתוך המודל)", "", "```mermaid", mermaid(), "```", ""]
+    for name in SCENARIOS:
+        out += ["", f"### מסלול: `{name}`", "", HEBREW.get(name, name), "", *steps_table(name)]
+    out += ["", "## 4. תרשים המצבים (מתוך המודל)", "", "```mermaid", mermaid(), "```", ""]
     RESULTS.write_text("\n".join(out), encoding="utf-8", newline="\n")
-    print(f"{len(checks)} checks, {len(runs)} runs, {elapsed:.0f}s - "
+    print(f"{len(holding)} properties hold, the bug replay {'as expected' if bug[5] else 'NOT as expected'}, "
+          f"{len(runs)} runs, {elapsed:.0f}s - "
           f"{'all as expected' if not failures else 'UNEXPECTED: ' + ', '.join(failures)}; wrote {RESULTS.relative_to(ROOT)}")
     return 1 if failures else 0
 

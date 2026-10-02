@@ -1,9 +1,9 @@
 -- The plan's position, added on top of the generated fsm_model.als (docs/alloy/README.md).
 --
--- fsm_model.als abstracts every guard, so C1/C3 in fsm_checks.als hold only under named guard
--- assumptions. This file models what those guards actually read - where the plan pointer is -
--- and the guards themselves, as guards.py writes them. With it, the two properties are checked
--- against the guards, not assumed.
+-- fsm_model.als abstracts every guard: on the table alone, "nothing is sent before Ready" and "no
+-- planning without a plan" have counterexamples. This file models what the guards that protect
+-- them actually read - where the plan pointer is - and the guards themselves, as guards.py
+-- writes them, so both properties are checked against the guards.
 --
 -- It also replays the bug Alloy found (docs/spec_corrections.md row 99): CanAdvance used to ask
 -- only for a next step, so STEP_ADVANCED could walk the plan into SendStatusUpdate and a case
@@ -78,7 +78,24 @@ check P2_NoDeliveryBeforeReady_CanAdvanceNow for 1 but 1..20 steps
 assert P3_PlanBeforePlanning_WithPlanGuards { (PlanGuards and CanAdvanceNow) implies PlanBeforePlanning }
 check P3_PlanBeforePlanning_WithPlanGuards for 1 but 1..20 steps
 
--- P4: the guards are not vacuous - the real scenario 1 is still possible under them.
-run P4_Scenario1UnderPlanGuards {
-  PlanGuards and CanAdvanceNow and eventually (Case.state = Completed and Case.last.ev = CASE_RESOLVED)
+-- ============================================================================================
+-- Scenario traces under the guards as the code has them. E1 also shows P2 and P3 do not hold
+-- merely because the guards forbid everything: the full scenario 1 still goes through.
+-- ============================================================================================
+
+pred Guards { PlanGuards and CanAdvanceNow }
+
+-- Scenario 1: an automatic completion - plan, three retrievals, readiness, delivery.
+run E1_AutomaticCompletion {
+  Guards and eventually (Case.state = Completed and Case.last.ev = CASE_RESOLVED)
+} for 1 but 1..20 steps
+
+-- Scenario 2: a medical question reaches staff and is closed by them.
+run E2_MedicalQuestionClosedByStaff {
+  Guards and eventually (Case.last.ev = MEDICAL_QUESTION_DETECTED and eventually Case.last.ev = HUMAN_RESOLVED_CASE)
+} for 1 but 1..20 steps
+
+-- A missing document, the patient uploads it, and the case is classified again (T10).
+run E3_MissingDocumentThenReclassified {
+  Guards and eventually (Case.state = AwaitingPatientInput and eventually Case.state = Classifying)
 } for 1 but 1..20 steps
