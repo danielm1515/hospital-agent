@@ -338,3 +338,21 @@ def test_reject_and_resolve_need_no_resume_field():
     pvf = escalated(EscalationKind.PATIENT_VERIFICATION_FAILED)
     appr = approval(escalation_kind="PatientVerificationFailed", decision="reject")
     assert wdv(pvf, Event.HUMAN_REJECTED, appr) is None
+
+
+# --- spec_corrections row 99 ------------------------------------------------------------------
+
+@pytest.mark.parametrize("step, event, holds", [
+    (1, Event.STEP_ADVANCED, True),    # CheckAppointment -> CheckDocuments
+    (2, Event.STEP_ADVANCED, True),    # CheckDocuments -> LoadInstructions
+    (3, Event.STEP_ADVANCED, False),   # LoadInstructions -> SendStatusUpdate: never by STEP_ADVANCED
+    (3, Event.DELIVERY_PLANNED, True), # ... only by DELIVERY_PLANNED, from Ready (DeliveryStepPending)
+    (4, Event.STEP_ADVANCED, False),   # past the last step, as before
+])
+def test_can_advance_keeps_the_delivery_step_for_delivery_planned(step, event, holds):
+    steps = [{"step": 1, "action": "CheckAppointment"}, {"step": 2, "action": "CheckDocuments"},
+             {"step": 3, "action": "LoadInstructions"}, {"step": 4, "action": "SendStatusUpdate"}]
+    case = replace(new_case("CASE-1", "P-1", NOW), state=State.PLANNING, ordered_steps=steps,
+                   plan_hash=compute_plan_hash(steps), current_step=step)
+    result = GUARDS["CanAdvance"](GuardContext(case=case, event=event, payload={}, now=NOW, ports=fake_ports()))
+    assert (result is None) is holds

@@ -34,4 +34,4 @@ Thumbs.db
 # Word lock files
 ~$*.docx
 tools/
-docs/alloy/out/
+docs/alloy/out*/

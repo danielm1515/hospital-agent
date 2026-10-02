@@ -242,3 +242,31 @@ def test_state_survives_a_restart(sm, app_engine):
         assert restarted.propose().committed
     finally:
         fresh_engine.dispose()
+
+
+# --- spec_corrections row 99: STEP_ADVANCED never moves a plan into the delivery step ---------
+
+def test_step_advanced_never_moves_a_plan_into_the_delivery_step(sm, app_engine):
+    """Found by Alloy (docs/alloy, C1): CanAdvance only asked for a next step, so three
+    STEP_ADVANCED right after PLAN_CREATED reached SendStatusUpdate and POLICY_ALLOWED took the
+    case to Delivering - no data retrieved, no readiness check. Only the Orchestrator's own
+    sequencing prevented it; the State Manager now refuses it itself."""
+    d = Driver(sm, app_engine)
+    d.to_classified()
+    d.plan()
+    assert d.advance().committed and d.advance().committed  # CheckAppointment -> CheckDocuments -> LoadInstructions
+    assert d.case.current_action.value == "LoadInstructions"
+
+    refused = d.advance()  # LoadInstructions -> SendStatusUpdate: DELIVERY_PLANNED's alone
+    assert not refused.committed
+    assert d.case.current_action.value == "LoadInstructions" and d.case.state is State.PLANNING
+    last = d.trace()[-1]
+    assert (last.record_type, last.event, list(last.policy_reasons)) == ("Blocked", "STEP_ADVANCED", ["guard_failed"])
+
+
+def test_delivery_planned_still_moves_a_ready_case_to_the_delivery_step(sm, app_engine):
+    d = Driver(sm, app_engine)
+    d.to_assessing_readiness(required=["CBC"], held=["CBC"])
+    assert d.readiness_passed().committed and d.state is State.READY
+    assert d.plan_delivery().committed
+    assert (d.state, d.case.current_action.value) == (State.PLANNING, "SendStatusUpdate")
