@@ -8,6 +8,9 @@
 --           means the property holds for every path of that length, for ANY guard outcome
 --           (the guards are not modelled - see fsm_model.als).
 -- `run`   = Alloy looks for one trace with the property - a witness that it is reachable.
+--
+-- The properties that depend on a guard, the bug Alloy found (spec_corrections row 99) and the
+-- scenario traces are in fsm_plan.als, which models the guards that read the plan pointer.
 module fsm_checks
 open fsm_model
 
@@ -76,60 +79,15 @@ assert B5_ValidatedBeforeClassification {
 check B5_ValidatedBeforeClassification for 1 but 1..20 steps
 
 -- T1 (abstracted): an external call starts only from a policy approval.
-assert B7_CallsOnlyAfterPolicyAllowed {
+assert B6_CallsOnlyAfterPolicyAllowed {
   always ((some (Case.state' & (RetrievingData + Delivering)) and no (Case.state & (RetrievingData + Delivering)))
           implies Case.last'.ev = POLICY_ALLOWED)
 }
-check B7_CallsOnlyAfterPolicyAllowed for 1 but 1..20 steps
+check B6_CallsOnlyAfterPolicyAllowed for 1 but 1..20 steps
 
 -- T8: Ready only through a passed readiness check.
-assert B8_T8_ReadyOnlyThroughReadiness { always (Case.state = Ready implies once Case.last.ev = READINESS_PASSED) }
-check B8_T8_ReadyOnlyThroughReadiness for 1 but 1..20 steps
-
--- ============================================================================================
--- C. A property that needs a guard: shown both ways
--- ============================================================================================
-
--- "An automatic completion (CASE_RESOLVED) always went through Ready." With the guards
--- abstracted Alloy is EXPECTED to find a counterexample: Planning --POLICY_ALLOWED--> Delivering
--- (R13) is a row whatever the plan's step is, so nothing in the table alone stops a delivery
--- before readiness. The guard that does is `delivery_action`: the delivery step is reached only
--- through DELIVERY_PLANNED (from Ready). C2 states that guard as an explicit assumption.
-assert C1_AutoCompletionNeedsReady_GuardsAbstracted {
-  always ((Case.state = Completed and Case.last.ev = CASE_RESOLVED) implies once Case.state = Ready)
-}
-check C1_AutoCompletionNeedsReady_GuardsAbstracted for 1 but 1..20 steps
-
--- The delivery_action guard's contract (guards.py): a POLICY_ALLOWED into Delivering happens only
--- after the plan was moved to its delivery step, which DELIVERY_PLANNED alone does.
-pred DeliveryActionGuard {
-  always ((Case.state = Delivering and Case.last.ev = POLICY_ALLOWED) implies once Case.last.ev = DELIVERY_PLANNED)
-}
-assert C2_AutoCompletionNeedsReady_WithDeliveryGuard {
-  DeliveryActionGuard implies
-    always ((Case.state = Completed and Case.last.ev = CASE_RESOLVED) implies once Case.state = Ready)
-}
-check C2_AutoCompletionNeedsReady_WithDeliveryGuard for 1 but 1..20 steps
-
--- "No planning without a complete plan" (an Unsupported intent never gets one). Found by Alloy,
--- not foreseen: with the guards abstracted there IS a counterexample - Classifying
--- --INTENT_CLASSIFIED--> AssessingReadiness (R05) -> Ready -> DELIVERY_PLANNED -> Planning, with no
--- PLAN_CREATED anywhere. R05 is the re-classification row: its guard `ReadinessInProgress` holds
--- only when the case already has a plan and readiness data (§3.1), i.e. after a plan was made.
-assert C3_PlanBeforePlanning_GuardsAbstracted {
-  always (Case.state = Planning implies once Case.last.ev = PLAN_CREATED)
-}
-check C3_PlanBeforePlanning_GuardsAbstracted for 1 but 1..20 steps
-
--- The ReadinessInProgress guard's contract (guards.py): R05 fires only for a case that already
--- has a plan - one PLAN_CREATED made.
-pred ReadinessInProgressGuard {
-  always ((Case.last = R05) implies once Case.last.ev = PLAN_CREATED)
-}
-assert C4_PlanBeforePlanning_WithReadinessGuard {
-  ReadinessInProgressGuard implies always (Case.state = Planning implies once Case.last.ev = PLAN_CREATED)
-}
-check C4_PlanBeforePlanning_WithReadinessGuard for 1 but 1..20 steps
+assert B7_T8_ReadyOnlyThroughReadiness { always (Case.state = Ready implies once Case.last.ev = READINESS_PASSED) }
+check B7_T8_ReadyOnlyThroughReadiness for 1 but 1..20 steps
 
 -- ============================================================================================
 -- D. Reachability: Alloy finds a trace into every State (no dead code in the table)
@@ -148,25 +106,3 @@ run D_reach_Ready { eventually Case.state = Ready } for 1 but 1..20 steps
 run D_reach_Completed { eventually Case.state = Completed } for 1 but 1..20 steps
 run D_reach_Failed { eventually Case.state = Failed } for 1 but 1..20 steps
 run D_reach_AwaitingPatientReply { eventually Case.state = AwaitingPatientReply } for 1 but 1..20 steps
-
--- ============================================================================================
--- E. Scenario witnesses, for the slides - under both guard contracts, so each trace is one the
---    real system can take (without them Alloy happily "skips" planning through R05, see C3)
--- ============================================================================================
-
-pred Guards { DeliveryActionGuard and ReadinessInProgressGuard }
-
--- Scenario 1 shape: an automatic completion through readiness, under the delivery guard.
-run E1_AutomaticCompletion {
-  Guards and eventually (Case.state = Completed and Case.last.ev = CASE_RESOLVED)
-} for 1 but 1..20 steps
-
--- Scenario 2 shape: a medical question reaches staff and is closed by them.
-run E2_MedicalQuestionClosedByStaff {
-  Guards and eventually (Case.last.ev = MEDICAL_QUESTION_DETECTED and eventually Case.last.ev = HUMAN_RESOLVED_CASE)
-} for 1 but 1..20 steps
-
--- A missing document, the patient uploads it, and the case is re-classified (T10).
-run E3_MissingDocumentThenReclassified {
-  Guards and eventually (Case.state = AwaitingPatientInput and eventually Case.state = Classifying)
-} for 1 but 1..20 steps
