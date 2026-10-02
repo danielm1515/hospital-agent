@@ -794,7 +794,7 @@ def build():
             ["D33 – recall של Response Evaluator (סעיפים 6.5, 16)", "`python -m eval.d33 --live`",
              "1.0000 (24/24) במודל החי, מעל הסף 0.95; 2 false positives מתוך 24 הודעות "
              "תפעוליות; 0 תשובות לא שמישות"],
-            ["חבילת הבדיקות של ה־backend", "`pytest`", "1757 passed, 2 skipped, 3 xfailed (Postgres מנוהל ב־RDS)"],
+            ["חבילת הבדיקות של ה־backend", "`pytest`", "1767 passed, 2 skipped, 3 xfailed (Postgres מנוהל ב־RDS)"],
         ],
         [3000, 3300, 3550],
     )
