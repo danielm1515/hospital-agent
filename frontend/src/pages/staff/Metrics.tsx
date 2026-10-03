@@ -147,6 +147,7 @@ export function Metrics() {
             {formatDateTime(data.window.start)} – {formatDateTime(data.window.end)} · חושב ב־
             {formatDateTime(data.generated_at)}
           </p>
+          <SuccessGroup success={data.success} />
           <FlowGroup flow={data.flow} />
           <HumanLoadGroup load={data.human_load} />
           <ToolsGroup tools={data.tools} />
@@ -169,6 +170,47 @@ function Group({ id, title, scope, children }: { id: string; title: string; scop
       <p className="metrics-scope">{scope}</p>
       {children}
     </section>
+  )
+}
+
+function SuccessGroup({ success }: { success: MetricsData['success'] }) {
+  const { readiness, handling_time: handling, repeat_requests: repeats } = success
+  return (
+    <Group id="metrics-success" title="מדדי הצלחה" scope="תור = מטופל + התור שהפנייה עוסקת בו">
+      <div className="metrics-tiles">
+        <Tile
+          label="מוכנות לפני התור"
+          value={formatPercent(readiness.rate)}
+          note={`${formatCount(readiness.ready)} מתוך ${formatCount(readiness.judged)} תורים שחלפו בטווח · ${formatCount(readiness.upcoming)} תורים עתידיים, ${formatCount(readiness.upcoming_ready)} כבר מוכנים`}
+        />
+        <Tile
+          label="זמן טיפול בפנייה (p50)"
+          value={formatSeconds(handling.overall.p50)}
+          note={`עד סיום או העברה לצוות · הסתיימו ${formatCount(handling.closed.count)} · הועברו לצוות ${formatCount(handling.handed_off.count)} · פתוחות ${formatCount(handling.open)}`}
+        />
+        <Tile
+          label="פניות חוזרות"
+          value={formatCount(repeats.repeat_requests)}
+          note={`ב־${formatCount(repeats.appointments_with_repeats)} מתוך ${formatCount(repeats.appointments)} תורים · עד ${formatCount(repeats.max_requests)} פניות לתור · ${formatCount(repeats.no_appointment)} ללא תור`}
+        />
+      </div>
+      <Meter ratio={readiness.rate} label="מוכנות לפני התור" />
+      <h3 className="metrics-sub">זמן טיפול</h3>
+      <dl className="metrics-facts">
+        <div className="metrics-fact">
+          <dt>כל הפניות</dt>
+          <dd>{durationsText(handling.overall)}</dd>
+        </div>
+        <div className="metrics-fact">
+          <dt>הסתיימו (הושלמו או נכשלו)</dt>
+          <dd>{durationsText(handling.closed)}</dd>
+        </div>
+        <div className="metrics-fact">
+          <dt>הועברו לצוות</dt>
+          <dd>{durationsText(handling.handed_off)}</dd>
+        </div>
+      </dl>
+    </Group>
   )
 }
 

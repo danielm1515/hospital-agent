@@ -25,11 +25,14 @@ def at(minutes: float) -> datetime:
 
 def add_case(conn: Connection, case_id: str, *, created_at: datetime, state: str = "Received",
              intent: str | None = None, escalation_kind: str | None = None,
-             patient_id: str = "P-10041") -> None:
+             patient_id: str = "P-10041", appointment_id: str | None = None,
+             answered_appointment_id: str | None = None, appointment_at: datetime | None = None) -> None:
     conn.execute(cases.insert().values(
         case_id=case_id, patient_id=patient_id, state=state, state_version=1, intent=intent,
         identity_verified=True, retry_cycle=0, attempt_count=0, held_documents=[],
-        escalation_kind=escalation_kind, created_at=created_at, updated_at=created_at))
+        escalation_kind=escalation_kind, created_at=created_at, updated_at=created_at,
+        appointment_id=appointment_id, answered_appointment_id=answered_appointment_id,
+        appointment_at=appointment_at))
 
 
 def add_row(conn: Connection, case_id: str, event: str, *, at: datetime, before: str | None = None,

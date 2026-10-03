@@ -425,6 +425,118 @@ def llm(conn: Connection, window: Window) -> LlmCosts:
         unpriced_calls=int(totals.unpriced), by_call=by_call, by_source=by_source)
 
 
+# --- G: success metrics (the presentation's three) ---------------------------------------
+#
+# A case's appointment is the one the appointment service answered about, else the one the
+# patient chose: (patient_id, that id) is "one appointment" for readiness and repeat requests.
+# A case with neither is left out of both, and counted on its own in no_appointment.
+
+_APPOINTMENT = "COALESCE(c.answered_appointment_id, c.appointment_id)"
+
+
+@dataclass(frozen=True)
+class Readiness:
+    """Appointments whose time fell in the window and has passed: `ready` had a case resolved
+    (CASE_RESOLVED - documents checked, instructions delivered) before it. Appointments still
+    ahead, at any date, are `upcoming` - not judged yet."""
+
+    judged: int
+    ready: int
+    rate: float | None
+    upcoming: int
+    upcoming_ready: int
+
+
+@dataclass(frozen=True)
+class HandlingTime:
+    """The cases opened in the window: from opening to the first of a hand-off to staff (entering
+    AwaitingHumanReview) or an end (Completed / Failed). `open` reached neither yet."""
+
+    overall: Durations
+    closed: Durations
+    handed_off: Durations
+    open: int
+
+
+@dataclass(frozen=True)
+class RepeatRequests:
+    """The cases opened in the window, per appointment: every case after the first is a repeat."""
+
+    appointments: int
+    repeat_requests: int
+    appointments_with_repeats: int
+    max_requests: int
+    no_appointment: int
+
+
+@dataclass(frozen=True)
+class Success:
+    readiness: Readiness
+    handling_time: HandlingTime
+    repeat_requests: RepeatRequests
+
+
+_READINESS = f"""
+    WITH appointments AS (
+        SELECT c.patient_id, {_APPOINTMENT} AS appointment, max(c.appointment_at) AS appointment_at,
+               bool_or(EXISTS (SELECT 1 FROM audit_log a WHERE a.case_id = c.case_id
+                                 AND a.record_type = 'Transition' AND a.event = 'CASE_RESOLVED'
+                                 AND a.recorded_at < c.appointment_at)) AS ready
+        FROM cases c
+        WHERE {_APPOINTMENT} IS NOT NULL AND c.appointment_at IS NOT NULL
+        GROUP BY 1, 2),
+    judged AS (
+        SELECT *, appointment_at >= :start AND appointment_at < :end AND appointment_at < now() AS judged
+        FROM appointments)
+    SELECT count(*) FILTER (WHERE judged), count(*) FILTER (WHERE judged AND ready),
+           count(*) FILTER (WHERE appointment_at >= now()),
+           count(*) FILTER (WHERE appointment_at >= now() AND ready)
+    FROM judged"""
+
+# One row per case opened in the window: how its handling ended ('open' when it has not) and
+# how long it took.
+_HANDLING_KINDS = f"""
+    WITH ends AS (
+        SELECT c.created_at,
+               (SELECT min(a.recorded_at) FROM audit_log a WHERE a.case_id = c.case_id
+                  AND a.record_type = 'Transition' AND a.state_after = 'AwaitingHumanReview') AS handed_off_at,
+               (SELECT min(a.recorded_at) FROM audit_log a WHERE a.case_id = c.case_id
+                  AND a.record_type = 'Transition' AND a.state_after IN ('Completed', 'Failed')) AS closed_at
+        FROM cases c WHERE {_COHORT}),
+    kinds AS (
+        SELECT CASE WHEN handed_off_at IS NULL AND closed_at IS NULL THEN 'open'
+                    WHEN closed_at IS NULL OR handed_off_at < closed_at THEN 'handed_off'
+                    ELSE 'closed' END AS kind,
+               LEAST(handed_off_at, closed_at) - created_at AS took
+        FROM ends)"""
+
+_REPEATS = f"""
+    SELECT count(*), COALESCE(sum(n - 1), 0), count(*) FILTER (WHERE n > 1), COALESCE(max(n), 0),
+           (SELECT count(*) FROM cases c WHERE {_COHORT} AND {_APPOINTMENT} IS NULL)
+    FROM (SELECT count(*) AS n FROM cases c WHERE {_COHORT} AND {_APPOINTMENT} IS NOT NULL
+          GROUP BY c.patient_id, {_APPOINTMENT}) per_appointment"""
+
+
+def success(conn: Connection, window: Window) -> Success:
+    judged, ready, upcoming, upcoming_ready = conn.execute(text(_READINESS), window.params).one()
+    readiness = Readiness(judged=judged, ready=ready, rate=ready / judged if judged else None,
+                          upcoming=upcoming, upcoming_ready=upcoming_ready)
+
+    by_kind = {row[0]: _durations(row[1:]) for row in conn.execute(text(
+        f"{_HANDLING_KINDS} SELECT kind, {_durations_sql('took')} FROM kinds GROUP BY kind"), window.params)}
+    overall = conn.execute(text(
+        f"{_HANDLING_KINDS} SELECT {_durations_sql('took')} FROM kinds WHERE kind <> 'open'"), window.params).one()
+    handling = HandlingTime(overall=_durations(overall),
+                            closed=by_kind.get("closed", EMPTY_DURATIONS),
+                            handed_off=by_kind.get("handed_off", EMPTY_DURATIONS),
+                            open=by_kind["open"].count if "open" in by_kind else 0)
+
+    appointments, repeats, with_repeats, most, none = conn.execute(text(_REPEATS), window.params).one()
+    return Success(readiness=readiness, handling_time=handling, repeat_requests=RepeatRequests(
+        appointments=int(appointments), repeat_requests=int(repeats),
+        appointments_with_repeats=int(with_repeats), max_requests=int(most), no_appointment=int(none)))
+
+
 # --- compute: every group, one snapshot (design §5) --------------------------------------
 
 
@@ -438,6 +550,7 @@ class Metrics:
     patient_sla: PatientSla
     policy: Policy
     llm: LlmCosts
+    success: Success
 
 
 @contextmanager
@@ -461,7 +574,7 @@ def _snapshot(engine: Engine) -> Iterator[Connection]:
 
 
 def compute(engine: Engine, window: Window, sources: Mapping[str, str | None]) -> Metrics:
-    """All six groups in one snapshot (_snapshot), so they agree with each other."""
+    """All seven groups in one snapshot (_snapshot), so they agree with each other."""
     with _snapshot(engine) as conn:
         generated_at = conn.execute(text("SELECT now()")).scalar_one()
         return Metrics(
@@ -473,6 +586,7 @@ def compute(engine: Engine, window: Window, sources: Mapping[str, str | None]) -
             patient_sla=patient_sla(conn, window),
             policy=policy(conn, window),
             llm=llm(conn, window),
+            success=success(conn, window),
         )
 
 

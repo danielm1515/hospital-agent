@@ -964,6 +964,17 @@ in one read-only snapshot with a 5 s statement timeout; past it the answer is
       {"call": "Safety", "calls": 3, "input_tokens": 5100, "output_tokens": 60, "cost_usd": "0.00109200"}
     ],
     "by_source": [{"source": "agent", "calls": 10, "cost_usd": "0.00387600"}]
+  },
+  "success": {
+    "readiness": {"judged": 2, "ready": 1, "rate": 0.5, "upcoming": 1, "upcoming_ready": 1},
+    "handling_time": {
+      "overall": {"count": 3, "p50": 4.1, "p95": 61.0, "max": 64.2},
+      "closed": {"count": 2, "p50": 3.2, "p95": 4.9, "max": 5.0},
+      "handed_off": {"count": 1, "p50": 64.2, "p95": 64.2, "max": 64.2},
+      "open": 0
+    },
+    "repeat_requests": {"appointments": 2, "repeat_requests": 1, "appointments_with_repeats": 1,
+                        "max_requests": 2, "no_appointment": 0}
   }
 }
 ```
@@ -978,6 +989,15 @@ other group counts what **happened** in it. Durations are seconds; `p50` / `p95`
 
 `llm` (sub-project 19) is the LLM cost of the same window's cohort, read inside the same
 snapshot: exactly the body of `GET /api/staff/llm-costs` (§10) without its `window`.
+
+`success` holds the presentation's three success metrics. An *appointment* is the pair (patient,
+`answered_appointment_id`, else `appointment_id`); a case with neither is in no appointment.
+`readiness` judges the appointments whose time fell in the window and has passed: `ready` had a
+`CASE_RESOLVED` (documents checked, instructions delivered) before it; `upcoming` are the
+appointments still ahead, at any date. `handling_time` measures the cases opened in the window
+from opening to the first of entering `AwaitingHumanReview` (`handed_off`) or `Completed` /
+`Failed` (`closed`); `open` reached neither yet. `repeat_requests` groups the cases opened in the
+window by appointment: every case after the first is a repeat; `no_appointment` counts the rest.
 
 ### GET /api/admin/consistency
 
