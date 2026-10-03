@@ -12,7 +12,7 @@ from tests.metrics_seed import add_case, add_row, at
 
 NURSE, ADMIN, PATIENT = "coordinator_nurse", "admin_coordinator", "P-10041"
 FROM, TO = "2026-09-01T00:00:00+00:00", "2026-09-02T00:00:00+00:00"
-GROUPS = {"window", "generated_at", "flow", "human_load", "tools", "patient_sla", "policy", "llm"}
+GROUPS = {"window", "generated_at", "flow", "human_load", "tools", "patient_sla", "policy", "llm", "success"}
 
 
 @pytest.fixture

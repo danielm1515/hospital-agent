@@ -451,6 +451,37 @@ class LlmCostsView(_FromMetrics):
     by_source: list[LlmSourceView]
 
 
+class ReadinessView(_FromMetrics):
+    judged: int
+    ready: int
+    rate: float | None
+    upcoming: int
+    upcoming_ready: int
+
+
+class HandlingTimeView(_FromMetrics):
+    overall: DurationsView
+    closed: DurationsView
+    handed_off: DurationsView
+    open: int
+
+
+class RepeatRequestsView(_FromMetrics):
+    appointments: int
+    repeat_requests: int
+    appointments_with_repeats: int
+    max_requests: int
+    no_appointment: int
+
+
+class SuccessView(_FromMetrics):
+    """The presentation's success metrics (metrics.Success)."""
+
+    readiness: ReadinessView
+    handling_time: HandlingTimeView
+    repeat_requests: RepeatRequestsView
+
+
 class LlmCostsResponse(LlmCostsView):
     """`GET /api/staff/llm-costs`: the same numbers, with their window."""
 
@@ -466,6 +497,7 @@ class MetricsResponse(_FromMetrics):
     patient_sla: PatientSlaView
     policy: PolicyView
     llm: LlmCostsView
+    success: SuccessView
 
 
 # --- sub-project 16: the patient's appointments (design D5, D6) ---------------------------

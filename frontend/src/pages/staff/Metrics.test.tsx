@@ -80,6 +80,22 @@ const FIXTURE: MetricsData = {
       { source: 'document_service', calls: 2, cost_usd: null },
     ],
   },
+  success: {
+    readiness: { judged: 4, ready: 3, rate: 0.75, upcoming: 2, upcoming_ready: 1 },
+    handling_time: {
+      overall: { count: 10, p50: 150, p95: 900, max: 1200 },
+      closed: { count: 7, p50: 120, p95: 300, max: 400 },
+      handed_off: { count: 3, p50: 60, p95: 1100, max: 1200 },
+      open: 3,
+    },
+    repeat_requests: {
+      appointments: 6,
+      repeat_requests: 2,
+      appointments_with_repeats: 1,
+      max_requests: 3,
+      no_appointment: 1,
+    },
+  },
 }
 
 function tile(label: string): HTMLElement {
@@ -112,6 +128,21 @@ describe('Metrics', () => {
     const status = await screen.findByText('טוען…')
     expect(status).toHaveAttribute('role', 'status')
     expect(status.closest('.loader')).toBeInTheDocument()
+  })
+
+  it('shows the success metrics first, with what each one is out of', async () => {
+    vi.mocked(api.getMetrics).mockResolvedValue(FIXTURE)
+    render(<Metrics />)
+
+    const heading = await screen.findByRole('heading', { name: 'מדדי הצלחה' })
+    expect(screen.getAllByRole('heading', { level: 2 })[0]).toBe(heading)
+    expect(tile('מוכנות לפני התור')).toHaveTextContent('75%')
+    expect(tile('מוכנות לפני התור')).toHaveTextContent('3 מתוך 4 תורים')
+    expect(tile('מוכנות לפני התור')).toHaveTextContent('2 תורים עתידיים, 1 כבר מוכנים')
+    expect(tile('זמן טיפול בפנייה (p50)')).toHaveTextContent('2.5 min')
+    expect(tile('זמן טיפול בפנייה (p50)')).toHaveTextContent('הסתיימו 7 · הועברו לצוות 3 · פתוחות 3')
+    expect(tile('פניות חוזרות')).toHaveTextContent('2')
+    expect(tile('פניות חוזרות')).toHaveTextContent('ב־1 מתוך 6 תורים · עד 3 פניות לתור · 1 ללא תור')
   })
 
   it('loads the last 7 days and shows every group', async () => {

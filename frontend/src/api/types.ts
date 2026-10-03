@@ -553,6 +553,22 @@ export interface MetricsPolicy {
   blocked_by_event: Record<string, number>
 }
 
+/** The presentation's success metrics. An appointment is (patient, the appointment the case is about). */
+export interface MetricsSuccess {
+  /** Appointments in the window that have passed: ready = a case resolved before the appointment. */
+  readiness: { judged: number; ready: number; rate: number | null; upcoming: number; upcoming_ready: number }
+  /** Cases opened in the window: opening to the first of an end or a hand-off to staff. */
+  handling_time: { overall: Durations; closed: Durations; handed_off: Durations; open: number }
+  /** Cases opened in the window, per appointment: every case after the first is a repeat. */
+  repeat_requests: {
+    appointments: number
+    repeat_requests: number
+    appointments_with_repeats: number
+    max_requests: number
+    no_appointment: number
+  }
+}
+
 /** `GET /api/admin/metrics?from=&to=` → 200 (`docs/api.md` §7). */
 export interface Metrics {
   window: { start: IsoDateTime; end: IsoDateTime }
@@ -564,6 +580,7 @@ export interface Metrics {
   policy: MetricsPolicy
   /** Sub-project 19: exactly `GET /api/staff/llm-costs`'s body without its `window` (§7, §10). */
   llm: LlmCostSummary
+  success: MetricsSuccess
 }
 
 // ---- LLM cost (sub-project 19, docs/api.md §10) ------------------------------
