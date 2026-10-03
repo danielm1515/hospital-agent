@@ -22,19 +22,12 @@ function renderLogin(login: AuthValue['login'] = vi.fn(async () => PATIENT_USER)
 }
 
 describe('PatientLogin', () => {
-  it('reproduces the design brand panel', () => {
+  it('keeps the brand panel as decoration only, with no marketing copy', () => {
     const { container } = renderLogin()
-    expect(screen.getByText('PATIENT SERVICES')).toBeInTheDocument()
-    expect(container.querySelector('.brand-pane .pattern')).toBeInTheDocument()
-    expect(screen.getByText(/בלי להמתין על הקו/)).toBeInTheDocument()
-    expect(
-      screen.getByText(
-        'הסוכן הדיגיטלי אוסף את הפרטים, מאתר את המסמכים בתיק שלכם ומעביר לרופא רק את מה שדורש החלטה רפואית.',
-      ),
-    ).toBeInTheDocument()
-    expect(screen.getByText('זמין בכל שעה, כל ימות השבוע')).toBeInTheDocument()
-    expect(screen.getByText('כל פנייה רפואית עוברת אישור אדם')).toBeInTheDocument()
-    expect(screen.getByText('הפרטים נשמרים בתיק הרפואי בלבד')).toBeInTheDocument()
+    const pane = container.querySelector('.brand-pane')
+    expect(pane?.querySelector('.pattern')).toBeInTheDocument()
+    expect(pane?.textContent?.trim()).toBe('')
+    expect(screen.queryByText('PATIENT SERVICES')).not.toBeInTheDocument()
     expect(container.querySelector('.step .steps')).toBeInTheDocument()
   })
 

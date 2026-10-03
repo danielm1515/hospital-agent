@@ -11,8 +11,8 @@ import { DEMO_PASSWORD } from '../../auth/demo'
 
 /**
  * The patient sign-in screen, built from `design/ramon-ui/patient-login.html`:
- * the same AuthLayout, the same brand panel (pattern, eyebrow, heading, copy and
- * facts, verbatim) and the same step-indicator styling. The design's phone + OTP
+ * the same AuthLayout, the brand panel's pattern (its copy removed, see BrandPane) and the
+ * same step-indicator styling. The design's phone + OTP
  * pair is replaced by an id and a password, because the demo IdP is a fixed user
  * list (§18.3, design §3 / decision 2).
  */
@@ -119,7 +119,11 @@ export function PatientLogin() {
   )
 }
 
-/** `patient-login.html`'s brand panel: the pattern, the copy and the facts, verbatim. */
+/**
+ * `patient-login.html`'s brand panel, as decoration only: the pattern on the brand surface. The
+ * design's marketing copy (eyebrow, heading, paragraph and facts) was removed at the owner's
+ * request - it said nothing the demo needs.
+ */
 function BrandPane() {
   return (
     <>
@@ -138,37 +142,6 @@ function BrandPane() {
           opacity=".6"
         />
       </svg>
-
-      <div className="brand-body">
-        <p className="eyebrow">PATIENT SERVICES</p>
-        <p className="brand-h">
-          פנייה אחת, מענה אחד,
-          <br />
-          בלי להמתין על הקו.
-        </p>
-        <p className="brand-p">
-          הסוכן הדיגיטלי אוסף את הפרטים, מאתר את המסמכים בתיק שלכם ומעביר לרופא רק את מה שדורש החלטה רפואית.
-        </p>
-
-        <ul className="facts">
-          <li>
-            <span className="dotlive" aria-hidden="true" />
-            זמין בכל שעה, כל ימות השבוע
-          </li>
-          <li>
-            <span className="tick" aria-hidden="true">
-              ✓
-            </span>
-            כל פנייה רפואית עוברת אישור אדם
-          </li>
-          <li>
-            <span className="tick" aria-hidden="true">
-              ✓
-            </span>
-            הפרטים נשמרים בתיק הרפואי בלבד
-          </li>
-        </ul>
-      </div>
     </>
   )
 }
