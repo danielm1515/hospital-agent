@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import base64
 import binascii
+from collections.abc import Iterable
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from typing import Any
@@ -486,6 +487,39 @@ def consume_approval(conn: Connection, approval_id: str, now: datetime) -> int:
 
 
 # --- executions --------------------------------------------------------------------
+
+
+def load_traces(conn: Connection, case_ids: Iterable[str]) -> dict[str, list[AuditEntry]]:
+    """load_trace for many cases in one statement: each case's audit rows in order."""
+    ids = list(case_ids)
+    traces: dict[str, list[AuditEntry]] = {case_id: [] for case_id in ids}
+    if ids:
+        rows = conn.execute(select(audit_log).where(audit_log.c.case_id.in_(ids))
+                            .order_by(audit_log.c.audit_id)).mappings()
+        for row in rows:
+            traces[row["case_id"]].append(AuditEntry(**dict(row)))
+    return traces
+
+
+def load_executions(conn: Connection, execution_ids: Iterable[str]) -> dict[str, ExecutionRecord]:
+    """load_execution for many ids in one statement; an unknown id is simply absent."""
+    ids = list(execution_ids)
+    if not ids:
+        return {}
+    rows = conn.execute(select(executions).where(executions.c.execution_id.in_(ids))).mappings()
+    return {row["execution_id"]: ExecutionRecord(**dict(row)) for row in rows}
+
+
+def content_approvals_for_cases(conn: Connection, case_ids: Iterable[str], action: str) -> dict[str, list[ApprovalRecord]]:
+    """content_approvals_for many cases in one statement, each case's newest last."""
+    ids = list(case_ids)
+    found: dict[str, list[ApprovalRecord]] = {case_id: [] for case_id in ids}
+    if ids:
+        rows = conn.execute(select(approvals).where(approvals.c.case_id.in_(ids), approvals.c.action == action)
+                            .order_by(approvals.c.granted_at, approvals.c.approval_id)).mappings()
+        for row in rows:
+            found[row["case_id"]].append(ApprovalRecord(**dict(row)))
+    return found
 
 
 def load_execution(conn: Connection, execution_id: str) -> ExecutionRecord | None:

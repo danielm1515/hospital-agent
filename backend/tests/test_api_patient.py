@@ -289,3 +289,36 @@ def test_limit_and_offset_return_one_page_of_the_newest_first_list(client):
 def test_an_invalid_limit_or_offset_is_422(client, params, code):
     response = client.get("/api/patient/requests", params=params, headers=auth(client, PATIENT))
     assert (response.status_code, response.json()) == (422, {"detail": code})
+
+
+# --- the list reads its cases' data in a fixed number of statements (no query per case) -------
+
+def _statements_for_list(client, app_engine, headers) -> int:
+    from sqlalchemy import event
+
+    statements = []
+
+    def count(conn, cursor, statement, parameters, context, executemany):
+        statements.append(statement)
+
+    event.listen(app_engine, "before_cursor_execute", count)
+    try:
+        assert client.get("/api/patient/requests", headers=headers).status_code == 200
+    finally:
+        event.remove(app_engine, "before_cursor_execute", count)
+    return len(statements)
+
+
+def test_listing_requests_costs_the_same_statements_for_two_cases_as_for_six(client, app_engine):
+    """Each case used to cost ~10 statements of its own (trace, approvals twice, five Data Log
+    kinds, the execution, the request text): 143 statements for 23 cases, 21 s against a remote
+    database. The cases' data is now read in one go, whatever the count."""
+    headers = auth(client, PATIENT)
+    for i in range(2):
+        submit(client, PATIENT, f"{REQUEST} a{i}")
+    two = _statements_for_list(client, app_engine, headers)
+    for i in range(4):
+        submit(client, PATIENT, f"{REQUEST} b{i}")
+    six = _statements_for_list(client, app_engine, headers)
+    assert six == two, (two, six)
+    assert two <= 8, two
