@@ -602,11 +602,15 @@ img {
   outline-offset: 2px;
 }
 
+/* The form sits in the middle of the pane's space below the header, both ways - not pinned to
+   its top and inline-start edge, now that the card is as tall as the viewport. */
 .auth-root .step {
   display: flex;
   flex-direction: column;
   gap: var(--space-4);
+  inline-size: 100%;
   max-inline-size: 440px;
+  margin: auto;
 }
 
 .auth-root .steps {
