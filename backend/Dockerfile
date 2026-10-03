@@ -22,4 +22,5 @@ RUN uv sync --frozen --no-install-project
 COPY . .
 
 EXPOSE 8000
-CMD ["sh", "-c", "alembic upgrade head && uvicorn hospital_agent.api.app:app --host 0.0.0.0 --port 8000 --reload"]
+# serve.sh: migrations, then uvicorn --reload under a /health watchdog (see the script).
+CMD ["sh", "/repo/backend/serve.sh"]
