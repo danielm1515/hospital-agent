@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { useNavigate, useParams } from 'react-router-dom'
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import * as api from '../../api/client'
 import type { DataLogEntry, Decision, DecisionBody, MessageTemplate, ReviewContext, ReviewItem } from '../../api/types'
 import { Alert } from '../../components/Alert'
@@ -7,6 +7,7 @@ import { AppointmentsPanel } from '../../components/AppointmentsPanel'
 import { Button } from '../../components/Button'
 import { Loading } from '../../components/Loading'
 import { StatusPill } from '../../components/StatusPill'
+import { Tabs } from '../../components/Tabs'
 import { TextField } from '../../components/TextField'
 import { useAuth } from '../../auth/AuthContext'
 import { AuditTimeline } from './AuditTimeline'
@@ -28,9 +29,13 @@ import {
   toIsoWithOffset,
 } from './labels'
 
+/** The case's tabs, in order; the address keeps the open one (`?tab=audit`). */
+const CASE_TABS = ['decision', 'data', 'appointment', 'audit'] as const
+type CaseTab = (typeof CASE_TABS)[number]
+
 /**
- * One case in the review queue (`docs/api.md` §5), in three columns: the Data Log
- * content, the Audit trace and the decision form.
+ * One case in the review queue (`docs/api.md` §5), in four tabs - the decision form, the Data
+ * Log content, the appointment, and the Audit trace - under a compact header.
  *
  * The decision is bound to what the reviewer read: it carries the
  * `shown_context_ref` of the context on screen, and a `409 context_changed`
@@ -42,6 +47,7 @@ export function ReviewCase() {
   const { caseId = '' } = useParams<{ caseId: string }>()
   const navigate = useNavigate()
   const { user } = useAuth()
+  const [searchParams, setSearchParams] = useSearchParams()
 
   const [context, setContext] = useState<ReviewContext | null>(null)
   const [item, setItem] = useState<ReviewItem | null>(null)
@@ -139,6 +145,22 @@ export function ReviewCase() {
   const allowed = item?.allowed_decisions ?? []
   const required = item?.required_fields ?? []
 
+  // No tab in the address: the decision when one is awaited (or still loading), else the content.
+  const asked = searchParams.get('tab')
+  const tab: CaseTab = CASE_TABS.includes(asked as CaseTab)
+    ? (asked as CaseTab)
+    : itemLoaded && !itemError && allowed.length === 0
+      ? 'data'
+      : 'decision'
+  const selectTab = (next: string) =>
+    setSearchParams(
+      (params) => {
+        params.set('tab', next)
+        return params
+      },
+      { replace: true },
+    )
+
   async function submit(decision: Decision) {
     if (!context) return
     setDecisionError(null)
@@ -230,6 +252,7 @@ export function ReviewCase() {
   }
 
   const groups = groupByKind(context.data)
+  const latestRequest = [...context.data].reverse().find((entry) => entry.kind === 'request_text' && entry.content)
 
   return (
     <section className="staff-page review-page">
@@ -266,225 +289,254 @@ export function ReviewCase() {
         )}
       </header>
 
-      <div className="fact-groups">
-        <CaseAppointmentFacts facts={context} />
-      </div>
-
-      <AppointmentsPanel
-        key={caseId}
-        audience="staff"
-        load={loadAppointments}
-        loadInstruction={api.getStaffInstruction}
-      />
-
       {loadError && (
         <Alert variant="error" title="רענון ההקשר נכשל">
           <span className="mono">{loadError}</span>
         </Alert>
       )}
 
-      <div className="review-layout">
-        <section className="card col" aria-labelledby="col-data">
-          <h2 className="col-h" id="col-data">
-            תוכן הפנייה
-          </h2>
-          <p className="col-note">התוכן נשמר ב-Data Log בלבד. יומן הביקורת שומר רק את ה-hash.</p>
-          {groups.length === 0 ? (
-            <p className="empty-note">אין תוכן שמור לפנייה הזו.</p>
-          ) : (
-            groups.map(([kind, entries]) => (
-              <div className="data-group" key={kind}>
-                <h3 className="data-h">{dataKindLabel(kind)}</h3>
-                {entries.map((entry) => (
-                  <article className="data-item" key={entry.entry_id}>
-                    <p className="data-content">{entry.content}</p>
-                    <p className="data-meta">
-                      <span className="mono">{entry.entry_id}</span>
-                      <span>{formatDateTime(entry.created_at)}</span>
-                    </p>
-                    <p className="data-hash mono" dir="ltr" title={entry.content_hash}>
-                      {entry.content_hash.slice(0, 16)}…
-                    </p>
-                    <Button variant="danger" onClick={() => setPendingDelete(entry)}>
-                      מחיקה לפי בקשת מטופל
+      <Tabs
+        label="פרטי הפנייה"
+        idPrefix="case"
+        selected={tab}
+        onSelect={selectTab}
+        tabs={[
+          {
+            id: 'decision',
+            label: 'הכרעה',
+            content: (
+              <section className="card col tab-card">
+                {latestRequest && (
+                  <div className="request-brief">
+                    <h2 className="col-sub">הפנייה</h2>
+                    <p className="data-content">{latestRequest.content}</p>
+                    <Button variant="quiet" onClick={() => selectTab('data')}>
+                      לתוכן המלא
                     </Button>
-                  </article>
-                ))}
-              </div>
-            ))
-          )}
-        </section>
-
-        <section className="card col" aria-labelledby="col-audit">
-          <h2 className="col-h" id="col-audit">
-            יומן הביקורת
-          </h2>
-          <p className="col-note">כל הרשומות של הפנייה, מהישנה לחדשה.</p>
-          <AuditTimeline rows={context.trace} context={context} />
-        </section>
-
-        <section className="card col" aria-labelledby="col-decision">
-          <h2 className="col-h" id="col-decision">
-            הכרעה
-          </h2>
-          {item?.escalation_kind === 'MedicalQuestion' && (
-            <ClinicalAnswer
-              caseId={caseId}
-              shownContextRef={context.shown_context_ref}
-              role={user?.role ?? 'admin_staff'}
-              onAnswered={() =>
-                navigate('/staff', {
-                  replace: true,
-                  state: {
-                    title: 'התשובה נשלחה',
-                    notice: `נשלחה תשובה למטופל בפנייה ${caseId}, והפנייה נסגרה.`,
-                  },
-                })
-              }
-              onContextChanged={() => void refreshContext()}
-            />
-          )}
-          {allowed.length > 0 && (
-            <PatientRequest
-              caseId={caseId}
-              shownContextRef={context.shown_context_ref}
-              role={user?.role ?? 'admin_staff'}
-              templates={templates}
-              allowsApprove={allowed.includes('approve')}
-              onSent={() =>
-                navigate('/staff', {
-                  replace: true,
-                  state: { title: 'הבקשה נשלחה', notice: `נשלחה בקשה למטופל בפנייה ${caseId}.` },
-                })
-              }
-              onContextChanged={() => void refreshContext()}
-            />
-          )}
-          {!itemLoaded ? (
-            <Loading size="inline" />
-          ) : itemError && item === null ? (
-            // Fix round 3: the item fetch itself failed and there is no reliable value to
-            // fall back on (never a confirmed 404) - "not awaiting a decision" would be a
-            // guess dressed as a fact, and a first load never refreshed anything to blame.
-            <Alert variant="error" title="טעינת הפנייה נכשלה">
-              <span className="mono">{itemError}</span>
-            </Alert>
-          ) : allowed.length === 0 ? (
-            <Alert variant="info" title="הפנייה אינה ממתינה להכרעה">
-              המסך מציג את ההקשר בלבד. פניות להכרעה מופיעות בתור ההסלמות.
-            </Alert>
-          ) : (
-            <>
-              <p className="col-note">
-                ההכרעה נשלחת עם ההקשר שמוצג כאן: <span className="mono">{context.shown_context_ref}</span>
-              </p>
-              <form
-                className="form decision-form"
-                onSubmit={(event) => {
-                  event.preventDefault()
-                }}
-              >
-                <TextField
-                  multiline
-                  label="סיבת ההכרעה (פנימית)"
-                  value={reason}
-                  maxLength={2000}
-                  counter
-                  error={reasonError ?? undefined}
-                  hint="נשמרת על רשומת האישור וביומן הביקורת (§12.5). אינה נשלחת למטופל: מסירת תוכן רפואי מחייבת ContentApproval של איש צוות קליני."
-                  onChange={(event) => setReason(event.target.value)}
+                  </div>
+                )}
+              {item?.escalation_kind === 'MedicalQuestion' && (
+                <ClinicalAnswer
+                  caseId={caseId}
+                  shownContextRef={context.shown_context_ref}
+                  role={user?.role ?? 'admin_staff'}
+                  onAnswered={() =>
+                    navigate('/staff', {
+                      replace: true,
+                      state: {
+                        title: 'התשובה נשלחה',
+                        notice: `נשלחה תשובה למטופל בפנייה ${caseId}, והפנייה נסגרה.`,
+                      },
+                    })
+                  }
+                  onContextChanged={() => void refreshContext()}
                 />
-
-                {required.includes('verified_identity_ref') && (
-                  <TextField
-                    label={REQUIRED_FIELD_LABELS.verified_identity_ref}
-                    value={identityRef}
-                    maxLength={200}
-                    hint={REQUIRED_FIELD_HINTS.verified_identity_ref}
-                    onChange={(event) => setIdentityRef(event.target.value)}
-                  />
-                )}
-                {required.includes('patient_deadline') && (
-                  <TextField
-                    label={REQUIRED_FIELD_LABELS.patient_deadline}
-                    type="datetime-local"
-                    dir="ltr"
-                    value={deadline}
-                    hint={REQUIRED_FIELD_HINTS.patient_deadline}
-                    onChange={(event) => setDeadline(event.target.value)}
-                  />
-                )}
-
-                {fieldError && (
-                  <Alert variant="error" title="חסר שדה חובה">
-                    {fieldError}
-                  </Alert>
-                )}
-
-                <div className="closing-message" role="group" aria-label="הודעת סיום למטופל">
-                  <h3 className="col-sub">הודעת סיום למטופל (אופציונלי)</h3>
-                  <p className="col-note">נשלחת רק עם סגירה או דחייה.</p>
-                  <MessagePicker
-                    purpose="closing"
-                    role={user?.role ?? 'admin_staff'}
-                    templates={templates}
-                    value={closing}
-                    onChange={setClosing}
-                    allowNone
-                  />
-                </div>
-
-                <div className="decision-actions">
-                  {allowed.includes('approve') && (
-                    <Button
-                      variant="primary"
-                      busy={busy === 'approve'}
-                      disabled={busy !== null}
-                      onClick={() => void submit('approve')}
-                    >
-                      {DECISION_LABELS.approve}
-                    </Button>
-                  )}
-                  {allowed.includes('resolve') && (
-                    <Button
-                      variant="secondary"
-                      busy={busy === 'resolve'}
-                      disabled={busy !== null}
-                      onClick={() => void submit('resolve')}
-                    >
-                      {DECISION_LABELS.resolve}
-                    </Button>
-                  )}
-                  {allowed.includes('reject') && (
-                    <Button
-                      variant="danger"
-                      busy={busy === 'reject'}
-                      disabled={busy !== null}
-                      onClick={() => void submit('reject')}
-                    >
-                      {DECISION_LABELS.reject}
-                    </Button>
-                  )}
-                </div>
-              </form>
-
-              {contextChanged && (
-                <Alert variant="error" title="ההקשר השתנה">
-                  <p>ההקשר שהוצג כבר אינו העדכני. רעננו אותו, קראו שוב את התוכן והכריעו על המצב הנוכחי.</p>
-                  <Button variant="secondary" onClick={() => void refreshContext()}>
-                    רענון הקשר
-                  </Button>
-                </Alert>
               )}
-              {decisionError && (
-                <Alert variant="error" title="ההכרעה נדחתה">
-                  {requestErrorLabel(decisionError)} <span className="mono">{decisionError}</span>
-                </Alert>
+              {allowed.length > 0 && (
+                <PatientRequest
+                  caseId={caseId}
+                  shownContextRef={context.shown_context_ref}
+                  role={user?.role ?? 'admin_staff'}
+                  templates={templates}
+                  allowsApprove={allowed.includes('approve')}
+                  onSent={() =>
+                    navigate('/staff', {
+                      replace: true,
+                      state: { title: 'הבקשה נשלחה', notice: `נשלחה בקשה למטופל בפנייה ${caseId}.` },
+                    })
+                  }
+                  onContextChanged={() => void refreshContext()}
+                />
               )}
-            </>
-          )}
-        </section>
-      </div>
+              {!itemLoaded ? (
+                <Loading size="inline" />
+              ) : itemError && item === null ? (
+                // Fix round 3: the item fetch itself failed and there is no reliable value to
+                // fall back on (never a confirmed 404) - "not awaiting a decision" would be a
+                // guess dressed as a fact, and a first load never refreshed anything to blame.
+                <Alert variant="error" title="טעינת הפנייה נכשלה">
+                  <span className="mono">{itemError}</span>
+                </Alert>
+              ) : allowed.length === 0 ? (
+                <Alert variant="info" title="הפנייה אינה ממתינה להכרעה">
+                  המסך מציג את ההקשר בלבד. פניות להכרעה מופיעות בתור ההסלמות.
+                </Alert>
+              ) : (
+                <>
+                  <p className="col-note">
+                    ההכרעה נשלחת עם ההקשר שמוצג כאן: <span className="mono">{context.shown_context_ref}</span>
+                  </p>
+                  <form
+                    className="form decision-form"
+                    onSubmit={(event) => {
+                      event.preventDefault()
+                    }}
+                  >
+                    <TextField
+                      multiline
+                      label="סיבת ההכרעה (פנימית)"
+                      value={reason}
+                      maxLength={2000}
+                      counter
+                      error={reasonError ?? undefined}
+                      hint="נשמרת על רשומת האישור וביומן הביקורת (§12.5). אינה נשלחת למטופל: מסירת תוכן רפואי מחייבת ContentApproval של איש צוות קליני."
+                      onChange={(event) => setReason(event.target.value)}
+                    />
+
+                    {required.includes('verified_identity_ref') && (
+                      <TextField
+                        label={REQUIRED_FIELD_LABELS.verified_identity_ref}
+                        value={identityRef}
+                        maxLength={200}
+                        hint={REQUIRED_FIELD_HINTS.verified_identity_ref}
+                        onChange={(event) => setIdentityRef(event.target.value)}
+                      />
+                    )}
+                    {required.includes('patient_deadline') && (
+                      <TextField
+                        label={REQUIRED_FIELD_LABELS.patient_deadline}
+                        type="datetime-local"
+                        dir="ltr"
+                        value={deadline}
+                        hint={REQUIRED_FIELD_HINTS.patient_deadline}
+                        onChange={(event) => setDeadline(event.target.value)}
+                      />
+                    )}
+
+                    {fieldError && (
+                      <Alert variant="error" title="חסר שדה חובה">
+                        {fieldError}
+                      </Alert>
+                    )}
+
+                    <div className="closing-message" role="group" aria-label="הודעת סיום למטופל">
+                      <h3 className="col-sub">הודעת סיום למטופל (אופציונלי)</h3>
+                      <p className="col-note">נשלחת רק עם סגירה או דחייה.</p>
+                      <MessagePicker
+                        purpose="closing"
+                        role={user?.role ?? 'admin_staff'}
+                        templates={templates}
+                        value={closing}
+                        onChange={setClosing}
+                        allowNone
+                      />
+                    </div>
+
+                    <div className="decision-actions">
+                      {allowed.includes('approve') && (
+                        <Button
+                          variant="primary"
+                          busy={busy === 'approve'}
+                          disabled={busy !== null}
+                          onClick={() => void submit('approve')}
+                        >
+                          {DECISION_LABELS.approve}
+                        </Button>
+                      )}
+                      {allowed.includes('resolve') && (
+                        <Button
+                          variant="secondary"
+                          busy={busy === 'resolve'}
+                          disabled={busy !== null}
+                          onClick={() => void submit('resolve')}
+                        >
+                          {DECISION_LABELS.resolve}
+                        </Button>
+                      )}
+                      {allowed.includes('reject') && (
+                        <Button
+                          variant="danger"
+                          busy={busy === 'reject'}
+                          disabled={busy !== null}
+                          onClick={() => void submit('reject')}
+                        >
+                          {DECISION_LABELS.reject}
+                        </Button>
+                      )}
+                    </div>
+                  </form>
+
+                  {contextChanged && (
+                    <Alert variant="error" title="ההקשר השתנה">
+                      <p>ההקשר שהוצג כבר אינו העדכני. רעננו אותו, קראו שוב את התוכן והכריעו על המצב הנוכחי.</p>
+                      <Button variant="secondary" onClick={() => void refreshContext()}>
+                        רענון הקשר
+                      </Button>
+                    </Alert>
+                  )}
+                  {decisionError && (
+                    <Alert variant="error" title="ההכרעה נדחתה">
+                      {requestErrorLabel(decisionError)} <span className="mono">{decisionError}</span>
+                    </Alert>
+                  )}
+                </>
+              )}
+              </section>
+            ),
+          },
+          {
+            id: 'data',
+            label: 'תוכן הפנייה',
+            count: context.data.length,
+            content: (
+              <section className="card col tab-card">
+              <p className="col-note">התוכן נשמר ב-Data Log בלבד. יומן הביקורת שומר רק את ה-hash.</p>
+              {groups.length === 0 ? (
+                <p className="empty-note">אין תוכן שמור לפנייה הזו.</p>
+              ) : (
+                groups.map(([kind, entries]) => (
+                  <div className="data-group" key={kind}>
+                    <h3 className="data-h">{dataKindLabel(kind)}</h3>
+                    {entries.map((entry) => (
+                      <article className="data-item" key={entry.entry_id}>
+                        <p className="data-content">{entry.content}</p>
+                        <p className="data-meta">
+                          <span className="mono">{entry.entry_id}</span>
+                          <span>{formatDateTime(entry.created_at)}</span>
+                        </p>
+                        <p className="data-hash mono" dir="ltr" title={entry.content_hash}>
+                          {entry.content_hash.slice(0, 16)}…
+                        </p>
+                        <Button variant="danger" onClick={() => setPendingDelete(entry)}>
+                          מחיקה לפי בקשת מטופל
+                        </Button>
+                      </article>
+                    ))}
+                  </div>
+                ))
+              )}
+              </section>
+            ),
+          },
+          {
+            id: 'appointment',
+            label: 'תור ומסמכים',
+            content: (
+              <div className="tab-stack">
+                <div className="fact-groups">
+                  <CaseAppointmentFacts facts={context} />
+                </div>
+                <AppointmentsPanel
+                  key={caseId}
+                  audience="staff"
+                  load={loadAppointments}
+                  loadInstruction={api.getStaffInstruction}
+                />
+              </div>
+            ),
+          },
+          {
+            id: 'audit',
+            label: 'יומן ביקורת',
+            count: context.trace.length,
+            content: (
+              <section className="card col tab-card">
+                <AuditTimeline rows={context.trace} context={context} label="יומן הביקורת" />
+              </section>
+            ),
+          },
+        ]}
+      />
 
       {pendingDelete && (
         <div className="dialog-scrim">

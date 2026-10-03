@@ -6,6 +6,7 @@ import { Alert } from '../../components/Alert'
 import { Button } from '../../components/Button'
 import { Loading } from '../../components/Loading'
 import { StatusPill } from '../../components/StatusPill'
+import { Tabs } from '../../components/Tabs'
 import { AuditTimeline } from './AuditTimeline'
 import { CaseAppointmentFacts } from './CaseAppointmentFacts'
 import { PatientThread } from './PatientThread'
@@ -283,6 +284,7 @@ interface RowProps {
 }
 
 function ExpandableRow({ row, detail, detailError, open, context, contextError, onToggle }: RowProps) {
+  const [tab, setTab] = useState('facts')
   return (
     <>
       <tr className="row-link" onClick={onToggle}>
@@ -319,57 +321,82 @@ function ExpandableRow({ row, detail, detailError, open, context, contextError, 
         <tr className="detail-row">
           <td colSpan={7}>
             <div className="case-detail">
-              {detail ? (
-                <CaseFacts detail={detail} />
-              ) : detailError ? (
-                <Alert variant="error" title="טעינת פרטי הפנייה נכשלה">
-                  <span className="mono">{detailError}</span>
-                </Alert>
-              ) : (
-                <Loading size="inline" label="טוען פרטים" />
-              )}
+              <Tabs
+                label={`פרטי הפנייה ${row.case_id}`}
+                idPrefix={`monitor-${row.case_id}`}
+                selected={tab}
+                onSelect={setTab}
+                tabs={[
+                  {
+                    id: 'facts',
+                    label: 'פרטים',
+                    content: (
+                      <div className="tab-stack">
+                        {detail ? (
+                          <CaseFacts detail={detail} />
+                        ) : detailError ? (
+                          <Alert variant="error" title="טעינת פרטי הפנייה נכשלה">
+                            <span className="mono">{detailError}</span>
+                          </Alert>
+                        ) : (
+                          <Loading size="inline" label="טוען פרטים" />
+                        )}
 
-              {detail?.ordered_steps && detail.ordered_steps.length > 0 && (
-                <section className="fact-group">
-                  <h3 className="fact-group-h">התוכנית (ordered_steps)</h3>
-                  <ol className="plan-steps">
-                    {detail.ordered_steps.map((step) => (
-                      <li className={planStepClass(step.step, detail.current_step)} key={step.step}>
-                        <span className="step-n">{step.step}</span>
-                        <span className="mono">{step.action}</span>
-                        <span className="step-state">{planStepLabel(step.step, detail.current_step)}</span>
-                      </li>
-                    ))}
-                  </ol>
-                </section>
-              )}
-
-              {contextError ? (
-                <Alert variant="error" title="טעינת תוכן הפנייה נכשלה">
-                  <span className="mono">{contextError}</span>
-                </Alert>
-              ) : context ? (
-                <>
-                  <section className="fact-group">
-                    <h3 className="fact-group-h">התכתובת עם המטופל</h3>
-                    <PatientThread entries={context.data} />
-                  </section>
-
-                  <h3 className="fact-group-h">יומן הביקורת (Audit)</h3>
-                  <AuditTimeline
-                    rows={context.trace}
-                    context={context}
-                    label={`יומן הביקורת של ${row.case_id}`}
-                  />
-                </>
-              ) : (
-                <Loading size="inline" label="טוען תכתובת" />
-              )}
+                        {detail?.ordered_steps && detail.ordered_steps.length > 0 && (
+                          <section className="fact-group">
+                            <h3 className="fact-group-h">התוכנית (ordered_steps)</h3>
+                            <ol className="plan-steps">
+                              {detail.ordered_steps.map((step) => (
+                                <li className={planStepClass(step.step, detail.current_step)} key={step.step}>
+                                  <span className="step-n">{step.step}</span>
+                                  <span className="mono">{step.action}</span>
+                                  <span className="step-state">{planStepLabel(step.step, detail.current_step)}</span>
+                                </li>
+                              ))}
+                            </ol>
+                          </section>
+                        )}
+                      </div>
+                    ),
+                  },
+                  {
+                    id: 'thread',
+                    label: 'התכתובת',
+                    content: contextError ? (
+                      <ContextError detail={contextError} />
+                    ) : context ? (
+                      <PatientThread entries={context.data} />
+                    ) : (
+                      <Loading size="inline" label="טוען תכתובת" />
+                    ),
+                  },
+                  {
+                    id: 'audit',
+                    label: 'יומן ביקורת',
+                    count: context?.trace.length,
+                    content: contextError ? (
+                      <ContextError detail={contextError} />
+                    ) : context ? (
+                      <AuditTimeline rows={context.trace} context={context} label={`יומן הביקורת של ${row.case_id}`} />
+                    ) : (
+                      <Loading size="inline" label="טוען יומן" />
+                    ),
+                  },
+                ]}
+              />
             </div>
           </td>
         </tr>
       )}
     </>
+  )
+}
+
+function ContextError({ detail }: { detail: string }) {
+  return (
+    <Alert variant="error" title="טעינת תוכן הפנייה נכשלה">
+      <span className="mono">{detail}</span>
+    </Alert>
   )
 }
 

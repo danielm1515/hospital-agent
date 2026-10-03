@@ -127,9 +127,9 @@ function context(overrides: Partial<ReviewContext> = {}): ReviewContext {
   }
 }
 
-function renderCase(role: 'clinical_staff' | 'admin_staff' = 'clinical_staff') {
+function renderCase(role: 'clinical_staff' | 'admin_staff' = 'clinical_staff', query = '') {
   return render(
-    <MemoryRouter initialEntries={[`/staff/cases/${CASE_ID}`]}>
+    <MemoryRouter initialEntries={[`/staff/cases/${CASE_ID}${query}`]}>
       <TestAuthProvider value={authValue({ user: { ...STAFF_USER, role } })}>
         <Routes>
           <Route path="/staff" element={<h1>תור הסלמות</h1>} />
@@ -164,14 +164,14 @@ describe('ReviewCase', () => {
 
     // The context itself loads fine and fast (its own mock resolves), so the page is past
     // the whole-page loader by now - only the decision panel's own item fetch is pending.
-    await screen.findByRole('heading', { name: 'התורים של המטופל' })
+    await screen.findByRole('tab', { name: 'הכרעה' })
     expect(screen.queryByText('הפנייה אינה ממתינה להכרעה')).not.toBeInTheDocument()
     const panelStatus = screen.getByText('טוען…')
     expect(panelStatus.closest('.loader')).toHaveClass('loader-inline')
   })
 
   it('shows the appointments panel for the patient, loaded with the case id', async () => {
-    renderCase()
+    renderCase('clinical_staff', '?tab=appointment')
 
     expect(await screen.findByRole('heading', { name: 'התורים של המטופל' })).toBeInTheDocument()
     // The panel calls load from its mount effect through a microtask, which can land after the
@@ -192,7 +192,7 @@ describe('ReviewCase', () => {
         instruction_version: '1',
       }),
     )
-    renderCase()
+    renderCase('clinical_staff', '?tab=appointment')
 
     const group = (await screen.findByRole('heading', { name: 'תור והוראות הכנה' })).closest('.fact-group') as HTMLElement
     expect(within(group).getByText('מבחן מאמץ')).toBeInTheDocument()
@@ -227,7 +227,7 @@ describe('ReviewCase', () => {
       title: 'לפני מבחן מאמץ',
       text: 'צום 3 שעות.',
     })
-    renderCase()
+    renderCase('clinical_staff', '?tab=appointment')
 
     await userEvent.click(await screen.findByRole('button', { name: 'הצגת הוראות ההכנה' }))
     expect(await screen.findByText('צום 3 שעות.')).toBeInTheDocument()
@@ -236,10 +236,11 @@ describe('ReviewCase', () => {
 
   it('does not reload the appointments list when the review context is refreshed', async () => {
     vi.mocked(api.decide).mockRejectedValue(new api.ApiError(409, 'context_changed'))
-    renderCase()
+    renderCase('clinical_staff', '?tab=appointment')
 
     await screen.findByRole('heading', { name: 'התורים של המטופל' })
     await waitFor(() => expect(api.listCaseAppointments).toHaveBeenCalledTimes(1))
+    await userEvent.click(screen.getByRole('tab', { name: 'הכרעה' }))
 
     await userEvent.type(await screen.findByLabelText(/סיבת ההכרעה/), 'סגירה.')
     await userEvent.click(screen.getByRole('button', { name: 'סגירת הפנייה' }))
@@ -254,12 +255,15 @@ describe('ReviewCase', () => {
   })
 
   it('shows the Data Log content and the audit trace as returned', async () => {
-    renderCase()
+    renderCase('clinical_staff', '?tab=data')
 
-    expect(await screen.findByText('האם להפסיק את מדלל הדם?')).toBeInTheDocument()
-    expect(screen.getByText('הפנייה')).toBeInTheDocument()
-    expect(screen.getByText('REQUEST_SUBMITTED')).toBeInTheDocument()
-    expect(screen.getByText('Received')).toBeInTheDocument()
+    const data = await screen.findByRole('tabpanel')
+    expect(within(data).getByText('האם להפסיק את מדלל הדם?')).toBeInTheDocument()
+    expect(within(data).getByText('הפנייה')).toBeInTheDocument()
+    await userEvent.click(screen.getByRole('tab', { name: /יומן ביקורת/ }))
+    const audit = screen.getByRole('tabpanel')
+    expect(within(audit).getByText('REQUEST_SUBMITTED')).toBeInTheDocument()
+    expect(within(audit).getByText('Received')).toBeInTheDocument()
     expect(screen.getByText('medical_answer_attempt')).toBeInTheDocument()
   })
 
@@ -504,7 +508,7 @@ describe('ReviewCase', () => {
   })
 
   it('asks for confirmation before it tombstones a Data Log entry', async () => {
-    renderCase()
+    renderCase('clinical_staff', '?tab=data')
 
     await userEvent.click(await screen.findByRole('button', { name: 'מחיקה לפי בקשת מטופל' }))
     expect(api.tombstone).not.toHaveBeenCalled()
@@ -517,7 +521,7 @@ describe('ReviewCase', () => {
   })
 
   it('reloads the context after a tombstone, for a fresh shown_context_ref', async () => {
-    renderCase()
+    renderCase('clinical_staff', '?tab=data')
 
     await userEvent.click(await screen.findByRole('button', { name: 'מחיקה לפי בקשת מטופל' }))
     await userEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'מחיקה' }))
@@ -526,7 +530,7 @@ describe('ReviewCase', () => {
   })
 
   it('cancels the deletion without calling the API', async () => {
-    renderCase()
+    renderCase('clinical_staff', '?tab=data')
 
     await userEvent.click(await screen.findByRole('button', { name: 'מחיקה לפי בקשת מטופל' }))
     await userEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'ביטול' }))
@@ -606,5 +610,52 @@ describe('ReviewCase', () => {
     expect(api.decide).toHaveBeenCalled()
     const [, body] = vi.mocked(api.decide).mock.calls[0]
     expect(body).not.toHaveProperty('message')
+  })
+})
+
+describe('ReviewCase tabs', () => {
+  it('splits the case into four tabs and opens on the decision when one is awaited', async () => {
+    renderCase()
+    const tabs = await screen.findAllByRole('tab')
+    expect(tabs.map((tab) => tab.textContent)).toEqual(['הכרעה', 'תוכן הפנייה1', 'תור ומסמכים', 'יומן ביקורת1'])
+    expect(screen.getByRole('tab', { name: 'הכרעה' })).toHaveAttribute('aria-selected', 'true')
+    expect(await screen.findByRole('button', { name: 'סגירת הפנייה' })).toBeVisible()
+    expect(screen.queryByRole('button', { name: 'מחיקה לפי בקשת מטופל' })).not.toBeInTheDocument()
+  })
+
+  it('shows the request text on the decision tab, with a link to the full content', async () => {
+    renderCase()
+    const panel = await screen.findByRole('tabpanel')
+    expect(within(panel).getByText('האם להפסיק את מדלל הדם?')).toBeInTheDocument()
+    await userEvent.click(within(panel).getByRole('button', { name: 'לתוכן המלא' }))
+    expect(screen.getByRole('tab', { name: /תוכן הפנייה/ })).toHaveAttribute('aria-selected', 'true')
+    expect(screen.getByRole('button', { name: 'מחיקה לפי בקשת מטופל' })).toBeVisible()
+  })
+
+  it('opens on the content when no decision is awaited', async () => {
+    vi.mocked(api.getReviewItem).mockRejectedValue(new api.ApiError(404, 'not_in_review'))
+    renderCase()
+    await waitFor(() =>
+      expect(screen.getByRole('tab', { name: /תוכן הפנייה/ })).toHaveAttribute('aria-selected', 'true'),
+    )
+  })
+
+  it('opens the tab named in the address', async () => {
+    renderCase('clinical_staff', '?tab=audit')
+    expect(await screen.findByRole('tab', { name: /יומן ביקורת/ })).toHaveAttribute('aria-selected', 'true')
+    expect(screen.getByRole('tabpanel')).toHaveAccessibleName(/יומן ביקורת/)
+  })
+
+  it('ignores an unknown tab in the address', async () => {
+    renderCase('clinical_staff', '?tab=nope')
+    expect(await screen.findByRole('tab', { name: 'הכרעה' })).toHaveAttribute('aria-selected', 'true')
+  })
+
+  it('keeps a half-written decision reason across a tab switch', async () => {
+    renderCase()
+    await userEvent.type(await screen.findByLabelText('סיבת ההכרעה (פנימית)'), 'טיוטה')
+    await userEvent.click(screen.getByRole('tab', { name: /יומן ביקורת/ }))
+    await userEvent.click(screen.getByRole('tab', { name: 'הכרעה' }))
+    expect(screen.getByLabelText('סיבת ההכרעה (פנימית)')).toHaveValue('טיוטה')
   })
 })

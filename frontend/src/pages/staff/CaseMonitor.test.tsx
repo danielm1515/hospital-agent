@@ -245,6 +245,21 @@ describe('CaseMonitor', () => {
     expect(api.getContext).toHaveBeenCalledWith('CASE-23FE645294B7')
   })
 
+  it('splits an expanded row into tabs - details first, the thread and the audit one click away', async () => {
+    renderMonitor()
+
+    await userEvent.click(await screen.findByRole('button', { name: 'CASE-23FE645294B7' }))
+
+    const list = await screen.findByRole('tablist', { name: 'פרטי הפנייה CASE-23FE645294B7' })
+    const tabs = within(list).getAllByRole('tab')
+    expect(tabs.map((tab) => tab.textContent?.replace(/\d+$/, ''))).toEqual(['פרטים', 'התכתובת', 'יומן ביקורת'])
+    expect(tabs[0]).toHaveAttribute('aria-selected', 'true')
+    expect(await screen.findByText('REQUEST_SUBMITTED')).not.toBeVisible()
+
+    await userEvent.click(within(list).getByRole('tab', { name: /יומן ביקורת/ }))
+    expect(screen.getByText('REQUEST_SUBMITTED')).toBeVisible()
+  })
+
   it('shows the smaller inline loading status in an expanded row while its detail and context load, with distinct labels (M1)', async () => {
     vi.mocked(api.getCase).mockReturnValue(new Promise(() => {})) // never resolves
     vi.mocked(api.getContext).mockReturnValue(new Promise(() => {})) // never resolves
