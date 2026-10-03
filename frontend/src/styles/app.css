@@ -500,20 +500,26 @@ img {
 
 /* ---- AuthLayout (patient-login.html / admin-login.html) ----------------- */
 
+/* The login card fills the viewport's full height - padding included (border-box), so it
+   never adds a scrollbar - and grows past it only when its content needs more room. */
 .auth-root {
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
   font-family: var(--font-sans);
   background: var(--surface-100);
   min-block-size: 100vh;
+  min-block-size: 100dvh;
   padding: var(--space-5);
 }
 
 .auth-root .screen {
+  flex: 1 0 auto;
   display: flex;
   background: var(--surface-000);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-card);
   overflow: hidden;
-  min-block-size: 700px;
 }
 
 .auth-root .pane {
