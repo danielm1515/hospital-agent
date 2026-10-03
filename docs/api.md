@@ -294,6 +294,12 @@ case comes back `in_review` at once.
 
 `200`: an array of patient views, **newest first**. `[]` when there are none.
 
+Optional paging, `?limit=&offset=` (2026-10-03): without `limit`, every request (as before);
+with it, at most `limit` (1-100) starting at `offset` (0 or more) - an offset past the end is
+`[]`. `422 invalid_limit` / `422 invalid_offset` otherwise. Only the page's cases are read, so a
+short first page also costs the server less. The main screen asks for `limit=6`, shows five,
+and offers "הצגת כל הפניות" when the sixth came back.
+
 ### GET /api/patient/requests/{case_id}
 
 `200`: the patient view. `404 case_not_found` for an unknown case or someone else's.

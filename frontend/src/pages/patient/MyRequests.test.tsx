@@ -215,3 +215,57 @@ describe('MyRequests polling', () => {
     expect(listRequests).toHaveBeenCalledTimes(1)
   })
 })
+
+describe('only the newest five at first', () => {
+  const many = (n: number) =>
+    Array.from({ length: n }, (_, i) =>
+      patientView({ case_id: `CASE-${i}`, request_text: `פנייה מספר ${i}`, status: 'completed' }),
+    )
+
+  it('asks for one more than it shows, and offers the rest when there are others', async () => {
+    listRequests.mockResolvedValue(many(6))
+    renderList()
+    expect(await screen.findByText('פנייה מספר 4')).toBeInTheDocument()
+    expect(listRequests).toHaveBeenCalledWith({ limit: 6 })
+    expect(screen.queryByText('פנייה מספר 5')).not.toBeInTheDocument()
+    expect(screen.getAllByRole('listitem').filter((li) => li.classList.contains('req-card'))).toHaveLength(5)
+    expect(screen.getByRole('button', { name: 'הצגת כל הפניות' })).toBeInTheDocument()
+  })
+
+  it('loads every request when asked', async () => {
+    listRequests.mockResolvedValueOnce(many(6)).mockResolvedValue(many(9))
+    renderList()
+    await userEvent.click(await screen.findByRole('button', { name: 'הצגת כל הפניות' }))
+    expect(await screen.findByText('פנייה מספר 8')).toBeInTheDocument()
+    expect(listRequests).toHaveBeenLastCalledWith()
+    expect(screen.queryByRole('button', { name: 'הצגת כל הפניות' })).not.toBeInTheDocument()
+  })
+
+  it('offers nothing more when five or fewer exist', async () => {
+    listRequests.mockResolvedValue(many(5))
+    renderList()
+    expect(await screen.findByText('פנייה מספר 4')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'הצגת כל הפניות' })).not.toBeInTheDocument()
+  })
+
+  it('shows the button busy while every request is loading', async () => {
+    let finish!: (value: ReturnType<typeof many>) => void
+    listRequests
+      .mockResolvedValueOnce(many(6))
+      .mockReturnValueOnce(new Promise((resolve) => (finish = resolve)))
+    renderList()
+    await userEvent.click(await screen.findByRole('button', { name: 'הצגת כל הפניות' }))
+    const busy = await screen.findByRole('button', { name: /טוען את כל הפניות/ })
+    expect(busy).toHaveAttribute('aria-busy', 'true')
+    await act(async () => finish(many(9)))
+    expect(await screen.findByText('פנייה מספר 8')).toBeInTheDocument()
+  })
+
+  it('offers the button again when loading every request fails', async () => {
+    listRequests.mockResolvedValueOnce(many(6)).mockRejectedValueOnce(new ApiError(503, 'unavailable')).mockResolvedValue(many(6))
+    renderList()
+    await userEvent.click(await screen.findByRole('button', { name: 'הצגת כל הפניות' }))
+    expect(await screen.findByText('לא הצלחנו לטעון את הפניות')).toBeInTheDocument()
+    expect(await screen.findByRole('button', { name: 'הצגת כל הפניות' })).not.toHaveAttribute('aria-busy')
+  })
+})

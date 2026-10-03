@@ -514,9 +514,11 @@ class SessionService:
     def patient_view(self, case_id: str) -> PatientView:
         return self._view(self._load(case_id))
 
-    def cases_of(self, patient_id: str) -> list[PatientView]:
+    def cases_of(self, patient_id: str, *, limit: int | None = None, offset: int = 0) -> list[PatientView]:
+        """The patient's cases, newest first; one page when `limit` is given - only those cases'
+        traces are read, so a short first page also costs the server less."""
         with self.engine.connect() as conn:
-            cases = repository.list_patient_cases(conn, patient_id)
+            cases = repository.list_patient_cases(conn, patient_id, limit=limit, offset=offset)
         return [self._view(case) for case in cases]
 
     # --- helpers ---------------------------------------------------------------------------

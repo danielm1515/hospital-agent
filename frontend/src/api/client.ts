@@ -207,8 +207,16 @@ export function createRequest(text: string, appointmentId?: string): Promise<Pat
   return request<PatientView>('POST', '/patient/requests', { body })
 }
 
-export function listRequests(): Promise<PatientView[]> {
-  return request<PatientView[]>('GET', '/patient/requests')
+/**
+ * The patient's requests, newest first: all of them, or one page (`limit`, `offset` - `docs/api.md`
+ * §4). The patient's main screen asks for the first few and loads the rest only on request.
+ */
+export function listRequests(page: { limit?: number; offset?: number } = {}): Promise<PatientView[]> {
+  const query = new URLSearchParams()
+  if (page.limit !== undefined) query.set('limit', String(page.limit))
+  if (page.offset !== undefined) query.set('offset', String(page.offset))
+  const suffix = query.toString() ? `?${query.toString()}` : ''
+  return request<PatientView[]>('GET', `/patient/requests${suffix}`)
 }
 
 export function getRequest(caseId: string): Promise<PatientView> {

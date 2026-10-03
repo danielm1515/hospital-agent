@@ -1387,6 +1387,13 @@ img {
 
 /* ---- The request list --------------------------------------------------- */
 
+/* "הצגת כל הפניות" under the first page of the patient's requests. */
+.req-more {
+  display: flex;
+  justify-content: center;
+  margin-block-start: var(--space-3);
+}
+
 .req-list {
   margin: 0;
   padding: 0;

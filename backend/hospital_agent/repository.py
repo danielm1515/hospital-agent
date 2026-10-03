@@ -249,10 +249,13 @@ def list_cases_page(
     return rows[:limit], has_more
 
 
-def list_patient_cases(conn: Connection, patient_id: str) -> list[CaseRecord]:
-    """One patient's cases, newest first."""
+def list_patient_cases(conn: Connection, patient_id: str, *, limit: int | None = None,
+                       offset: int = 0) -> list[CaseRecord]:
+    """One patient's cases, newest first - all of them, or one page (`limit`/`offset`)."""
     query = (select(cases).where(cases.c.patient_id == patient_id)
-             .order_by(cases.c.created_at.desc(), cases.c.case_id.desc()))
+             .order_by(cases.c.created_at.desc(), cases.c.case_id.desc()).offset(offset))
+    if limit is not None:
+        query = query.limit(limit)
     return [_case_from_row(row) for row in conn.execute(query).mappings()]
 
 
