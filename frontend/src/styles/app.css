@@ -500,20 +500,26 @@ img {
 
 /* ---- AuthLayout (patient-login.html / admin-login.html) ----------------- */
 
+/* The login card fills the viewport's full height - padding included (border-box), so it
+   never adds a scrollbar - and grows past it only when its content needs more room. */
 .auth-root {
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
   font-family: var(--font-sans);
   background: var(--surface-100);
   min-block-size: 100vh;
+  min-block-size: 100dvh;
   padding: var(--space-5);
 }
 
 .auth-root .screen {
+  flex: 1 0 auto;
   display: flex;
   background: var(--surface-000);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-card);
   overflow: hidden;
-  min-block-size: 700px;
 }
 
 .auth-root .pane {
@@ -596,11 +602,15 @@ img {
   outline-offset: 2px;
 }
 
+/* The form sits in the middle of the pane's space below the header, both ways - not pinned to
+   its top and inline-start edge, now that the card is as tall as the viewport. */
 .auth-root .step {
   display: flex;
   flex-direction: column;
   gap: var(--space-4);
+  inline-size: 100%;
   max-inline-size: 440px;
+  margin: auto;
 }
 
 .auth-root .steps {
@@ -1377,6 +1387,13 @@ img {
 
 /* ---- The request list --------------------------------------------------- */
 
+/* "הצגת כל הפניות" under the first page of the patient's requests. */
+.req-more {
+  display: flex;
+  justify-content: center;
+  margin-block-start: var(--space-3);
+}
+
 .req-list {
   margin: 0;
   padding: 0;
@@ -1786,26 +1803,100 @@ img {
   color: var(--ink-700);
 }
 
-/* ---- Review case: three columns ---------------------------------------- */
+/* ---- Tabs (review case, case monitor) ---------------------------------- */
 
-.review-layout {
-  display: grid;
-  grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr) minmax(0, 1fr);
+.tabs {
+  display: flex;
+  flex-direction: column;
   gap: var(--space-4);
-  align-items: start;
+  min-inline-size: 0;
 }
 
-@media (max-width: 1080px) {
-  .review-layout {
-    grid-template-columns: minmax(0, 1fr);
-  }
+.tab-list {
+  display: flex;
+  gap: var(--space-1);
+  border-block-end: 1px solid var(--line-200);
+  overflow-x: auto;
 }
 
-.review-layout .col {
+.tab {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-4);
+  margin-block-end: -1px;
+  border: 0;
+  border-block-end: 3px solid transparent;
+  background: none;
+  color: var(--ink-500);
+  font: inherit;
+  font-size: 15px;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.tab:hover {
+  color: var(--ink-900);
+}
+
+.tab.active {
+  color: var(--brand-700);
+  border-block-end-color: var(--brand-600);
+}
+
+.tab:focus-visible,
+.tab-panel:focus-visible {
+  outline: 2px solid var(--focus-500);
+  outline-offset: 2px;
+}
+
+.tab-count {
+  min-inline-size: 22px;
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-pill);
+  background: var(--surface-200);
+  color: var(--ink-700);
+  font-size: 12px;
+  line-height: 20px;
+  text-align: center;
+}
+
+.tab.active .tab-count {
+  background: var(--brand-100);
+  color: var(--brand-700);
+}
+
+.tab-panel[hidden] {
+  display: none;
+}
+
+.tab-card,
+.tab-stack {
   display: flex;
   flex-direction: column;
   gap: var(--space-3);
   min-inline-size: 0;
+}
+
+.tab-stack {
+  gap: var(--space-4);
+}
+
+/* The request on the decision tab: read it before deciding, the rest is one tab away. */
+.request-brief {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--line-200);
+  background: var(--surface-100);
+  border-radius: var(--radius-sm);
+}
+
+.request-brief .data-content {
+  margin: 0;
 }
 
 .col-h {

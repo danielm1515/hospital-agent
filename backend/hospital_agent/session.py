@@ -19,13 +19,13 @@ from __future__ import annotations
 
 import logging
 import re
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Literal, Protocol
 
 from . import auth, data_log, document_status, naming, patient_messages, repository, upload_attempts
-from .case import CaseRecord
+from .case import ApprovalRecord, CaseRecord, ExecutionRecord
 from .document_intake import IntakeAnswer, IntakeUnavailable, sniff_kind
 from .upload_attempts import UploadAttemptRecorder
 from .documents import CATALOG_LABELS, document_label
@@ -175,14 +175,49 @@ class _Message:
     at: datetime
 
 
-def _approved_hashes(conn, case_id: str) -> set[str]:
+def _approved_hashes(records: Iterable[ApprovalRecord]) -> set[str]:
     """content_hash of every consumed ContentApproval clinical_staff was granted for
     AnswerClinicalQuestion (§12.4) - shared by the clinical answer and the staff-message read,
     both of which trust exactly this approval, and nothing else, to authorise free text."""
-    return {a.content_hash for a in repository.content_approvals_for(
-                conn, case_id, naming.Action.ANSWER_CLINICAL_QUESTION.value)
+    return {a.content_hash for a in records
             if a.approval_type == "ContentApproval" and a.reviewer_role == auth.CLINICAL_STAFF
             and a.consumed_at is not None and a.content_hash}
+
+
+def _latest_content(entries: list[data_log.DataEntry]) -> str | None:
+    """The newest entry's text that is still present (tombstoned ones skipped), or None."""
+    texts = [e.content for e in entries if e.content is not None]
+    return texts[-1] if texts else None
+
+
+@dataclass(frozen=True)
+class _CaseFacts:
+    """Everything a patient view reads about one case: its trace, its Data Log by kind, the
+    clinical approvals it trusts, and the executions its CASE_RESOLVED rows name. Loaded for a
+    whole page of cases at once (_case_facts), so a list costs the same few statements however
+    many cases it holds - each case used to cost about ten of its own."""
+
+    trace: list[repository.AuditEntry]
+    data: dict[data_log.DataKind, list[data_log.DataEntry]]
+    approved: set[str]
+    executions: dict[str, ExecutionRecord]
+
+    def entries(self, kind: data_log.DataKind) -> list[data_log.DataEntry]:
+        return self.data.get(kind, [])
+
+
+def _case_facts(conn, case_ids: list[str]) -> dict[str, _CaseFacts]:
+    """_CaseFacts for every case in four statements: traces, Data Log, approvals, executions."""
+    traces = repository.load_traces(conn, case_ids)
+    data = data_log.entries_for(conn, case_ids)
+    approvals = repository.content_approvals_for_cases(conn, case_ids, naming.Action.ANSWER_CLINICAL_QUESTION.value)
+    resolved_ids = {row.execution_id for trace in traces.values() for row in trace
+                    if row.record_type == "Transition" and row.event == Event.CASE_RESOLVED.value
+                    and row.execution_id}
+    executions = repository.load_executions(conn, resolved_ids)
+    return {case_id: _CaseFacts(traces.get(case_id, []), data.get(case_id, {}),
+                                _approved_hashes(approvals.get(case_id, [])), executions)
+            for case_id in case_ids}
 
 
 @dataclass(frozen=True)
@@ -512,40 +547,46 @@ class SessionService:
         return case
 
     def patient_view(self, case_id: str) -> PatientView:
-        return self._view(self._load(case_id))
-
-    def cases_of(self, patient_id: str) -> list[PatientView]:
+        case = self._load(case_id)
         with self.engine.connect() as conn:
-            cases = repository.list_patient_cases(conn, patient_id)
-        return [self._view(case) for case in cases]
+            facts = _case_facts(conn, [case.case_id])
+        return self._view(case, facts[case.case_id])
+
+    def cases_of(self, patient_id: str, *, limit: int | None = None, offset: int = 0) -> list[PatientView]:
+        """The patient's cases, newest first; one page when `limit` is given. Everything the
+        views read is fetched for the whole page at once (_case_facts) - a fixed number of
+        statements, not a handful per case."""
+        with self.engine.connect() as conn:
+            cases = repository.list_patient_cases(conn, patient_id, limit=limit, offset=offset)
+            facts = _case_facts(conn, [case.case_id for case in cases])
+        return [self._view(case, facts[case.case_id]) for case in cases]
 
     # --- helpers ---------------------------------------------------------------------------
 
-    def _view(self, case: CaseRecord) -> PatientView:
-        with self.engine.connect() as conn:
-            trace = repository.load_trace(conn, case.case_id)
-            resolved = [row for row in trace if row.record_type == "Transition"
-                        and row.event == Event.CASE_RESOLVED.value]
-            answer = self._clinical_answer(conn, case.case_id) if case.state is State.COMPLETED else None
-            status = patient_status(case, delivered=bool(resolved) or answer is not None)
-            history = status_history(trace, delivered=bool(resolved) or answer is not None)
-            message = (self._delivered_message(conn, case.case_id, resolved[-1]) if resolved
-                       else answer) if status == "completed" else None
-            # Fix round 1 (I1/I2/M1/M2): instructions is non-null only for a case delivered by
-            # the agent's own CASE_RESOLVED (never a clinical answer, and never any other
-            # "completed"/"closed" shape), one that actually has a sub-project 18 instruction
-            # source (never the pre-sub-project-18 shape), and whose safety_level was never
-            # raised past MediumRisk by a later re-check - even if a human overrode a
-            # PolicyReview escalation to let the case proceed regardless. `_instructions` itself
-            # (below) is gate (d): the latest entry, present or nothing at all.
-            instructions = (
-                self._instructions(conn, case.case_id)
-                if (status == "completed" and resolved and case.instruction_source_id is not None
-                    and case.safety_level in (SafetyLevel.LOW_RISK, SafetyLevel.MEDIUM_RISK))
-                else None
-            )
-            staff = self._staff_messages(conn, case.case_id, trace)
-            replies = self._patient_replies(conn, case.case_id, trace)
+    def _view(self, case: CaseRecord, facts: _CaseFacts) -> PatientView:
+        trace = facts.trace
+        resolved = [row for row in trace if row.record_type == "Transition"
+                    and row.event == Event.CASE_RESOLVED.value]
+        answer = self._clinical_answer(facts) if case.state is State.COMPLETED else None
+        status = patient_status(case, delivered=bool(resolved) or answer is not None)
+        history = status_history(trace, delivered=bool(resolved) or answer is not None)
+        message = (self._delivered_message(facts, resolved[-1]) if resolved
+                   else answer) if status == "completed" else None
+        # Fix round 1 (I1/I2/M1/M2): instructions is non-null only for a case delivered by
+        # the agent's own CASE_RESOLVED (never a clinical answer, and never any other
+        # "completed"/"closed" shape), one that actually has a sub-project 18 instruction
+        # source (never the pre-sub-project-18 shape), and whose safety_level was never
+        # raised past MediumRisk by a later re-check - even if a human overrode a
+        # PolicyReview escalation to let the case proceed regardless. `_instructions` itself
+        # (below) is gate (d): the latest entry, present or nothing at all.
+        instructions = (
+            self._instructions(facts)
+            if (status == "completed" and resolved and case.instruction_source_id is not None
+                and case.safety_level in (SafetyLevel.LOW_RISK, SafetyLevel.MEDIUM_RISK))
+            else None
+        )
+        staff = self._staff_messages(facts)
+        replies = self._patient_replies(facts)
         needs_document = status == "needs_document"
         missing = sorted(set(case.required_documents or []) - set(case.held_documents)) if needs_document else []
         committed = [r for r in trace if r.record_type == "Transition"]
@@ -565,7 +606,7 @@ class SessionService:
             status=status,
             created_at=case.created_at,
             updated_at=case.updated_at,
-            request_text=self._request_text(case.case_id),
+            request_text=_latest_content(facts.entries(data_log.DataKind.REQUEST_TEXT)),
             missing_document_ids=missing,
             missing_document_request_template_id=MISSING_DOCUMENT_TEMPLATE_ID if needs_document else None,
             message=message,
@@ -577,18 +618,18 @@ class SessionService:
         )
 
     @staticmethod
-    def _delivered_message(conn, case_id: str, resolved: repository.AuditEntry) -> str | None:
+    def _delivered_message(facts: _CaseFacts, resolved: repository.AuditEntry) -> str | None:
         """The outgoing message the delivery confirmed by CASE_RESOLVED actually sent: the one
         whose hash is on that SendStatusUpdate execution. None if it cannot be tied to one."""
-        execution = repository.load_execution(conn, resolved.execution_id) if resolved.execution_id else None
+        execution = facts.executions.get(resolved.execution_id) if resolved.execution_id else None
         if execution is None or execution.content_hash is None:
             return None
-        sent = [entry.content for entry in data_log.entries(conn, case_id, data_log.DataKind.OUTGOING_MESSAGE)
+        sent = [entry.content for entry in facts.entries(data_log.DataKind.OUTGOING_MESSAGE)
                 if entry.content is not None and entry.content_hash == execution.content_hash]
         return sent[-1] if sent else None
 
     @staticmethod
-    def _instructions(conn, case_id: str) -> PatientInstructions | None:
+    def _instructions(facts: _CaseFacts) -> PatientInstructions | None:
         """Sub-project 18 (design D11): the case's own Data Log `instructions` entry - exactly
         what was approved and shown (§12.3). The fixed plan loads instructions once (after the
         patient's upload, golden scenario 1 goes back through Classifying to AssessingReadiness,
@@ -605,7 +646,7 @@ class SessionService:
         assumed here) gets the generic title "הוראות הכנה" with the whole entry as its text,
         rather than swallowing the text into the title.
         """
-        entries = data_log.entries(conn, case_id, data_log.DataKind.INSTRUCTIONS)
+        entries = facts.entries(data_log.DataKind.INSTRUCTIONS)
         if not entries or entries[-1].content is None:
             return None
         title, sep, text = entries[-1].content.partition("\n")
@@ -613,33 +654,33 @@ class SessionService:
             return PatientInstructions(title="הוראות הכנה", text=title)
         return PatientInstructions(title=title, text=text)
 
-    def _clinical_answer(self, conn, case_id: str) -> str | None:
+    def _clinical_answer(self, facts: _CaseFacts) -> str | None:
         """The answer a clinical_staff reviewer gave and approved (§5, §12.4), or None.
 
         The approval must be consumed - an approval that was never used authorised nothing -
         and its content_hash must match an outgoing message whose content is still there.
         This is what T6 does for the Tool Executor's path, applied where the patient reads.
         """
-        approved = _approved_hashes(conn, case_id)
+        approved = facts.approved
         if not approved:
             return None
         answers = [entry.content for entry
-                   in data_log.entries(conn, case_id, data_log.DataKind.OUTGOING_MESSAGE)
+                   in facts.entries(data_log.DataKind.OUTGOING_MESSAGE)
                    if entry.content is not None and entry.content_hash in approved]
         return answers[-1] if answers else None
 
-    def _staff_messages(self, conn, case_id: str, trace) -> list[_Message]:
+    def _staff_messages(self, facts: _CaseFacts) -> list[_Message]:
         """Staff messages the patient may read (design §7.5): the hash is on a committed request /
         resolve / reject row, and the text is a template's or has a consumed clinical approval."""
-        committed = {r.content_hash for r in trace
+        committed = {r.content_hash for r in facts.trace
                      if r.record_type == "Transition" and r.content_hash and r.event in _STAFF_MESSAGE_EVENTS}
-        approved = _approved_hashes(conn, case_id)
+        approved = facts.approved
         return [_Message(e.content_hash, e.content, e.created_at)
-                for e in data_log.entries(conn, case_id, data_log.DataKind.STAFF_MESSAGE)
+                for e in facts.entries(data_log.DataKind.STAFF_MESSAGE)
                 if e.content is not None and e.content_hash in committed
                 and (patient_messages.is_template_text(e.content) or e.content_hash in approved)]
 
-    def _patient_replies(self, conn, case_id: str, trace) -> list[_Message]:
+    def _patient_replies(self, facts: _CaseFacts) -> list[_Message]:
         """The patient's own replies whose PATIENT_REPLY_SUBMITTED committed. Fail-closed
         (design §7.5's read side, applied to this direction too): rather than assert a reply
         is a document reply from what was asked, this proves the opposite - a reply is a
@@ -651,11 +692,11 @@ class SessionService:
         does not match that shape is shown verbatim regardless. A §18.4 deletion of the
         request's own staff message can therefore never turn a genuine document reply's
         reference line into raw, readable text - it can only ever fall toward hiding it."""
-        proven_question = self._proven_question_hashes(conn, case_id, trace)
-        committed = {r.content_hash for r in trace if r.record_type == "Transition"
+        proven_question = self._proven_question_hashes(facts)
+        committed = {r.content_hash for r in facts.trace if r.record_type == "Transition"
                      and r.event == Event.PATIENT_REPLY_SUBMITTED.value and r.content_hash}
         replies = []
-        for e in data_log.entries(conn, case_id, data_log.DataKind.PATIENT_REPLY):
+        for e in facts.entries(data_log.DataKind.PATIENT_REPLY):
             if e.content is None or e.content_hash not in committed:
                 continue
             if e.content_hash in proven_question:
@@ -672,7 +713,7 @@ class SessionService:
         return replies
 
     @staticmethod
-    def _proven_question_hashes(conn, case_id: str, trace) -> set[str]:
+    def _proven_question_hashes(facts: _CaseFacts) -> set[str]:
         """content_hash of every PATIENT_REPLY_SUBMITTED PROVEN to answer a question: the
         committed PATIENT_REPLY_REQUESTED immediately before it (read off the trace's own
         chronological order - only one request is ever open at a time) has a staff message
@@ -681,10 +722,10 @@ class SessionService:
         request at all - is left for _patient_replies' own reference-line check, never assumed
         to be a question just because it cannot be shown to be a document."""
         staff_text = {m.content_hash: m.content for m in
-                     data_log.entries(conn, case_id, data_log.DataKind.STAFF_MESSAGE) if m.content is not None}
+                     facts.entries(data_log.DataKind.STAFF_MESSAGE) if m.content is not None}
         pending: str | None = None
         hashes: set[str] = set()
-        for row in trace:
+        for row in facts.trace:
             if row.record_type != "Transition" or not row.content_hash:
                 continue
             if row.event == Event.PATIENT_REPLY_REQUESTED.value:
@@ -698,9 +739,7 @@ class SessionService:
 
     def _request_text(self, case_id: str) -> str | None:
         with self.engine.connect() as conn:
-            texts = [e.content for e in data_log.entries(conn, case_id, data_log.DataKind.REQUEST_TEXT)
-                     if e.content is not None]
-        return texts[-1] if texts else None
+            return _latest_content(data_log.entries(conn, case_id, data_log.DataKind.REQUEST_TEXT))
 
     def _validated(self, case_id: str, text: str, identity_verified: bool) -> TransitionResult:
         return self.sm.apply(case_id, Event.REQUEST_VALIDATED, {"text": text, "identity_verified": identity_verified},

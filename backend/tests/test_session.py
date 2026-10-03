@@ -225,7 +225,7 @@ def test_instructions_is_null_when_completed_with_no_instructions_entry(sm, app_
     d = Driver(sm, app_engine)
     d.submit()
     with app_engine.connect() as conn:
-        assert SessionService._instructions(conn, d.case_id) is None
+        assert SessionService._instructions(session_module._case_facts(conn, [d.case_id])[d.case_id]) is None
 
 
 def test_instructions_with_no_newline_gets_the_generic_title(sm, app_engine):
@@ -236,7 +236,7 @@ def test_instructions_with_no_newline_gets_the_generic_title(sm, app_engine):
     with app_engine.begin() as conn:
         data_log.record(conn, d.case_id, PATIENT, data_log.DataKind.INSTRUCTIONS,
                         "No newline anywhere in this entry", sm.clock())
-        assert SessionService._instructions(conn, d.case_id) == session_module.PatientInstructions(
+        assert SessionService._instructions(session_module._case_facts(conn, [d.case_id])[d.case_id]) == session_module.PatientInstructions(
             title="הוראות הכנה", text="No newline anywhere in this entry")
 
 
@@ -247,7 +247,7 @@ def test_instructions_splits_only_on_the_first_newline(sm, app_engine):
     with app_engine.begin() as conn:
         data_log.record(conn, d.case_id, PATIENT, data_log.DataKind.INSTRUCTIONS,
                         "Title\nLine one\nLine two\nLine three", sm.clock())
-        assert SessionService._instructions(conn, d.case_id) == session_module.PatientInstructions(
+        assert SessionService._instructions(session_module._case_facts(conn, [d.case_id])[d.case_id]) == session_module.PatientInstructions(
             title="Title", text="Line one\nLine two\nLine three")
 
 

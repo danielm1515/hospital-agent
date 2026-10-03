@@ -69,6 +69,20 @@ def entries(conn: Connection, case_id: str, kind: DataKind) -> list[DataEntry]:
     return [DataEntry(**{**row, "kind": DataKind(row["kind"])}) for row in rows]
 
 
+def entries_for(conn: Connection, case_ids: Iterable[str]) -> dict[str, dict[DataKind, list[DataEntry]]]:
+    """entries() for many cases and every kind in one statement: case -> kind -> entries, oldest
+    first, tombstones included - the same order entries() gives one case and one kind."""
+    ids = list(case_ids)
+    found: dict[str, dict[DataKind, list[DataEntry]]] = {case_id: {} for case_id in ids}
+    if ids:
+        rows = conn.execute(select(data_log).where(data_log.c.case_id.in_(ids))
+                            .order_by(data_log.c.created_at, data_log.c.entry_id)).mappings()
+        for row in rows:
+            entry = DataEntry(**{**row, "kind": DataKind(row["kind"])})
+            found[row["case_id"]].setdefault(entry.kind, []).append(entry)
+    return found
+
+
 def tombstone(conn: Connection, entry_id: str, now: datetime) -> int:
     """Clear an entry's content, keeping its hash and row (§18.4). Returns rows changed."""
     return conn.execute(

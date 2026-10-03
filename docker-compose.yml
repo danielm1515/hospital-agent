@@ -2,6 +2,7 @@ name: hospital-agent
 
 services:
   db:
+    restart: unless-stopped
     image: postgres:16
     environment:
       POSTGRES_USER: hospital_owner
@@ -61,11 +62,24 @@ services:
       - "127.0.0.1:${BACKEND_HOST_PORT:-8000}:8000"
     volumes:
       - .:/repo
+    # serve.sh runs uvicorn --reload under a watchdog: when /health stops answering (a dead
+    # worker the reloader never replaces), it exits and the restart policy brings the container
+    # back. The healthcheck shows the same state in `docker ps`. `docker compose run` (the
+    # tests) gives its own command and ignores both.
+    command: ["sh", "/repo/backend/serve.sh"]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=5).status == 200 else 1)"]
+      interval: 15s
+      timeout: 8s
+      retries: 3
+      start_period: 40s
     depends_on:
       db:
         condition: service_healthy
 
   frontend:
+    restart: unless-stopped
     build: ./frontend
     environment:
       # Vite proxies /api to the backend, so the browser needs no CORS (UI design §2).

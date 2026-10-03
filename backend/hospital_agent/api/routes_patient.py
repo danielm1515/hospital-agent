@@ -86,10 +86,20 @@ def get_instruction(source_id: str, request: Request, version: str | None = Quer
     return instructions.read(request.app.state.instructions_client, source_id, version)
 
 
+MAX_REQUESTS_LIMIT = 100
+
+
 @router.get("/requests", response_model=list[PatientCaseView])
-def list_requests(principal: Principal = Depends(require_patient),
+def list_requests(limit: int | None = None, offset: int = 0, principal: Principal = Depends(require_patient),
                   session: SessionService = Depends(get_session)) -> list[PatientCaseView]:
-    return [PatientCaseView.model_validate(view) for view in session.cases_of(principal.patient_id)]
+    """The patient's requests, newest first. Without `limit`, all of them (as before); with it, one
+    page - the screen asks for the first few and loads the rest only on request."""
+    if limit is not None and not (1 <= limit <= MAX_REQUESTS_LIMIT):
+        raise HTTPException(status_code=422, detail="invalid_limit")
+    if offset < 0:
+        raise HTTPException(status_code=422, detail="invalid_offset")
+    views = session.cases_of(principal.patient_id, limit=limit, offset=offset)
+    return [PatientCaseView.model_validate(view) for view in views]
 
 
 @router.get("/requests/{case_id}", response_model=PatientCaseView)

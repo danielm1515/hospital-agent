@@ -253,3 +253,72 @@ def test_staff_are_forbidden_on_patient_routes(client):
     assert client.get("/api/patient/requests", headers=headers).status_code == 403
     response = client.post("/api/patient/requests", json={"text": REQUEST}, headers=headers)
     assert response.status_code == 403 and response.json() == {"detail": "patients_only"}
+
+
+# --- the patient's list in pages: limit and offset -------------------------------------------
+
+def _seven_cases(client) -> tuple[dict, list[str]]:
+    """Seven requests of one patient; their ids newest first, as the list orders them."""
+    headers = auth(client, PATIENT)
+    ids = [client.post("/api/patient/requests", json={"text": f"{REQUEST} #{i}"}, headers=headers).json()["case_id"]
+           for i in range(7)]
+    return headers, ids[::-1]
+
+
+def test_the_list_without_paging_returns_every_request_as_before(client):
+    headers, newest_first = _seven_cases(client)
+    listed = client.get("/api/patient/requests", headers=headers).json()
+    assert [view["case_id"] for view in listed] == newest_first
+
+
+def test_limit_and_offset_return_one_page_of_the_newest_first_list(client):
+    headers, newest_first = _seven_cases(client)
+    first = client.get("/api/patient/requests", params={"limit": 6}, headers=headers).json()
+    assert [view["case_id"] for view in first] == newest_first[:6]
+    rest = client.get("/api/patient/requests", params={"limit": 5, "offset": 5}, headers=headers).json()
+    assert [view["case_id"] for view in rest] == newest_first[5:]
+    assert client.get("/api/patient/requests", params={"offset": 7}, headers=headers).json() == []
+
+
+@pytest.mark.parametrize("params, code", [
+    ({"limit": 0}, "invalid_limit"),
+    ({"limit": 101}, "invalid_limit"),
+    ({"limit": -1}, "invalid_limit"),
+    ({"offset": -1}, "invalid_offset"),
+])
+def test_an_invalid_limit_or_offset_is_422(client, params, code):
+    response = client.get("/api/patient/requests", params=params, headers=auth(client, PATIENT))
+    assert (response.status_code, response.json()) == (422, {"detail": code})
+
+
+# --- the list reads its cases' data in a fixed number of statements (no query per case) -------
+
+def _statements_for_list(client, app_engine, headers) -> int:
+    from sqlalchemy import event
+
+    statements = []
+
+    def count(conn, cursor, statement, parameters, context, executemany):
+        statements.append(statement)
+
+    event.listen(app_engine, "before_cursor_execute", count)
+    try:
+        assert client.get("/api/patient/requests", headers=headers).status_code == 200
+    finally:
+        event.remove(app_engine, "before_cursor_execute", count)
+    return len(statements)
+
+
+def test_listing_requests_costs_the_same_statements_for_two_cases_as_for_six(client, app_engine):
+    """Each case used to cost ~10 statements of its own (trace, approvals twice, five Data Log
+    kinds, the execution, the request text): 143 statements for 23 cases, 21 s against a remote
+    database. The cases' data is now read in one go, whatever the count."""
+    headers = auth(client, PATIENT)
+    for i in range(2):
+        submit(client, PATIENT, f"{REQUEST} a{i}")
+    two = _statements_for_list(client, app_engine, headers)
+    for i in range(4):
+        submit(client, PATIENT, f"{REQUEST} b{i}")
+    six = _statements_for_list(client, app_engine, headers)
+    assert six == two, (two, six)
+    assert two <= 8, two
